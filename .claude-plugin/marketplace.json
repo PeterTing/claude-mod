@@ -1,0 +1,6 @@
+{
+  "name": "claude-mod",
+  "description": "Hand-made and curated Claude Code mods: panes, status lines, slash commands, and hooks that change how Claude Code looks and behaves.",
+  "owner": { "name": "PeterTing" },
+  "plugins": []
+}

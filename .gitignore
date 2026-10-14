@@ -1,0 +1,16 @@
+# OS / editor
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Engine-generated (per mod)
+.claude-plugin/types/
+.mcpb-cache/
+
+# Dependencies
+node_modules/
