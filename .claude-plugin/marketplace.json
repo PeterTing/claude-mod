@@ -1,6 +1,372 @@
 {
   "name": "claude-mod",
-  "description": "Hand-made and curated Claude Code mods: panes, status lines, slash commands, and hooks that change how Claude Code looks and behaves.",
-  "owner": { "name": "PeterTing" },
-  "plugins": []
+  "description": "Security-reviewed Claude Code mods. Every community mod is pinned to the exact commit that was reviewed; see COLLECTION.md for each verdict.",
+  "owner": {
+    "name": "PeterTing",
+    "url": "https://github.com/PeterTing"
+  },
+  "plugins": [
+    {
+      "name": "usage-meter",
+      "description": "Your plan's 5-hour and 7-day usage as small bars above the prompt, with the reset countdown and the session's cost. Reviewed: Recommend.",
+      "source": {
+        "source": "git-subdir",
+        "url": "hamzafer/claude-code-mods",
+        "path": "mods/usage-meter",
+        "sha": "87f108479bbf52d6e356fa9218390adbd11df2b9"
+      },
+      "author": {
+        "name": "hamzafer",
+        "url": "https://github.com/hamzafer"
+      },
+      "homepage": "https://github.com/hamzafer/claude-code-mods/tree/87f108479bbf52d6e356fa9218390adbd11df2b9/mods/usage-meter",
+      "license": "MIT",
+      "category": "usage",
+      "tags": [
+        "mod",
+        "usage",
+        "band"
+      ],
+      "metadata": {
+        "review": {
+          "verdict": "recommend",
+          "reach": "L1",
+          "commit": "87f108479bbf52d6e356fa9218390adbd11df2b9",
+          "date": "2026-10-14"
+        }
+      }
+    },
+    {
+      "name": "context-bar",
+      "description": "Your context window as a stacked bar above the prompt, a color per category, with token counts and the compaction point. Reviewed: Recommend.",
+      "source": {
+        "source": "git-subdir",
+        "url": "hamzafer/claude-code-mods",
+        "path": "mods/context-bar",
+        "sha": "87f108479bbf52d6e356fa9218390adbd11df2b9"
+      },
+      "author": {
+        "name": "hamzafer",
+        "url": "https://github.com/hamzafer"
+      },
+      "homepage": "https://github.com/hamzafer/claude-code-mods/tree/87f108479bbf52d6e356fa9218390adbd11df2b9/mods/context-bar",
+      "license": "MIT",
+      "category": "usage",
+      "tags": [
+        "mod",
+        "context",
+        "band"
+      ],
+      "metadata": {
+        "review": {
+          "verdict": "recommend",
+          "reach": "L1",
+          "commit": "87f108479bbf52d6e356fa9218390adbd11df2b9",
+          "date": "2026-10-14"
+        }
+      }
+    },
+    {
+      "name": "token-weather-usage",
+      "description": "One line above the prompt: context, 5-hour and 7-day limits against elapsed time, prompt-cache time left, session cost and running agents. Reviewed: Recommend.",
+      "source": {
+        "source": "git-subdir",
+        "url": "augiefra/claude-mods",
+        "path": "plugins/token-weather-usage",
+        "sha": "00ac406f776edbed64f3f78a8f0eb997623698c0"
+      },
+      "author": {
+        "name": "augiefra",
+        "url": "https://github.com/augiefra"
+      },
+      "homepage": "https://github.com/augiefra/claude-mods/tree/00ac406f776edbed64f3f78a8f0eb997623698c0/plugins/token-weather-usage",
+      "license": "Apache-2.0",
+      "category": "usage",
+      "tags": [
+        "mod",
+        "usage",
+        "context",
+        "cache",
+        "band"
+      ],
+      "metadata": {
+        "review": {
+          "verdict": "recommend",
+          "reach": "L1",
+          "commit": "00ac406f776edbed64f3f78a8f0eb997623698c0",
+          "date": "2026-10-14"
+        }
+      }
+    },
+    {
+      "name": "flightdeck",
+      "description": "A live agent dashboard pane: model vitals, every permission check, subagent cards and a session log. Observes only. Reviewed: Recommend.",
+      "source": {
+        "source": "github",
+        "repo": "scasella/claude-flightdeck",
+        "sha": "6150b9f40b0a36e42c22d39f03ddb81aaefe1844"
+      },
+      "author": {
+        "name": "scasella",
+        "url": "https://github.com/scasella"
+      },
+      "homepage": "https://github.com/scasella/claude-flightdeck/tree/6150b9f40b0a36e42c22d39f03ddb81aaefe1844",
+      "license": "MIT",
+      "category": "observability",
+      "tags": [
+        "mod",
+        "dashboard",
+        "subagents",
+        "pane"
+      ],
+      "metadata": {
+        "review": {
+          "verdict": "recommend",
+          "reach": "L1",
+          "commit": "6150b9f40b0a36e42c22d39f03ddb81aaefe1844",
+          "date": "2026-10-14"
+        }
+      }
+    },
+    {
+      "name": "whats-agent-doing",
+      "description": "A small box above the prompt that always says what Claude is doing right now, and expands to show what it has done. Reviewed: Recommend.",
+      "source": {
+        "source": "github",
+        "repo": "tzafrir/whats-agent-doing",
+        "sha": "1efd306948e2cb1866a02fe65f0cdbfb0c3da277"
+      },
+      "author": {
+        "name": "tzafrir",
+        "url": "https://github.com/tzafrir"
+      },
+      "homepage": "https://github.com/tzafrir/whats-agent-doing/tree/1efd306948e2cb1866a02fe65f0cdbfb0c3da277",
+      "license": "MIT",
+      "category": "observability",
+      "tags": [
+        "mod",
+        "activity",
+        "band"
+      ],
+      "metadata": {
+        "review": {
+          "verdict": "recommend",
+          "reach": "L1",
+          "commit": "1efd306948e2cb1866a02fe65f0cdbfb0c3da277",
+          "date": "2026-10-14"
+        }
+      }
+    },
+    {
+      "name": "agent-radar",
+      "description": "One live line above the prompt per running subagent: time, tool count and what it's doing. /radar shows every agent and its messages. Reviewed: Recommend.",
+      "source": {
+        "source": "git-subdir",
+        "url": "hamzafer/claude-code-mods",
+        "path": "mods/agent-radar",
+        "sha": "87f108479bbf52d6e356fa9218390adbd11df2b9"
+      },
+      "author": {
+        "name": "hamzafer",
+        "url": "https://github.com/hamzafer"
+      },
+      "homepage": "https://github.com/hamzafer/claude-code-mods/tree/87f108479bbf52d6e356fa9218390adbd11df2b9/mods/agent-radar",
+      "license": "MIT",
+      "category": "observability",
+      "tags": [
+        "mod",
+        "subagents",
+        "band",
+        "pane"
+      ],
+      "metadata": {
+        "review": {
+          "verdict": "recommend",
+          "reach": "L1",
+          "commit": "87f108479bbf52d6e356fa9218390adbd11df2b9",
+          "date": "2026-10-14"
+        }
+      }
+    },
+    {
+      "name": "filetree",
+      "description": "An IDE-style file tree pane with git status that highlights files as Claude reads or edits them. Runs read-only git, find and du plus small helpers. Reviewed: Recommend.",
+      "source": {
+        "source": "github",
+        "repo": "data-goblin/claude-code-filetree",
+        "sha": "bc10246a3d5e9ced85ddd591affcd0a65036c2dc"
+      },
+      "author": {
+        "name": "data-goblin",
+        "url": "https://github.com/data-goblin"
+      },
+      "homepage": "https://github.com/data-goblin/claude-code-filetree/tree/bc10246a3d5e9ced85ddd591affcd0a65036c2dc",
+      "license": "MIT",
+      "category": "productivity",
+      "tags": [
+        "mod",
+        "files",
+        "git",
+        "pane"
+      ],
+      "metadata": {
+        "review": {
+          "verdict": "recommend",
+          "reach": "L2",
+          "commit": "bc10246a3d5e9ced85ddd591affcd0a65036c2dc",
+          "date": "2026-10-14"
+        }
+      }
+    },
+    {
+      "name": "prompt-rail",
+      "description": "A rail of your session's prompts beside the transcript or above the prompt; hover to reread one, click to jump to it. Reviewed: Recommend.",
+      "source": {
+        "source": "git-subdir",
+        "url": "oikon48/prompt-rail",
+        "path": "plugins/prompt-rail",
+        "sha": "2ac50fb87fc426fed89ba0f09f1784ef6f289ae8"
+      },
+      "author": {
+        "name": "oikon48",
+        "url": "https://github.com/oikon48"
+      },
+      "homepage": "https://github.com/oikon48/prompt-rail/tree/2ac50fb87fc426fed89ba0f09f1784ef6f289ae8/plugins/prompt-rail",
+      "license": "MIT",
+      "category": "productivity",
+      "tags": [
+        "mod",
+        "navigation",
+        "prompts",
+        "pane"
+      ],
+      "metadata": {
+        "review": {
+          "verdict": "recommend",
+          "reach": "L2",
+          "commit": "2ac50fb87fc426fed89ba0f09f1784ef6f289ae8",
+          "date": "2026-10-14"
+        }
+      }
+    },
+    {
+      "name": "human-in-the-loop",
+      "description": "Claude assigns you the tasks only you can do; they wait in a My tasks pane until you answer. Adds system-prompt guidance and sends your answers as prompts. Reviewed: Caution.",
+      "source": {
+        "source": "github",
+        "repo": "tzafrir/human-in-the-loop",
+        "sha": "644f9441a3a3aad80fbd4708a6a50c6caeaf8cd7"
+      },
+      "author": {
+        "name": "tzafrir",
+        "url": "https://github.com/tzafrir"
+      },
+      "homepage": "https://github.com/tzafrir/human-in-the-loop/tree/644f9441a3a3aad80fbd4708a6a50c6caeaf8cd7",
+      "license": "MIT",
+      "category": "productivity",
+      "tags": [
+        "mod",
+        "tasks",
+        "pane"
+      ],
+      "metadata": {
+        "review": {
+          "verdict": "caution",
+          "reach": "L2",
+          "commit": "644f9441a3a3aad80fbd4708a6a50c6caeaf8cd7",
+          "date": "2026-10-14"
+        }
+      }
+    },
+    {
+      "name": "prismantis",
+      "description": "Themeable rendering for replies: tables, code, Mermaid diagrams and charts with copy buttons. Adds ~630 tokens of formatting hints per prompt by default. Reviewed: Caution.",
+      "source": {
+        "source": "github",
+        "repo": "NahumLitvin/prismantis",
+        "sha": "2553620fecbe4d81730c9a222349ec0a5687f673"
+      },
+      "author": {
+        "name": "NahumLitvin",
+        "url": "https://github.com/NahumLitvin"
+      },
+      "homepage": "https://github.com/NahumLitvin/prismantis/tree/2553620fecbe4d81730c9a222349ec0a5687f673",
+      "license": "MIT",
+      "category": "appearance",
+      "tags": [
+        "mod",
+        "markdown",
+        "mermaid",
+        "theme"
+      ],
+      "metadata": {
+        "review": {
+          "verdict": "caution",
+          "reach": "L2",
+          "commit": "2553620fecbe4d81730c9a222349ec0a5687f673",
+          "date": "2026-10-14"
+        }
+      }
+    },
+    {
+      "name": "leakstop",
+      "description": "Stops secrets from leaking before they are written, printed or committed to git: masks prompts and tool output, holds or blocks commands that contain secrets. Reviewed: Caution.",
+      "source": {
+        "source": "git-subdir",
+        "url": "AlexandreMartinezOlmos/claude-code-leakstop",
+        "path": "leakstop",
+        "sha": "a273213c82be23a8b0cb696340c579ec2095d7c1"
+      },
+      "author": {
+        "name": "AlexandreMartinezOlmos",
+        "url": "https://github.com/AlexandreMartinezOlmos"
+      },
+      "homepage": "https://github.com/AlexandreMartinezOlmos/claude-code-leakstop/tree/a273213c82be23a8b0cb696340c579ec2095d7c1/leakstop",
+      "license": "MIT",
+      "category": "security",
+      "tags": [
+        "mod",
+        "secrets",
+        "guard"
+      ],
+      "metadata": {
+        "review": {
+          "verdict": "caution",
+          "reach": "L2",
+          "commit": "a273213c82be23a8b0cb696340c579ec2095d7c1",
+          "date": "2026-10-14"
+        }
+      }
+    },
+    {
+      "name": "cache-tax",
+      "description": "Keeps the one-hour prompt cache warm during breaks and stops a cold send once with its estimated cost. Warming spends tokens and can switch itself on. Reviewed: Caution.",
+      "source": {
+        "source": "github",
+        "repo": "karanb192/cache-tax",
+        "sha": "06cac47ec125a41a4aeeb78a6b006bec8cc6d6ed"
+      },
+      "author": {
+        "name": "karanb192",
+        "url": "https://github.com/karanb192"
+      },
+      "homepage": "https://github.com/karanb192/cache-tax/tree/06cac47ec125a41a4aeeb78a6b006bec8cc6d6ed",
+      "license": "MIT",
+      "category": "cost",
+      "tags": [
+        "mod",
+        "cache",
+        "cost",
+        "band"
+      ],
+      "metadata": {
+        "review": {
+          "verdict": "caution",
+          "reach": "L2",
+          "commit": "06cac47ec125a41a4aeeb78a6b006bec8cc6d6ed",
+          "date": "2026-10-14"
+        }
+      }
+    }
+  ]
 }
