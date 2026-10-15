@@ -28,6 +28,7 @@ export const emptyLive = (): CrewLive => ({
   injected: { count: 0, tokens: 0 },
   retired: [],
   usageDay: '',
+  pending: {},
 })
 
 const DAY = 86_400_000

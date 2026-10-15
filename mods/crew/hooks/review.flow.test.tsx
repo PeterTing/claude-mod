@@ -314,6 +314,18 @@ describe('links in a cloned repo', () => {
   })
 })
 
+describe('a link to nothing', () => {
+  test('on the way to a file is refused too', async ($, on) => {
+    const w = world($, on)
+    w.links.set(`${ROOT}/.crew/threads`, '/nowhere/threads')
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await call($, 'thread_post', { item: 'AC-001', to: 'qa', text: 'x' }, 'a-pm-1')
+    expect([...w.disk.keys()].filter(p => p.includes('threads'))).toEqual([])
+    expect(w.logs.some(l => /threads\/AC-001\.jsonl 是連結，或指到 repo 外/.test(l))).toBe(true)
+  })
+})
+
 describe('smaller review items', () => {
   test('a directory is not a PRD', async ($, on) => {
     world($, on)
@@ -388,5 +400,33 @@ describe('second-round review items', () => {
     const decisions = (JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { decisions: { id: string }[] }).decisions.map(d => d.id)
     expect(new Set(decisions).size).toBe(decisions.length)
     expect(parseMemories(w.disk.get(MEMORIES) ?? '').map(m => m.id).sort()).toEqual([...decisions].sort())
+  })
+})
+
+describe('third-round review items', () => {
+  test('a role answering the person is not replaced by the flow, and its answer reaches the person', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await $.command.run(command('ask qa 這份 PRD 好測嗎？'))
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa'])
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    // QA is still answering: the flow's new work waits for it.
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa'])
+    await done($, 'a-qa-2', '好測')
+    expect((await $.command.run(command('thread ASK-01'))).text).toMatch(/QA → 使用者：好測/)
+    // The answer is not taken as the tests being written; then QA gets the tests to write.
+    expect((await $.command.run(command('status'))).text).toMatch(/writing_tests/)
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:qa'])
+    expect(w.spawned.at(-1)?.prompt).toMatch(/2 條驗收條件/)
+  })
+
+  test('board_read says why it cannot read the board', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    w.disk.set(`${ROOT}/prd-tracker.json`, '{ broken')
+    expect(String((await call($, 'board_read', {}, 'a-pm-1')).result)).toMatch(/讀不懂/)
   })
 })

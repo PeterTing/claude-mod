@@ -52,6 +52,14 @@ export type CrewFlow = {
   resumeAt?: 'splitting' | 'confirming'
 }
 
+/** Work the flow gave a role while it was busy answering the person: handed over when that turn ends. */
+export type CrewWork = {
+  kind: 'spawn' | 'message'
+  route: { tier: CrewTier; model: string; label: string; effort: string; limit: number }
+  text: string
+  item?: string
+}
+
 /** Everything crew keeps for a running team in this session. */
 export type CrewLive = {
   prdPath: string | null
@@ -82,6 +90,8 @@ export type CrewLive = {
   retired: string[]
   /** The day `usage` and `tiers` count. */
   usageDay: string
+  /** Role → work waiting for its current turn to end. */
+  pending: Record<string, CrewWork[]>
 }
 
 declare module 'claude-code' {

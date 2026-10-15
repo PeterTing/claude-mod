@@ -58,6 +58,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '' }
   })
   on('fs.stat', (_$, e) => {
     const real = resolve(e.path)
+    // A link to nothing is still there: a link, with nowhere it leads.
+    if (links.has(e.path) && !disk.has(real) && !isDir(real)) return { value: { kind: 'other' as const, size: 0, mtimeMs: 0, isLink: true } }
     if (!disk.has(real) && !isDir(real)) return { deny: `ENOENT ${e.path}` }
     // A file's version follows its content, as a modified time follows a write.
     const text = disk.get(real) ?? ''

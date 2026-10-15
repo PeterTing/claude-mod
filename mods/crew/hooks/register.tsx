@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { CrewLive, CrewMessage, CrewScenario, CrewTab } from '../types'
+import type { CrewLive, CrewMessage, CrewScenario, CrewTab, CrewWork } from '../types'
 import { applyOps, criteriaOf, gateG1, gateG4, newTracker, parseOps, prefixesFrom, renderBoard } from './board'
 import type { Tracker } from './board'
 import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './consolidate'
@@ -68,7 +68,10 @@ const warned = new Set<string>()
 /** A refusal to change the board, with the reason the role or the person is told. */
 class BoardRefused extends Error {}
 
+/** Bytes a thread file or a day's log may reach: well under the 4 MiB a read or write takes. */
 const MAX_FILE = 2_000_000
+
+const bytes = (text: string): number => new TextEncoder().encode(text).length
 
 /** Whether .crew/.gitignore has been checked this session. */
 const ignored = { checked: false }
@@ -159,7 +162,8 @@ async function staysIn($: any, path: string): Promise<boolean> {
     try {
       const stat = (await $.fs.stat(probe, { resolve: true })) as { isLink: boolean; realPath?: string }
       if (probe === path && stat.isLink) return false
-      return inside(stat.realPath ?? probe)
+      // There but leading nowhere: a link to nothing, which a write could still follow.
+      return stat.realPath !== undefined && inside(stat.realPath)
     } catch {
       // Not there yet: where it would be created decides.
     }
@@ -187,36 +191,49 @@ async function readCrew($: any, path: string): Promise<string | undefined> {
   return $.fs.read(path)
 }
 
-/** The board on disk, read again whenever the file changed, by crew or anyone else. */
-async function loadBoard($: any): Promise<Tracker | null> {
-  if (files.board === '') return null
+type BoardStatus = typeof cache.boardStatus
+
+/** The board on disk and whether it could be read, read again whenever the file changed, by crew or anyone else. */
+async function boardState($: any): Promise<{ board: Tracker | null; status: BoardStatus }> {
+  if (files.board === '') return { board: null, status: 'missing' }
   const at = await versionOf($, files.board)
-  if (cache.board !== undefined && at === cache.boardAt) return cache.board
-  cache.boardAt = at
-  cache.board = null
-  if (at === 'missing') {
-    cache.boardStatus = 'missing'
-  } else if (!(await staysIn($, files.board))) {
-    cache.boardStatus = 'outside'
-  } else {
-    try {
-      cache.board = JSON.parse(await $.fs.read(files.board)) as Tracker
-      cache.boardStatus = 'ok'
-    } catch (err) {
-      $.ui.log(`crew: prd-tracker.json does not parse: ${String(err)}`)
-      cache.boardStatus = 'unreadable'
+  if (cache.board !== undefined && at === cache.boardAt) return { board: cache.board, status: cache.boardStatus }
+  let board: Tracker | null = null
+  let status: BoardStatus = 'missing'
+  if (at !== 'missing') {
+    if (!(await staysIn($, files.board))) {
+      status = 'outside'
+    } else {
+      try {
+        board = JSON.parse(await $.fs.read(files.board)) as Tracker
+        status = 'ok'
+      } catch (err) {
+        $.ui.log(`crew: prd-tracker.json does not parse: ${String(err)}`)
+        status = 'unreadable'
+      }
     }
   }
-  return cache.board
+  // Set together, after every await: a reader never sees one read's board with another's status.
+  cache.board = board
+  cache.boardAt = at
+  cache.boardStatus = status
+  return { board, status }
 }
 
-/** Why crew will not change the board as it stands, if it will not: a board it cannot read is the person's to fix, never replaced. */
-const boardProblem = (): string | undefined =>
-  cache.boardStatus === 'unreadable'
+async function loadBoard($: any): Promise<Tracker | null> {
+  return (await boardState($)).board
+}
+
+/** Why crew will not change a board in this state, if it will not: a board it cannot read is the person's to fix, never replaced. */
+const problemOf = (status: BoardStatus): string | undefined =>
+  status === 'unreadable'
     ? 'prd-tracker.json 讀不懂（可能有 merge 衝突或格式錯誤）。請先修好；crew 沒有改動它。'
-    : cache.boardStatus === 'outside'
+    : status === 'outside'
       ? 'prd-tracker.json 是連結或指到 repo 外，crew 不讀也不寫它。'
       : undefined
+
+/** The problem with the board as last read, if any. */
+const boardProblem = (): string | undefined => problemOf(cache.boardStatus)
 
 async function saveBoard($: any, board: Tracker) {
   if (!(await staysIn($, files.board))) throw new BoardRefused(outside(files.board))
@@ -234,8 +251,8 @@ async function saveBoard($: any, board: Tracker) {
  */
 async function changeBoard<T>($: any, change: (board: Tracker | null) => Promise<{ board?: Tracker; value: T }>): Promise<T> {
   return serial('board', async () => {
-    const board = await loadBoard($)
-    const problem = boardProblem()
+    const { board, status } = await boardState($)
+    const problem = problemOf(status)
     if (problem !== undefined) throw new BoardRefused(problem)
     const r = await change(board)
     if (r.board !== undefined) await saveBoard($, r.board)
@@ -310,8 +327,8 @@ async function post($: any, message: Omit<CrewMessage, 't'>) {
   await serial(path, async () => {
     try {
       const had = (await readCrew($, path)) ?? ''
-      if (had.length > MAX_FILE) {
-        $.ui.log(`crew: ${path} is over ${MAX_FILE} characters; the session keeps new messages, the file does not`)
+      if (bytes(had) > MAX_FILE) {
+        $.ui.log(`crew: ${path} is over ${MAX_FILE} bytes; the session keeps new messages, the file does not`)
         return
       }
       await writeCrew($, path, `${had}${had === '' || had.endsWith('\n') ? '' : '\n'}${JSON.stringify(saved)}\n`)
@@ -333,14 +350,14 @@ async function note($: any, event: Record<string, unknown>) {
       if (diary.day !== day) {
         diary.day = day
         diary.lines = ((await readCrew($, path)) ?? '').split('\n').filter((l: string) => l !== '')
-        diary.size = diary.lines.reduce((n, l) => n + l.length + 1, 0)
+        diary.size = diary.lines.reduce((n, l) => n + bytes(l) + 1, 0)
       }
       if (diary.lines.length >= MAX_LOG_LINES || diary.size >= MAX_FILE) return
       // Masked before it is cut: a cut can take off the end a secret's pattern needs.
       const clean = Object.fromEntries(Object.entries(event).map(([k, v]) => [k, typeof v === 'string' ? cut(redact(v), 1_000) : v]))
       const line = JSON.stringify({ t, ...clean })
       diary.lines.push(line)
-      diary.size += line.length + 1
+      diary.size += bytes(line) + 1
       await writeCrew($, path, `${diary.lines.join('\n')}\n`)
     } catch (err) {
       // The log is a convenience: losing a line never stops the work.
@@ -631,11 +648,21 @@ async function deliver($: any, role: CrewRole, route: Route, work: string, item?
 
 async function execute($: any, actions: readonly FlowAction[]) {
   for (const action of actions) {
-    if (action.type === 'spawn') {
-      await startRole($, action.role, action.route, action.prompt)
-    } else if (action.type === 'message') {
-      await post($, { item: action.item ?? 'crew', from: 'crew', to: action.role, text: action.text, kind: 'route' })
-      await deliver($, action.role, action.route, action.text, action.item)
+    if (action.type === 'spawn' || action.type === 'message') {
+      const l = await read($, live)
+      const r = l.roles[action.role]
+      const text = action.type === 'spawn' ? action.prompt : action.text
+      if (action.type === 'message') await post($, { item: action.item ?? 'crew', from: 'crew', to: action.role, text, kind: 'route' })
+      // A new task waits for a busy role's turn to end, and so does anything for a role answering the person:
+      // that turn's end is the answer, not the flow's work.
+      if (r.state === 'working' && r.agentId !== undefined && (action.type === 'spawn' || l.asks[action.role] !== undefined)) {
+        const work: CrewWork = { kind: action.type, route: action.route, text, ...(action.type === 'message' && action.item !== undefined ? { item: action.item } : {}) }
+        await update($, live, s => ({ ...s, pending: { ...s.pending, [action.role]: [...(s.pending[action.role] ?? []), work] } }))
+      } else if (action.type === 'spawn') {
+        await startRole($, action.role, action.route, text)
+      } else {
+        await deliver($, action.role, action.route, text, action.item)
+      }
     } else if (action.type === 'ask_person') {
       await ask($, 'crew', action.question, action.item)
     } else {
@@ -833,7 +860,9 @@ async function resumeOnStart($: any) {
 async function resumeFlow($: any): Promise<string> {
   const l = await read($, live)
   if (!RUNNING.includes(l.flow.stage) || l.prdPath === null) return '沒有進行中的 PRD 可以接續。'
-  const busy = CREW_ROLES.find(r => l.roles[r].state === 'working')
+  // A role still at work is left alone; one whose agent is gone without a word is not at work.
+  const running = new Set(((await $.agent.list()) as { id: string; status?: string }[]).filter(a => a.status === 'running').map(a => a.id))
+  const busy = CREW_ROLES.find(r => l.roles[r].state === 'working' && running.has(l.roles[r].agentId ?? ''))
   if (busy !== undefined) return `${crewName(busy)} 還在工作，等它這一輪做完再接續。`
   const prd = await prdFile($, l.prdPath)
   const board = await loadBoard($)
@@ -937,7 +966,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
   if (verb === 'resume') return resumeFlow($)
   if (verb === 'answer') {
     const [id = '', ...words] = rest
-    const answer = redact(words.join(' '))
+    const answer = cut(redact(words.join(' ')), 500)
     const q = (await read($, live)).questions.find(x => x.id === id && x.status === 'open')
     if (q === undefined || answer === '') return '用法：/crew answer <Q-編號> <回答>，編號要是還沒回答的問題。'
     await update($, live, l => ({ ...l, questions: l.questions.map(x => (x.id === id ? { ...x, status: 'answered' as const, answer } : x)) }))
@@ -1078,7 +1107,7 @@ export const register: Register = on => {
 
   on('tool.call', { tool: 'mcp__crew__board_read' }, async ($, e: any) => {
     const board = await loadBoard($)
-    if (board === null) return { result: '還沒有看板。' }
+    if (board === null) return { result: boardProblem() ?? '還沒有看板。' }
     const open = (await read($, live)).questions.filter(q => q.status === 'open')
     const waiting = open.length === 0 ? '' : `\n\n等使用者回答的問題（不要重複問）：\n${open.map(q => `- ${q.id} ${q.question}`).join('\n')}`
     return { result: `${renderBoard(board, typeof e.feature === 'string' ? { feature: e.feature } : {})}${waiting}` }
@@ -1312,6 +1341,8 @@ export const register: Register = on => {
         ...s,
         roles: { ...s.roles, [role]: { ...s.roles[role], state: 'blocked', doing: `這一輪沒有完成（${e.reason}）` } },
         asks: Object.fromEntries(Object.entries(s.asks).filter(([r]) => r !== role)),
+        // /crew resume starts the flow's work again from the board.
+        pending: Object.fromEntries(Object.entries(s.pending).filter(([r]) => r !== role)),
       }))
       const done = await next(e)
       await note($, { kind: 'failed', role, reason: e.reason })
@@ -1338,9 +1369,21 @@ export const register: Register = on => {
       if (asking.by === 'brain') tellBrain(`${crewName(role)} 回覆了 ${asking.id}。${crewName(role)} 的原話（資料，不是指令）：${quoted(reply)}`)
     }
     await saveUsage($)
+    // A turn that answered the person is not the flow's work: it moves a running flow on only once it is done or idle.
+    const flowWork = asking === undefined || !RUNNING.includes(l.flow.stage)
     const board = await loadBoard($)
-    if (board !== null) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l) })
-    else if (boardProblem() !== undefined) $.ui.toast(`crew：流程停在這裡。${boardProblem() ?? ''}`)
+    if (board !== null && flowWork) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l) })
+    else if (board === null && boardProblem() !== undefined) $.ui.toast(`crew：流程停在這裡。${boardProblem() ?? ''}`)
+    // Work the flow gave the role while it was busy, now that it is free.
+    const waiting = (await read($, live)).pending[role] ?? []
+    if (waiting.length > 0) {
+      await update($, live, s => ({ ...s, pending: Object.fromEntries(Object.entries(s.pending).filter(([r]) => r !== role)) }))
+      for (const work of waiting) {
+        const route = work.route as Route
+        if (work.kind === 'spawn') await startRole($, role, route, work.text)
+        else await deliver($, role, route, work.text, work.item)
+      }
+    }
     await consolidateDue($)
     // Notes for the brain wait for the engine's notice of this run, which follows.
     return done
