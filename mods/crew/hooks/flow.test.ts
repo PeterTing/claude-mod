@@ -1,0 +1,170 @@
+import { describe, expect, test } from 'claude-code/testing'
+
+import { applyOps, newTracker } from './board'
+import type { Op, Tracker } from './board'
+import { INITIAL, step } from './flow'
+import type { FlowEvent, FlowState } from './flow'
+
+const ctx = (by: string) => ({ by, today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } })
+
+const board = (pm: readonly Op[], qa: readonly Op[] = []): Tracker => {
+  const a = applyOps(newTracker('shop'), pm, ctx('pm'))
+  if (!a.ok) throw new Error(a.errors.join('; '))
+  if (qa.length === 0) return a.tracker
+  const b = applyOps(a.tracker, qa, ctx('qa'))
+  if (!b.ok) throw new Error(b.errors.join('; '))
+  return b.tracker
+}
+
+const SPLIT: readonly Op[] = [
+  { op: 'add_feature', title: '方案選擇', summary: '' },
+  { op: 'add_criterion', feature: 'PRD-001', text: '可以選月繳方案' },
+  { op: 'add_criterion', feature: 'PRD-001', text: '可以看到價格' },
+]
+
+const tc = (criteria: string[]): Op => ({ op: 'add_test_case', criteria, title: 't', steps: ['s'], expected: 'e' })
+
+const run = (events: readonly FlowEvent[], from: FlowState = INITIAL) => {
+  let state = from
+  const actions = []
+  for (const e of events) {
+    const r = step(state, e)
+    state = r.state
+    actions.push(...r.actions)
+  }
+  return { state, actions }
+}
+
+const START: FlowEvent = { type: 'start', prd: { path: 'docs/PRD.md', size: 600, text: '會員訂閱' } }
+
+describe('step', () => {
+  test('starts by asking the PM to split the PRD, routed by its size', () => {
+    const { state, actions } = run([START])
+    expect(state.stage).toBe('splitting')
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({ type: 'spawn', role: 'pm', route: { tier: 'M', label: 'Sonnet', effort: 'high' } })
+    expect((actions[0] as { prompt: string }).prompt).toMatch(/docs\/PRD\.md/)
+  })
+
+  test('hands over to QA once every feature has criteria', () => {
+    const { state, actions } = run([START, { type: 'role_done', role: 'pm', board: board(SPLIT) }])
+    expect(state.stage).toBe('writing_tests')
+    expect(actions.at(-1)).toMatchObject({ type: 'spawn', role: 'qa', route: { tier: 'S', label: 'Sonnet', effort: 'medium' } })
+    expect((actions.at(-1) as { prompt: string }).prompt).toMatch(/2 條驗收條件/)
+  })
+
+  test('sends the PM back to the features that have no criteria', () => {
+    const b = board([...SPLIT, { op: 'add_feature', title: '帳單', summary: '' }])
+    const { state, actions } = run([START, { type: 'role_done', role: 'pm', board: b }])
+    expect(state.stage).toBe('splitting')
+    expect(actions.at(-1)).toMatchObject({ type: 'message', role: 'pm', item: 'PRD-002' })
+    expect((actions.at(-1) as { text: string }).text).toMatch(/PRD-002 帳單/)
+  })
+
+  test('asks the person when the PM leaves the board empty twice', () => {
+    const empty = newTracker('shop')
+    const once = run([START, { type: 'role_done', role: 'pm', board: empty }])
+    expect(once.actions.at(-1)).toMatchObject({ type: 'message', role: 'pm' })
+    const twice = run([{ type: 'role_done', role: 'pm', board: empty }], once.state)
+    expect(twice.state.stage).toBe('escalated')
+    expect(twice.actions.at(-1)).toMatchObject({ type: 'ask_person' })
+  })
+
+  test('finishes when QA covers every criterion', () => {
+    const { state, actions } = run([
+      START,
+      { type: 'role_done', role: 'pm', board: board(SPLIT) },
+      { type: 'role_done', role: 'qa', board: board(SPLIT, [tc(['AC-001', 'AC-002'])]) },
+    ])
+    expect(state.stage).toBe('done')
+    expect(actions.at(-1)).toMatchObject({ type: 'done' })
+    expect((actions.at(-1) as { text: string }).text).toMatch(/2\/2/)
+  })
+
+  test('sends the gaps to the PM, then the ones the PM keeps to QA', () => {
+    const gaps = board(SPLIT, [tc(['AC-001'])])
+    const toPm = run([START, { type: 'role_done', role: 'pm', board: board(SPLIT) }, { type: 'role_done', role: 'qa', board: gaps }])
+    expect(toPm.state.stage).toBe('confirming')
+    expect(toPm.actions.at(-1)).toMatchObject({ type: 'message', role: 'pm', item: 'AC-002' })
+    expect((toPm.actions.at(-1) as { text: string }).text).toMatch(/AC-002 可以看到價格/)
+
+    const toQa = run([{ type: 'role_done', role: 'pm', board: gaps }], toPm.state)
+    expect(toQa.state.stage).toBe('adding_tests')
+    expect(toQa.actions.at(-1)).toMatchObject({ type: 'message', role: 'qa', item: 'AC-002' })
+
+    const done = run([{ type: 'role_done', role: 'qa', board: board(SPLIT, [tc(['AC-001']), tc(['AC-002'])]) }], toQa.state)
+    expect(done.state.stage).toBe('done')
+  })
+
+  test('finishes when the PM drops every gap', () => {
+    const gaps = board(SPLIT, [tc(['AC-001'])])
+    const toPm = run([START, { type: 'role_done', role: 'pm', board: board(SPLIT) }, { type: 'role_done', role: 'qa', board: gaps }])
+    const dropped = applyOps(gaps, [{ op: 'drop_criterion', id: 'AC-002', reason: '價格頁下一版' }], ctx('pm'))
+    expect(dropped.ok).toBe(true)
+    if (!dropped.ok) return
+    const done = run([{ type: 'role_done', role: 'pm', board: dropped.tracker }], toPm.state)
+    expect(done.state.stage).toBe('done')
+    expect((done.actions.at(-1) as { text: string }).text).toMatch(/1\/1/)
+  })
+
+  test('asks the person after three rounds that leave gaps', () => {
+    const gaps = board(SPLIT, [tc(['AC-001'])])
+    let r = run([START, { type: 'role_done', role: 'pm', board: board(SPLIT) }])
+    for (let round = 0; round < 3; round += 1) {
+      r = run([{ type: 'role_done', role: 'qa', board: gaps }, { type: 'role_done', role: 'pm', board: gaps }], r.state)
+    }
+    r = run([{ type: 'role_done', role: 'qa', board: gaps }], r.state)
+    expect(r.state.stage).toBe('escalated')
+    expect(r.actions.at(-1)).toMatchObject({ type: 'ask_person' })
+    expect((r.actions.at(-1) as { question: string }).question).toMatch(/AC-002/)
+  })
+
+  test('takes the person’s answer back to the PM where the flow got stuck', () => {
+    const gaps = board(SPLIT, [tc(['AC-001'])])
+    let r = run([START, { type: 'role_done', role: 'pm', board: board(SPLIT) }])
+    for (let round = 0; round < 3; round += 1) {
+      r = run([{ type: 'role_done', role: 'qa', board: gaps }, { type: 'role_done', role: 'pm', board: gaps }], r.state)
+    }
+    r = run([{ type: 'role_done', role: 'qa', board: gaps }], r.state)
+    expect(r.state.stage).toBe('escalated')
+
+    const answered = run([{ type: 'answered', question: 'AC-002 要怎麼辦？', answer: '價格頁下一版再做，移出範圍' }], r.state)
+    expect(answered.state).toMatchObject({ stage: 'confirming', round: 0 })
+    expect(answered.actions.at(-1)).toMatchObject({ type: 'message', role: 'pm' })
+    expect((answered.actions.at(-1) as { text: string }).text).toMatch(/價格頁下一版再做/)
+  })
+
+  test('takes an answer about the split back to the PM’s split', () => {
+    const empty = newTracker('shop')
+    const r = run([START, { type: 'role_done', role: 'pm', board: empty }, { type: 'role_done', role: 'pm', board: empty }])
+    expect(r.state.stage).toBe('escalated')
+    const answered = run([{ type: 'answered', question: '拆 PRD 卡住', answer: 'PRD 在 docs/PRD-v2.md' }], r.state)
+    expect(answered.state).toMatchObject({ stage: 'splitting', retries: 0 })
+  })
+
+  test('passes an answer to a question the PM asked while working', () => {
+    const r = run([START, { type: 'answered', question: '要不要做年繳？', answer: '不做' }])
+    expect(r.state.stage).toBe('splitting')
+    expect(r.actions.at(-1)).toMatchObject({ type: 'message', role: 'pm' })
+    expect((r.actions.at(-1) as { text: string }).text).toMatch(/要不要做年繳？[\s\S]*不做/)
+  })
+
+  test('ignores a role that finishes out of turn', () => {
+    const r = run([START, { type: 'role_done', role: 'qa', board: board(SPLIT) }])
+    expect(r.state.stage).toBe('splitting')
+    expect(r.actions).toHaveLength(1)
+  })
+
+  test('restarts from a finished flow on a new start', () => {
+    const r = run([START], { ...INITIAL, stage: 'done' })
+    expect(r.state.stage).toBe('splitting')
+  })
+
+  test('does not restart a flow that is running', () => {
+    const r = run([START], { ...INITIAL, stage: 'writing_tests' })
+    expect(r.state.stage).toBe('writing_tests')
+    expect(r.actions).toHaveLength(1)
+    expect(r.actions[0]).toMatchObject({ type: 'status' })
+    expect((r.actions[0] as { text: string }).text).toMatch(/正在進行/)
+  })
+})

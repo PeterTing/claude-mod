@@ -1,8 +1,17 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { CrewScenario, CrewTab } from '../types'
+import type { CrewLive, CrewMessage, CrewScenario, CrewTab } from '../types'
+import { applyOps, newTracker, parseOps, prefixesFrom, renderBoard } from './board'
+import type { Tracker } from './board'
 import { DEMO } from './demo'
+import { step } from './flow'
+import type { FlowAction, FlowEvent } from './flow'
+import { dayOf, emptyLive, snapshotOf } from './live'
+import { ROLE_NAMES } from './model'
+import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
+import type { CrewRole } from './roles'
+import type { Route } from './router'
 import { bandText, CrewPane } from './views'
 import type { Actions } from './views'
 
@@ -13,24 +22,169 @@ const tab = atom({ plugin: 'crew', key: 'tab' } as const, 'overview' as CrewTab)
 const scenario = atom({ plugin: 'crew', key: 'scenario' } as const, 'normal' as CrewScenario)
 const thread = atom({ plugin: 'crew', key: 'thread' } as const, null as string | null)
 const gate = atom({ plugin: 'crew', key: 'gate' } as const, null as string | null)
+const live = atom({ plugin: 'crew', key: 'live' } as const, emptyLive())
+
+/** Where crew keeps things in the repo the session runs in. */
+const files = { root: '', board: '', schema: '', crew: '' }
+
+/** The board as last read or written; reloaded from disk when a role finishes. */
+const cache: { board: Tracker | null | undefined } = { board: undefined }
+
+const crewName = (role: CrewRole): string => ROLE_NAMES[role]
+
+const safe = (item: string): string => item.replace(/[^\w.-]+/g, '_')
+
+const firstLine = (text: string): string => (text.split('\n')[0] ?? '').slice(0, 60)
+
+async function loadBoard($: any, force = false): Promise<Tracker | null> {
+  if (files.board === '') return null
+  if (!force && cache.board !== undefined) return cache.board
+  cache.board = (await $.fs.exists(files.board)) ? (JSON.parse(await $.fs.read(files.board)) as Tracker) : null
+  return cache.board
+}
+
+async function saveBoard($: any, board: Tracker) {
+  cache.board = board
+  await $.fs.write(files.board, `${JSON.stringify(board, null, 2)}\n`)
+}
+
+async function idPrefixes($: any) {
+  return prefixesFrom((await $.fs.exists(files.schema)) ? JSON.parse(await $.fs.read(files.schema)) : undefined)
+}
+
+async function post($: any, message: Omit<CrewMessage, 't'>) {
+  const t = await $.clock.now()
+  const next = await update($, live, l => ({
+    ...l,
+    threads: { ...l.threads, [message.item]: [...(l.threads[message.item] ?? []), { ...message, t }].slice(-50) },
+  }))
+  const lines = (next.threads[message.item] ?? []).map(m => JSON.stringify(m)).join('\n')
+  await $.fs.write(`${files.crew}/threads/${safe(message.item)}.jsonl`, `${lines}\n`)
+}
+
+async function startRole($: any, role: CrewRole, route: Route, prompt: string) {
+  const spawned = await $.agent.spawn({
+    subagentType: `crew:${role}`,
+    name: role,
+    description: `crew ${crewName(role)}`,
+    prompt,
+    model: route.model,
+  })
+  // The engine answers the new agent's id; when a hook beneath kept it back, find the agent by name.
+  let id: string | undefined = spawned.deny === undefined ? spawned.agentId : undefined
+  if (spawned.deny === undefined && id === undefined) {
+    const agents: { id: string; name?: string; spawnedBy?: string }[] = await $.agent.list()
+    id = [...agents].reverse().find(a => a.name === role && a.spawnedBy === 'crew')?.id
+  }
+  if (id === undefined) {
+    $.ui.toast(`crew：${crewName(role)} 沒有啟動（${spawned.deny ?? '找不到它的 agent id'}）`)
+    await update($, live, l => ({ ...l, roles: { ...l.roles, [role]: { ...l.roles[role], state: 'blocked', doing: '沒有啟動' } } }))
+    return
+  }
+  const started: string = id
+  await update($, live, l => ({
+    ...l,
+    agents: { ...l.agents, [started]: role },
+    roles: {
+      ...l.roles,
+      [role]: { agentId: started, model: route.model, label: route.label, effort: route.effort, tier: route.tier, limit: route.limit, state: 'working', doing: firstLine(prompt), context: 0 },
+    },
+  }))
+}
+
+async function execute($: any, actions: readonly FlowAction[]) {
+  for (const action of actions) {
+    if (action.type === 'spawn') {
+      await startRole($, action.role, action.route, action.prompt)
+    } else if (action.type === 'message') {
+      await post($, { item: action.item ?? 'crew', from: 'crew', to: action.role, text: action.text, kind: 'route' })
+      const role = (await read($, live)).roles[action.role]
+      if (role.agentId !== undefined && role.model === action.route.model) {
+        await update($, live, l => ({
+          ...l,
+          roles: {
+            ...l.roles,
+            [action.role]: { ...l.roles[action.role], effort: action.route.effort, tier: action.route.tier, limit: action.route.limit, state: 'working', doing: firstLine(action.text) },
+          },
+        }))
+        await $.session.send({ to: action.role, text: action.text })
+      } else {
+        // A different model means a fresh context: the role reads the board and its threads again.
+        await startRole($, action.role, action.route, `${action.text}\n\n（先用 board_read、thread_read 了解目前狀況。）`)
+      }
+    } else if (action.type === 'ask_person') {
+      await ask($, 'crew', action.question, action.item)
+    } else {
+      $.ui.toast(`crew：${action.text}`)
+    }
+  }
+}
+
+async function ask($: any, from: 'pm' | 'qa' | 'crew', question: string, item?: string): Promise<string> {
+  const t = await $.clock.now()
+  let id = ''
+  await update($, live, l => {
+    id = `Q-${String(l.questions.length + 1).padStart(2, '0')}`
+    return { ...l, questions: [...l.questions, { id, question, ...(item === undefined ? {} : { item }), from, status: 'open' as const, t }] }
+  })
+  $.ui.toast(`crew：有一件事等你決定（/crew answer ${id} 你的回答）`)
+  return id
+}
+
+async function feed($: any, event: FlowEvent) {
+  const before = (await read($, live)).flow
+  const r = step(before, event)
+  await update($, live, l => ({ ...l, flow: r.state }))
+  await execute($, r.actions)
+}
+
+async function saveUsage($: any) {
+  const l = await read($, live)
+  const day = dayOf(await $.clock.now())
+  await $.fs.write(`${files.crew}/usage/${day}.json`, `${JSON.stringify({ usage: l.usage, tiers: l.tiers }, null, 2)}\n`)
+}
+
+const usageOf = (u: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }) => ({
+  input: u.input_tokens ?? 0,
+  output: u.output_tokens ?? 0,
+  cacheRead: u.cache_read_input_tokens ?? 0,
+  cacheWrite: u.cache_creation_input_tokens ?? 0,
+})
+
+const ZERO = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, wakes: 0, rotations: 0 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    files.root = e.cwd
+    files.board = `${e.cwd}/prd-tracker.json`
+    files.schema = `${e.cwd}/schemas/prd-tracker.schema.json`
+    files.crew = `${e.cwd}/.crew`
+    cache.board = undefined
     await $.command.register({
       name: 'crew',
-      description: 'Crew, the resident product team. /crew demo shows the design preview with sample data.',
+      description: 'crew 產品團隊：/crew start <PRD 檔案> 開始、/crew answer <Q-編號> <回答>、/crew status、/crew demo',
     })
+    for (const spec of TOOL_SPECS) {
+      await $.tool.register({ ...spec, isDeferred: false })
+    }
+    for (const role of CREW_ROLES) {
+      await $.agent.register(AGENT_SPECS[role])
+    }
     return next(e)
   })
 
+  // The roles are crew's to start, not the main conversation's.
+  on('agent.offer', { agent: 'crew:pm' }, () => ({ isOffered: false }))
+  on('agent.offer', { agent: 'crew:qa' }, () => ({ isOffered: false }))
+
   on('command.run', { command: 'crew' }, async ($, e) => {
-    const args = e.args.trim().split(/\s+/)
-    if (args[0] === 'demo' && args[1] === 'off') {
-      await update($, isDemo, () => false)
-      await $.ui.close({ id: PANE })
-      return { text: '已關閉 crew 設計稿。' }
-    }
-    if (args[0] === 'demo') {
+    const [verb = '', ...rest] = e.args.trim().split(/\s+/).filter(Boolean)
+    if (verb === 'demo') {
+      if (rest[0] === 'off') {
+        await update($, isDemo, () => false)
+        await $.ui.close({ id: PANE })
+        return { text: '已關閉 crew 設計稿。' }
+      }
       await update($, isDemo, () => true)
       await update($, tab, () => 'overview')
       await update($, scenario, () => 'normal')
@@ -39,13 +193,157 @@ export const register: Register = on => {
       await $.ui.open({ id: PANE, title: 'Crew（設計稿）' })
       return { text: '已開啟 crew 設計稿：面板和輸入框上方那一行都是示意資料。/crew demo off 關閉。' }
     }
-    return { text: 'crew 還在設計階段。/crew demo 打開設計稿，看面板和輸入框上方那一行。' }
+    if (verb === 'start') {
+      const path = rest.join(' ')
+      if (path === '') return { text: '用法：/crew start <PRD 檔案路徑>' }
+      const full = path.startsWith('/') ? path : `${files.root}/${path}`
+      if (!(await $.fs.exists(full))) return { text: `找不到 ${path}。` }
+      const text: string = await $.fs.read(full)
+      const board = (await loadBoard($, true)) ?? newTracker(files.root.split('/').pop() ?? 'project')
+      await saveBoard($, board)
+      await $.fs.write(`${files.crew}/.gitignore`, 'usage/\n')
+      await update($, isDemo, () => false)
+      await update($, live, l => ({ ...l, prdPath: path }))
+      await feed($, { type: 'start', prd: { path, size: text.length, text: text.slice(0, 4_000) } })
+      await $.ui.open({ id: PANE, title: 'Crew' })
+      const pm = (await read($, live)).roles.pm
+      return { text: `crew 開始：PM 正在拆 ${path}（${pm.tier ?? ''} ${pm.label ?? ''}・${pm.effort ?? ''}）。進度在 /crew 面板。` }
+    }
+    if (verb === 'answer') {
+      const [id = '', ...words] = rest
+      const answer = words.join(' ')
+      const q = (await read($, live)).questions.find(x => x.id === id && x.status === 'open')
+      if (q === undefined || answer === '') return { text: '用法：/crew answer <Q-編號> <回答>，編號要是還沒回答的問題。' }
+      await update($, live, l => ({ ...l, questions: l.questions.map(x => (x.id === id ? { ...x, status: 'answered' as const, answer } : x)) }))
+      if (q.item !== undefined) await post($, { item: q.item, from: 'person', to: q.from === 'qa' ? 'qa' : 'pm', text: `${q.question} → ${answer}` })
+      await feed($, { type: 'answered', question: q.question, answer, role: q.from === 'qa' ? 'qa' : 'pm' })
+      return { text: `已把 ${id} 的回答轉給 ${q.from === 'qa' ? 'QA' : 'PM'}。` }
+    }
+    if (verb === 'status') {
+      const board = await loadBoard($)
+      const l = await read($, live)
+      const s = snapshotOf({ board, live: l, now: await $.clock.now() })
+      return { text: bandText(s, `crew（${l.flow.stage}）`) }
+    }
+    await $.ui.open({ id: PANE, title: 'Crew' })
+    return { text: 'crew 面板已開啟。/crew start <PRD 檔案> 開始一份 PRD。' }
+  })
+
+  on('tool.call', { tool: 'mcp__crew__board_read' }, async ($, e: any) => {
+    const board = await loadBoard($)
+    if (board === null) return { result: '還沒有看板。' }
+    return { result: renderBoard(board, typeof e.feature === 'string' ? { feature: e.feature } : {}) }
+  })
+
+  on('tool.call', { tool: 'mcp__crew__board_write' }, async ($, e: any) => {
+    const role = (await read($, live)).agents[e.agentId ?? ''] ?? 'brain'
+    const parsed = parseOps(e.ops)
+    if (!parsed.ok) return { result: `board_write 沒有生效：\n${parsed.error}` }
+    const board = (await loadBoard($)) ?? newTracker(files.root.split('/').pop() ?? 'project')
+    const now = await $.clock.now()
+    const r = applyOps(board, parsed.ops, { by: role, today: dayOf(now), prefixes: await idPrefixes($) })
+    if (!r.ok) return { result: `board_write 沒有生效，看板沒有任何變更：\n- ${r.errors.join('\n- ')}` }
+    await saveBoard($, r.tracker)
+    const titles = new Map<string, string>()
+    parsed.ops.forEach((op, i) => {
+      const id = r.results[i]?.id
+      if (id !== undefined) titles.set(id, 'title' in op ? op.title : 'text' in op ? op.text : op.op)
+    })
+    await update($, live, l => ({
+      ...l,
+      activity: [...l.activity, ...[...titles].map(([id, title]) => ({ t: now, day: dayOf(now), role, id, title }))].slice(-200),
+    }))
+    return { result: `已寫入：${[...titles.keys()].join('、')}。` }
+  })
+
+  on('tool.call', { tool: 'mcp__crew__thread_post' }, async ($, e: any) => {
+    const role = (await read($, live)).agents[e.agentId ?? ''] ?? 'brain'
+    if (typeof e.item !== 'string' || typeof e.text !== 'string' || (e.to !== 'pm' && e.to !== 'qa')) {
+      return { result: 'thread_post 需要 item、to（pm 或 qa）和 text。' }
+    }
+    await post($, { item: e.item, from: role, to: e.to, text: e.text })
+    return { result: `已寫在 ${e.item} 的討論串，${crewName(e.to)} 下次被叫醒時會看到。` }
+  })
+
+  on('tool.call', { tool: 'mcp__crew__thread_read' }, async ($, e: any) => {
+    const messages = (await read($, live)).threads[String(e.item)] ?? []
+    if (messages.length === 0) return { result: '這個項目還沒有討論。' }
+    return { result: messages.map(m => `${m.from}${m.to === undefined ? '' : ` → ${m.to}`}：${m.text}`).join('\n') }
+  })
+
+  on('tool.call', { tool: 'mcp__crew__ask_person' }, async ($, e: any) => {
+    const role = (await read($, live)).agents[e.agentId ?? '']
+    if (typeof e.question !== 'string' || e.question.trim() === '') return { result: 'ask_person 需要 question。' }
+    const id = await ask($, role ?? 'crew', e.question, typeof e.item === 'string' ? e.item : undefined)
+    return { result: `已交給使用者（${id}）。先處理其他部分，答案會轉給你。` }
+  })
+
+  // A role finishing is crew's to handle, not a reason to wake the main conversation.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.origin.kind === 'task-notification') {
+      const ids = Object.keys((await read($, live)).agents)
+      if (ids.some(id => e.text.includes(id))) return { drop: 'crew 自己處理角色的完成通知' }
+    }
+    return next(e)
+  })
+
+  on('turn.start', async ($, e, next) => {
+    const role = e.agentId === undefined ? undefined : (await read($, live)).agents[e.agentId]
+    if (role !== undefined) {
+      await update($, live, l => ({
+        ...l,
+        roles: { ...l.roles, [role]: { ...l.roles[role], state: 'working' } },
+        usage: { ...l.usage, [role]: { ...(l.usage[role] ?? ZERO), wakes: (l.usage[role]?.wakes ?? 0) + 1 } },
+      }))
+    }
+    return next(e)
+  })
+
+  on('turn.step', async function* ($, e, next) {
+    const l = await read($, live)
+    const role = e.agentId === undefined ? undefined : l.agents[e.agentId]
+    const effort = role === undefined ? undefined : l.roles[role].effort
+    const input = effort !== undefined && effort !== e.effort ? { ...e, effort: effort as typeof e.effort } : e
+    const stream = next(input)
+    for await (const chunk of stream) {
+      if (chunk.kind === 'stop' && chunk.usage !== null && (role !== undefined || e.agentId === undefined)) {
+        const u = usageOf(chunk.usage)
+        const key = role ?? 'brain'
+        await update($, live, s => {
+          const was = s.usage[key] ?? ZERO
+          const spent = u.input + u.output + u.cacheRead + u.cacheWrite
+          const tier = role === undefined ? undefined : s.roles[role].tier
+          return {
+            ...s,
+            usage: { ...s.usage, [key]: { ...was, input: was.input + u.input, output: was.output + u.output, cacheRead: was.cacheRead + u.cacheRead, cacheWrite: was.cacheWrite + u.cacheWrite } },
+            tiers: tier === undefined ? s.tiers : { ...s.tiers, [tier]: (s.tiers[tier] ?? 0) + spent },
+            roles: role === undefined ? s.roles : { ...s.roles, [role]: { ...s.roles[role], context: u.input + u.cacheRead + u.cacheWrite } },
+          }
+        })
+      }
+      yield chunk
+    }
+    return await stream.result
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const role = e.agentId === undefined ? undefined : (await read($, live)).agents[e.agentId]
+    if (role === undefined) return next(e)
+    await update($, live, l => ({ ...l, roles: { ...l.roles, [role]: { ...l.roles[role], state: 'idle', doing: '—' } } }))
+    const done = await next(e)
+    await saveUsage($)
+    const board = await loadBoard($, true)
+    if (board !== null) await feed($, { type: 'role_done', role, board })
+    return done
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const el = $.ui.resolve(e)
-    if (!(await read($, isDemo))) {
-      return <el.Text dimColor>crew 還在設計階段。輸入 /crew demo 看設計稿。</el.Text>
+    const demo = await read($, isDemo)
+    const l = await read($, live)
+    const board = demo ? null : await loadBoard($)
+    if (!demo && board === null && l.prdPath === null) {
+      return <el.Text dimColor>用 /crew start &lt;PRD 檔案&gt; 開始一份 PRD，或用 /crew demo 看設計稿。</el.Text>
     }
     const act: Actions = {
       tab: id => void update($, tab, () => id),
@@ -56,23 +354,29 @@ export const register: Register = on => {
         void update($, thread, () => id)
         void update($, tab, () => 'threads')
       },
-      reply: id => $.ui.toast(`設計稿：這裡會打開輸入框，讓你回覆 ${id}`),
+      reply: id => $.ui.toast(`用 /crew answer ${id} <你的回答> 回覆`),
     }
-    const view = {
-      tab: await read($, tab),
-      scenario: await read($, scenario),
-      thread: await read($, thread),
-      gate: await read($, gate),
-    }
-    return CrewPane({ el, snap: DEMO[view.scenario], view, act })
+    const view = { tab: await read($, tab), scenario: await read($, scenario), thread: await read($, thread), gate: await read($, gate) }
+    const snap = demo ? DEMO[view.scenario] : snapshotOf({ board, live: l, now: await $.clock.now() })
+    return CrewPane({ el, snap, view, act, isDemo: demo })
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || !(await read($, isDemo))) return next(e)
+    if (e.props.hasSurvey) return next(e)
     const { Text } = $.ui.resolve(e)
+    if (await read($, isDemo)) {
+      return (
+        <Text dimColor wrap="truncate-end">
+          {bandText(DEMO[await read($, scenario)])}
+        </Text>
+      )
+    }
+    const l = await read($, live)
+    if (l.prdPath === null) return next(e)
+    const snap = snapshotOf({ board: await loadBoard($), live: l, now: await $.clock.now() })
     return (
       <Text dimColor wrap="truncate-end">
-        {bandText(DEMO[await read($, scenario)])}
+        {bandText(snap, 'crew')}
       </Text>
     )
   })

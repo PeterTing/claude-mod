@@ -92,7 +92,7 @@ function ProgressSummary({ el, p }: { el: Elements; p: Progress }) {
         {p.stages.map((st, i) => (
           <Text color={STAGE_COLORS[st.state]}>
             {i > 0 ? '→ ' : ''}
-            {st.label} {st.state === 'done' ? '✓' : `${st.done}/${st.total}`}
+            {st.label} {st.state === 'done' ? '✓' : st.total === 0 ? '—' : `${st.done}/${st.total}`}
           </Text>
         ))}
       </Box>
@@ -207,7 +207,7 @@ function Row({ el, cells }: { el: Elements; cells: readonly [string, string, Rec
   )
 }
 
-function Header({ el, snap, view, act }: { el: Elements; snap: Snapshot; view: View; act: Actions }) {
+function Header({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapshot; view: View; act: Actions; isDemo: boolean }) {
   const { Box, Text, Button } = el
   const prd =
     snap.prd === null
@@ -215,14 +215,16 @@ function Header({ el, snap, view, act }: { el: Elements; snap: Snapshot; view: V
       : `${snap.prd.id} ${snap.prd.title} · 進度 ${snap.prd.progress}% · 今日 ${tokens(snap.today)} tok`
   return (
     <Box flexDirection="column">
-      <Text color="warning">設計稿・示意資料　/crew demo off 關閉</Text>
+      {isDemo && <Text color="warning">設計稿・示意資料　/crew demo off 關閉</Text>}
       <Text bold>{prd}</Text>
-      <Box flexDirection="row" gap={1}>
-        <Text dimColor>示意情境</Text>
-        {SCENARIOS.map(([id, label]) => (
-          <Button key={`scenario-${id}`} label={label} variant={view.scenario === id ? 'primary' : 'secondary'} onPress={() => act.scenario(id)} />
-        ))}
-      </Box>
+      {isDemo && (
+        <Box flexDirection="row" gap={1}>
+          <Text dimColor>示意情境</Text>
+          {SCENARIOS.map(([id, label]) => (
+            <Button key={`scenario-${id}`} label={label} variant={view.scenario === id ? 'primary' : 'secondary'} onPress={() => act.scenario(id)} />
+          ))}
+        </Box>
+      )}
       <Box flexDirection="row" gap={1}>
         {TABS.map(([id, label]) => (
           <Button key={`tab-${id}`} label={label} variant={view.tab === id ? 'primary' : 'secondary'} onPress={() => act.tab(id)} />
@@ -289,7 +291,7 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
                 {d.id} {d.question}
               </Text>
               <Text dimColor>
-                {ROLE_NAMES[d.from]} 提問 · {d.age}
+                {d.from === 'crew' ? 'crew' : ROLE_NAMES[d.from]} 提問 · {d.age}
               </Text>
               <Button key={`reply-${d.id}`} label="回覆" onPress={() => act.reply(d.id)} />
             </Box>
@@ -448,11 +450,11 @@ function Tokens({ el, snap }: { el: Elements; snap: Snapshot }) {
 }
 
 /** The whole pane: header, tabs and the open tab. */
-export function CrewPane({ el, snap, view, act }: { el: Elements; snap: Snapshot; view: View; act: Actions }) {
+export function CrewPane({ el, snap, view, act, isDemo = true }: { el: Elements; snap: Snapshot; view: View; act: Actions; isDemo?: boolean }) {
   const { Box } = el
   return (
     <Box flexDirection="column" gap={1}>
-      {Header({ el, snap, view, act })}
+      {Header({ el, snap, view, act, isDemo })}
       {view.tab === 'overview' && Overview({ el, snap, view, act })}
       {view.tab === 'progress' && ProgressTab({ el, snap })}
       {view.tab === 'board' && Board({ el, snap })}
@@ -464,12 +466,12 @@ export function CrewPane({ el, snap, view, act }: { el: Elements; snap: Snapshot
 }
 
 /** The one line above the prompt: what needs the person first, then the roles. */
-export function bandText(snap: Snapshot): string {
+export function bandText(snap: Snapshot, label = 'crew（設計稿）'): string {
   const roles = snap.roles
     .map(r => `${r.id === 'techlead' ? 'TL' : ROLE_NAMES[r.id]} ${r.state === 'working' ? r.doing.split(' ')[0] : ROLE_STATE_NAMES[r.state]}`)
     .join(' · ')
   const parts = [
-    'crew（設計稿）',
+    label,
     ...(snap.progress !== null ? [`進度 ${percentOf(snap.progress)}%（${snap.progress.done}/${snap.progress.total}）`] : []),
     `待你決定 ${snap.decisions.length}`,
     ...(snap.alerts.length > 0 ? [`⚠ ${snap.alerts.length} 則提醒`] : []),
