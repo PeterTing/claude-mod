@@ -15,6 +15,8 @@ declare module 'claude-code' {
       scenario: CrewScenario
       /** The item whose thread the Threads tab has open, if any. */
       thread: string | null
+      /** The gate whose detail the overview has open, if any. */
+      gate: string | null
     }
   }
 }

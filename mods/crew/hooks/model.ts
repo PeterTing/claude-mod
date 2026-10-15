@@ -58,7 +58,28 @@ export type Item = {
 
 export type GateState = 'pass' | 'gap' | 'active' | 'pending'
 
-export type Gate = { id: string; state: GateState; detail?: string }
+/** Something a gate still misses: an item, and where it stands. */
+export type Gap = { id: string; title: string; status: string; thread?: string }
+
+/**
+ * A check computed from prd-tracker.json in code (no tokens): what it
+ * checks, who fills a gap and who confirms, how much is covered, the gaps.
+ */
+export type Gate = {
+  id: string
+  state: GateState
+  /** The short text beside the id on the overview. */
+  detail?: string
+  name: string
+  fill: string
+  confirm: string
+  covered: number
+  total: number
+  gaps: readonly Gap[]
+  /** Said instead of a gap list, when there is one thing to say. */
+  note?: string
+  checked: string
+}
 
 export type Decision = { id: string; question: string; from: RoleId; age: string }
 

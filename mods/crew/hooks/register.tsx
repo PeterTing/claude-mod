@@ -12,6 +12,7 @@ const isDemo = atom({ plugin: 'crew', key: 'isDemo' } as const, false)
 const tab = atom({ plugin: 'crew', key: 'tab' } as const, 'overview' as CrewTab)
 const scenario = atom({ plugin: 'crew', key: 'scenario' } as const, 'normal' as CrewScenario)
 const thread = atom({ plugin: 'crew', key: 'thread' } as const, null as string | null)
+const gate = atom({ plugin: 'crew', key: 'gate' } as const, null as string | null)
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -34,6 +35,7 @@ export const register: Register = on => {
       await update($, tab, () => 'overview')
       await update($, scenario, () => 'normal')
       await update($, thread, () => null)
+      await update($, gate, () => null)
       await $.ui.open({ id: PANE, title: 'Crew（設計稿）' })
       return { text: '已開啟 crew 設計稿：面板和輸入框上方那一行都是示意資料。/crew demo off 關閉。' }
     }
@@ -49,9 +51,19 @@ export const register: Register = on => {
       tab: id => void update($, tab, () => id),
       scenario: id => void update($, scenario, () => id),
       thread: id => void update($, thread, () => id),
+      gate: id => void update($, gate, () => id),
+      openThread: id => {
+        void update($, thread, () => id)
+        void update($, tab, () => 'threads')
+      },
       reply: id => $.ui.toast(`設計稿：這裡會打開輸入框，讓你回覆 ${id}`),
     }
-    const view = { tab: await read($, tab), scenario: await read($, scenario), thread: await read($, thread) }
+    const view = {
+      tab: await read($, tab),
+      scenario: await read($, scenario),
+      thread: await read($, thread),
+      gate: await read($, gate),
+    }
     return CrewPane({ el, snap: DEMO[view.scenario], view, act })
   })
 

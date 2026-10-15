@@ -17,10 +17,14 @@ export type Actions = {
   tab: (tab: CrewTab) => void
   scenario: (scenario: CrewScenario) => void
   thread: (item: string | null) => void
+  /** Opens a gate's detail on the overview, or closes it with null. */
+  gate: (gate: string | null) => void
+  /** Opens an item's thread on the Threads tab. */
+  openThread: (item: string) => void
   reply: (decision: string) => void
 }
 
-export type View = { tab: CrewTab; scenario: CrewScenario; thread: string | null }
+export type View = { tab: CrewTab; scenario: CrewScenario; thread: string | null; gate: string | null }
 
 const TABS: readonly [CrewTab, string][] = [
   ['overview', '總覽'],
@@ -139,6 +143,52 @@ function ProgressTab({ el, snap }: { el: Elements; snap: Snapshot }) {
   )
 }
 
+/** What a gate checks, who fills and confirms it, how much is covered, and each gap. */
+function GateDetail({ el, g, act }: { el: Elements; g: Gate; act: Actions }) {
+  const { Box, Text, Button } = el
+  const pct = g.total === 0 ? 0 : Math.round((g.covered / g.total) * 100)
+  return (
+    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+      <Box flexDirection="row" gap={1}>
+        <Text bold>
+          {g.id} {g.name}
+        </Text>
+        <Button key="gate-close" label="收起" onPress={() => act.gate(null)} />
+      </Box>
+      <Text dimColor>
+        負責：{g.fill} · {g.confirm}
+      </Text>
+      <Box flexDirection="row" gap={1}>
+        <Text>覆蓋</Text>
+        <Text color={pct === 100 ? 'success' : 'suggestion'}>{bar(pct)}</Text>
+        <Text>
+          {g.covered}/{g.total}（{pct}%）
+        </Text>
+      </Box>
+      {g.gaps.length === 0 ? (
+        <Text color="success">沒有缺口。</Text>
+      ) : (
+        <Box flexDirection="column">
+          <Text color="warning">缺口（{g.gaps.length}）</Text>
+          {g.gaps.map(gap => (
+            <Box flexDirection="row" gap={1}>
+              <Text>
+                {gap.id} {gap.title}
+              </Text>
+              <Text dimColor>· {gap.status}</Text>
+              {gap.thread !== undefined && (
+                <Button key={`gap-thread-${gap.thread}`} label="看討論" onPress={() => act.openThread(gap.thread ?? '')} />
+              )}
+            </Box>
+          ))}
+        </Box>
+      )}
+      {g.note !== undefined && <Text dimColor>{g.note}</Text>}
+      <Text dimColor>上次檢查：{g.checked} · 程式計算，比對 prd-tracker.json，不花 token</Text>
+    </Box>
+  )
+}
+
 const route = (r: Route | undefined): string => (r === undefined ? '—' : `${r.tier} ${r.model}・${r.effort}`)
 
 /** One table row: each cell a width and a text. */
@@ -182,8 +232,9 @@ function Header({ el, snap, view, act }: { el: Elements; snap: Snapshot; view: V
   )
 }
 
-function Overview({ el, snap, act }: { el: Elements; snap: Snapshot; act: Actions }) {
+function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view: View; act: Actions }) {
   const { Box, Text, Button } = el
+  const openGate = snap.gates.find(g => g.id === view.gate)
   return (
     <Box flexDirection="column" gap={1}>
       {snap.progress !== null && ProgressSummary({ el, p: snap.progress })}
@@ -205,12 +256,20 @@ function Overview({ el, snap, act }: { el: Elements; snap: Snapshot; act: Action
             ] }))}
       </Box>
       {snap.gates.length > 0 && (
-        <Box flexDirection="row" gap={2}>
-          <Text dimColor>關卡</Text>
-          {snap.gates.map(g => {
-            const [text, color] = GATE_TEXT(g)
-            return <Text color={color}>{text}</Text>
-          })}
+        <Box flexDirection="column">
+          <Box flexDirection="row" gap={1}>
+            <Text dimColor>關卡</Text>
+            {snap.gates.map(g => (
+              <Button
+                key={`gate-${g.id}`}
+                label={GATE_TEXT(g)[0]}
+                variant={view.gate === g.id ? 'primary' : 'secondary'}
+                dimColor={g.state === 'pending'}
+                onPress={() => act.gate(view.gate === g.id ? null : g.id)}
+              />
+            ))}
+          </Box>
+          {openGate !== undefined && GateDetail({ el, g: openGate, act })}
         </Box>
       )}
       {snap.alerts.length > 0 && (
@@ -394,7 +453,7 @@ export function CrewPane({ el, snap, view, act }: { el: Elements; snap: Snapshot
   return (
     <Box flexDirection="column" gap={1}>
       {Header({ el, snap, view, act })}
-      {view.tab === 'overview' && Overview({ el, snap, act })}
+      {view.tab === 'overview' && Overview({ el, snap, view, act })}
       {view.tab === 'progress' && ProgressTab({ el, snap })}
       {view.tab === 'board' && Board({ el, snap })}
       {view.tab === 'threads' && Threads({ el, snap, view, act })}

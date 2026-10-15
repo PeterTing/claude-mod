@@ -57,7 +57,7 @@ describe('/crew demo', () => {
       const text = await shown(ui)
       expect(text).toMatch(/設計稿・示意資料/)
       for (const role of ['PM', 'UI/UX', '全端', 'QA', 'Tech lead']) expect(text).toContain(role)
-      expect(text).toMatch(/G4/)
+      for (const id of ['G1', 'G2', 'G3', 'G4', 'G5', 'G6']) expect(await ui.find({ key: `gate-${id}` })).toBeDefined()
       expect(text).toMatch(/待你決定/)
       expect(text).toMatch(/輪替中/)
       await ui.unmount()
@@ -93,6 +93,47 @@ describe('/crew demo', () => {
       expect(text).toMatch(/移出 v1/)
       expect(text).toMatch(/每天完成/)
       await ui.press({ key: 'tab-overview' })
+      await ui.unmount()
+    }
+  })
+
+  test('opens a gate’s detail: what it checks, who fills and confirms it, coverage and each gap', async ($, on) => {
+    stage(on)
+    await demoOn($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount(pane(surface))
+      await ui.press({ key: 'gate-G4' })
+      const text = await shown(ui)
+      expect(text).toMatch(/每條驗收條件都有 test case/)
+      expect(text).toMatch(/QA 補.*PM 確認/)
+      expect(text).toMatch(/14\/16/)
+      expect(text).toMatch(/AC-07/)
+      expect(text).toMatch(/AC-09/)
+      expect(text).toMatch(/程式計算/)
+
+      await ui.press({ key: 'gate-G1' })
+      const g1 = await shown(ui)
+      expect(g1).toMatch(/每個功能都有驗收條件/)
+      expect(g1).toMatch(/沒有缺口/)
+
+      await ui.press({ key: 'gate-close' })
+      expect(await shown(ui)).not.toMatch(/每個功能都有驗收條件/)
+      await ui.unmount()
+    }
+  })
+
+  test('jumps from a gap to its thread', async ($, on) => {
+    stage(on)
+    await demoOn($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount(pane(surface))
+      await ui.press({ key: 'gate-G4' })
+      await ui.press({ key: 'gap-thread-AC-07' })
+      const text = await shown(ui)
+      expect(text).toMatch(/AC-09 移出 v1/)
+      await ui.press({ key: 'thread-back' })
+      await ui.press({ key: 'tab-overview' })
+      await ui.press({ key: 'gate-close' })
       await ui.unmount()
     }
   })
