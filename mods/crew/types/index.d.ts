@@ -70,8 +70,10 @@ export type CrewLive = {
   seen: Record<string, number>
   questions: CrewQuestion[]
   activity: CrewActivity[]
-  /** Role → the ASK thread of the person's question it is answering. */
-  asks: Record<string, string>
+  /** Role → the ASK thread of the question it is answering, and who asked: the person, or the brain for them. */
+  asks: Record<string, { id: string; by: 'person' | 'brain' }>
+  /** Who started the PRD under way: work the brain started reports back to it. */
+  lead: 'person' | 'brain'
   /** How many questions the person has asked the roles directly. */
   asked: number
   /** Memories attached to starts and wakes: how many times, how many tokens in all. */

@@ -25,6 +25,8 @@ export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
   const registered = { tools: [] as string[], agents: [] as string[] }
   /** What the small model is asked, and the replies it gives in turn. */
   const completions: { model: string; prompt: string; system?: string }[] = []
+  /** What crew submitted to the main conversation. */
+  const prompts: string[] = []
   const replies: string[] = []
   on('fs.exists', (_$, e) => ({ value: disk.has(e.path) || [...disk.keys()].some(p => p.startsWith(`${e.path}/`)) }))
   on('fs.read', (_$, e) => (disk.has(e.path) ? { value: disk.get(e.path) ?? '' } : { deny: `ENOENT ${e.path}` }))
@@ -56,6 +58,11 @@ export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.close', () => ({ value: undefined }))
+  const logs: string[] = []
+  on('ui.log', (_$, e) => {
+    logs.push(String((e as { text?: unknown }).text ?? JSON.stringify(e)))
+    return { value: undefined }
+  })
   on('ui.toast', (_$, e) => {
     toasts.push(e.text)
     return { value: undefined }
@@ -86,10 +93,13 @@ export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
   })
   on('agent.offer', () => ({ isOffered: true }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
-  on('prompt.submit', (_$, e) => ({ text: e.text }))
+  on('prompt.submit', (_$, e) => {
+    if (e.origin.kind === 'plugin') prompts.push(e.text)
+    return { text: e.text }
+  })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   const board = () => JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? 'null') as Tracker | null
-  return { disk, spawned, sent, toasts, registered, board, completions, replies, order }
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)

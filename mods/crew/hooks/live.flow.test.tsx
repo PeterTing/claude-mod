@@ -7,7 +7,7 @@ describe('crew, PM and QA', () => {
   test('registers its tools and its two roles when the session starts', async ($, on) => {
     const w = world($, on)
     await start($)
-    expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'memory_save', 'memory_search'])
+    expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'memory_save', 'memory_search', 'crew'])
     expect(w.registered.agents).toEqual(['pm', 'qa'])
   })
 

@@ -217,3 +217,46 @@ describe('step', () => {
     expect((r.actions[0] as { text: string }).text).toMatch(/正在進行/)
   })
 })
+
+describe('resume', () => {
+  const at = (stage: FlowState['stage']): FlowState => ({ stage, round: 1, retries: 0 })
+  const resume = (state: FlowState, b: Tracker) => step(state, { type: 'resume', board: b, prd: { path: 'docs/PRD.md', size: 600 } })
+
+  test('starts the PM again on a split left half done, keeping what is on the board', () => {
+    const r = resume(at('splitting'), newTracker('shop'))
+    expect(r.state.stage).toBe('splitting')
+    expect(r.actions[0]).toMatchObject({ type: 'spawn', role: 'pm', route: { tier: 'M' } })
+    expect((r.actions[0] as { prompt: string }).prompt).toMatch(/docs\/PRD\.md[\s\S]*已經在看板上的不要重複/)
+  })
+
+  test('has the PM finish a split even when every feature on the board has criteria: the PRD may hold more', () => {
+    const r = resume(at('splitting'), board(SPLIT))
+    expect(r.state.stage).toBe('splitting')
+    expect(r.actions[0]).toMatchObject({ type: 'spawn', role: 'pm' })
+  })
+
+  test('sends QA the criteria it had not covered yet', () => {
+    const r = resume(at('writing_tests'), board(SPLIT, [tc(['AC-001'])]))
+    expect(r.state.stage).toBe('writing_tests')
+    expect(r.actions[0]).toMatchObject({ type: 'message', role: 'qa', item: 'AC-002' })
+    expect((r.actions[0] as { text: string }).text).toMatch(/AC-002 可以看到價格/)
+    expect((r.actions[0] as { text: string }).text).not.toMatch(/AC-001/)
+  })
+
+  test('finishes a test round QA had completed', () => {
+    const r = resume(at('adding_tests'), board(SPLIT, [tc(['AC-001', 'AC-002'])]))
+    expect(r.state.stage).toBe('done')
+  })
+
+  test('sends the PM the gaps it was confirming', () => {
+    const r = resume(at('confirming'), board(SPLIT, [tc(['AC-001'])]))
+    expect(r.state.stage).toBe('confirming')
+    expect(r.actions[0]).toMatchObject({ type: 'message', role: 'pm', item: 'AC-002' })
+  })
+
+  test('leaves a finished, idle or waiting flow alone', () => {
+    for (const stage of ['idle', 'done', 'escalated'] as const) {
+      expect(resume(at(stage), board(SPLIT)).actions).toEqual([])
+    }
+  })
+})

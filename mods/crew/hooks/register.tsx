@@ -129,6 +129,20 @@ async function note($: any, event: Record<string, unknown>) {
  */
 async function restore($: any) {
   const l = await read($, live)
+  if (l.prdPath === null && (await $.fs.exists(`${files.crew}/state.json`))) {
+    try {
+      const saved = JSON.parse(await $.fs.read(`${files.crew}/state.json`)) as Partial<Pick<CrewLive, 'prdPath' | 'flow' | 'questions' | 'lead'>>
+      await update($, live, (x): CrewLive => ({
+        ...x,
+        prdPath: typeof saved.prdPath === 'string' ? saved.prdPath : null,
+        flow: saved.flow ?? x.flow,
+        questions: Array.isArray(saved.questions) ? saved.questions : [],
+        lead: saved.lead === 'brain' ? 'brain' : 'person',
+      }))
+    } catch (err) {
+      $.ui.log(`crew: .crew/state.json is unreadable, starting clean: ${String(err)}`)
+    }
+  }
   if (Object.keys(l.threads).length > 0 || Object.keys(l.usage).length > 0) return
   const threads: Record<string, CrewMessage[]> = {}
   const dir = `${files.crew}/threads`
@@ -340,6 +354,7 @@ async function execute($: any, actions: readonly FlowAction[]) {
       await ask($, 'crew', action.question, action.item)
     } else {
       $.ui.toast(`crew：${action.text}`)
+      if ((await read($, live)).lead === 'brain') tellBrain(action.text)
     }
   }
 }
@@ -353,6 +368,10 @@ async function ask($: any, from: 'pm' | 'qa' | 'crew', question: string, item?: 
   })
   $.ui.toast(`crew：有一件事等你決定（/crew answer ${id} 你的回答）`)
   await note($, { kind: 'ask', id, from, question, ...(item === undefined ? {} : { item }) })
+  await saveState($)
+  if ((await read($, live)).lead === 'brain') {
+    tellBrain(`${from === 'crew' ? 'crew' : crewName(from)} 有一件事要使用者決定（${id}）：${question}\n請問使用者；拿到回答後，用 crew 工具的 answer（question: ${id}）轉回。`)
+  }
   return id
 }
 
@@ -414,7 +433,54 @@ async function feed($: any, event: FlowEvent) {
   const before = (await read($, live)).flow
   const r = step(before, event)
   await update($, live, l => ({ ...l, flow: r.state }))
+  await saveState($)
   await execute($, r.actions)
+}
+
+/** What a restart needs to pick the PRD up again, in .crew/state.json. */
+async function saveState($: any) {
+  if (files.crew === '') return
+  const l = await read($, live)
+  await $.fs.write(`${files.crew}/state.json`, `${JSON.stringify({ prdPath: l.prdPath, flow: l.flow, questions: l.questions, lead: l.lead }, null, 2)}\n`)
+}
+
+/** Notes for the main conversation about work it started, sent together when a turn ends. */
+const brainQueue: string[] = []
+
+function tellBrain(text: string) {
+  brainQueue.push(text)
+}
+
+/**
+ * Sends the queued notes as one prompt, which runs once the conversation is
+ * idle. Only from a turn's end: a prompt submitted from a tool call would wait
+ * on the turn that call holds.
+ */
+function flushBrain($: any) {
+  if (brainQueue.length === 0) return
+  const text = `[crew] ${brainQueue.splice(0).join('\n\n')}`
+  void Promise.resolve($.prompt.submit({ text })).catch((err: unknown) => $.ui.log(`crew: could not tell the brain: ${String(err)}`))
+}
+
+/**
+ * Picks up a PRD the last session left under way: its roles went with that
+ * session, so the flow starts them again from what the board shows.
+ */
+async function resumeOnStart($: any) {
+  const l = await read($, live)
+  const open = l.questions.filter(q => q.status === 'open').length
+  const running = ['splitting', 'writing_tests', 'confirming', 'adding_tests'].includes(l.flow.stage)
+  if (running && l.prdPath !== null && Object.keys(l.agents).length === 0) {
+    const full = l.prdPath.startsWith('/') ? l.prdPath : `${files.root}/${l.prdPath}`
+    const board = await loadBoard($, true)
+    if (board !== null && (await $.fs.exists(full))) {
+      const text: string = await $.fs.read(full)
+      $.ui.toast(`crew：接續 ${l.prdPath}（${l.flow.stage}）`)
+      await note($, { kind: 'resume', path: l.prdPath, stage: l.flow.stage })
+      await feed($, { type: 'resume', board, prd: { path: l.prdPath, size: text.length, text: text.slice(0, 4_000) } })
+    }
+  }
+  if (open > 0) $.ui.toast(`crew：有 ${open} 件事等你決定（/crew status）`)
 }
 
 async function saveUsage($: any) {
@@ -430,6 +496,122 @@ const inboxOf = (l: CrewLive): { pm: string[]; qa: string[] } => {
       .filter(([, messages]) => messages.some(m => m.to === role && m.from !== 'crew' && (m.n ?? 0) > (l.seen[role] ?? 0)))
       .map(([item]) => item)
   return { pm: unread('pm'), qa: unread('qa') }
+}
+
+/**
+ * One crew command, from /crew or from the brain's crew tool: what it did, in
+ * a sentence. Work the brain starts reports back to it.
+ */
+async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'brain'): Promise<string> {
+  if (verb === 'demo') {
+    if (rest[0] === 'off') {
+      await update($, isDemo, () => false)
+      await $.ui.close({ id: PANE })
+      return '已關閉 crew 設計稿。'
+    }
+    await update($, isDemo, () => true)
+    await update($, tab, () => 'overview')
+    await update($, scenario, () => 'normal')
+    await update($, thread, () => null)
+    await update($, gate, () => null)
+    await $.ui.open({ id: PANE, title: 'Crew（設計稿）' })
+    return '已開啟 crew 設計稿：面板和輸入框上方那一行都是示意資料。/crew demo off 關閉。'
+  }
+  if (verb === 'start') {
+    const path = rest.join(' ')
+    if (path === '') return '用法：/crew start <PRD 檔案路徑>'
+    const full = path.startsWith('/') ? path : `${files.root}/${path}`
+    if (!(await $.fs.exists(full))) return `找不到 ${path}。`
+    const text: string = await $.fs.read(full)
+    const board = (await loadBoard($, true)) ?? newTracker(files.root.split('/').pop() ?? 'project')
+    await saveBoard($, board)
+    await $.fs.write(`${files.crew}/.gitignore`, 'usage/\nlog/\n')
+    const stage = (await read($, live)).flow.stage
+    if (stage !== 'idle' && stage !== 'done' && stage !== 'escalated') {
+      return `crew 正在進行（${stage}），等這一輪完成再開始新的；卡住的話先用 /crew reset。`
+    }
+    await update($, isDemo, () => false)
+    await update($, live, l => ({ ...l, prdPath: path, lead: by }))
+    await note($, { kind: 'prd', path, size: text.length, by })
+    await feed($, { type: 'start', prd: { path, size: text.length, text: text.slice(0, 4_000) } })
+    await $.ui.open({ id: PANE, title: 'Crew' })
+    const pm = (await read($, live)).roles.pm
+    if (pm.state === 'blocked') return `crew 沒有開始：${pm.doing}`
+    return `crew 開始：PM 正在拆 ${path}（${pm.tier ?? ''} ${pm.label ?? ''}・${pm.effort ?? ''}）。進度在 /crew 面板。`
+  }
+  if (verb === 'reset') {
+    await update($, live, () => emptyLive())
+    await saveState($)
+    return '已清掉這個 session 的 crew 狀態。看板（prd-tracker.json）、討論串和記憶（.crew/memory）都保留。'
+  }
+  if (verb === 'answer') {
+    const [id = '', ...words] = rest
+    const answer = words.join(' ')
+    const q = (await read($, live)).questions.find(x => x.id === id && x.status === 'open')
+    if (q === undefined || answer === '') return '用法：/crew answer <Q-編號> <回答>，編號要是還沒回答的問題。'
+    await update($, live, l => ({ ...l, questions: l.questions.map(x => (x.id === id ? { ...x, status: 'answered' as const, answer } : x)) }))
+    if (q.item !== undefined) await post($, { item: q.item, from: 'person', to: q.from === 'qa' ? 'qa' : 'pm', text: `${q.question} → ${answer}` })
+    await remember($, { type: 'DEC', text: `使用者決定：${answer}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `person ${q.id}` }, q.from === 'qa' ? 'qa' : 'pm')
+    await feed($, { type: 'answered', question: q.question, answer, role: q.from === 'qa' ? 'qa' : 'pm' })
+    return `已把 ${id} 的回答轉給 ${q.from === 'qa' ? 'QA' : 'PM'}。`
+  }
+  if (verb === 'ask') {
+    const [role = '', ...words] = rest
+    const question = words.join(' ')
+    if ((role !== 'pm' && role !== 'qa') || question === '') return '用法：/crew ask <pm|qa> <你的問題>'
+    const l = await read($, live)
+    const name = crewName(role)
+    if (l.roles[role].state === 'working') return `${name} 正在工作，等它這一輪做完再問。`
+    const id = `ASK-${String(l.asked + 1).padStart(2, '0')}`
+    await update($, live, s => ({ ...s, asked: s.asked + 1, asks: { ...s.asks, [role]: { id, by } } }))
+    await post($, { item: id, from: 'person', to: role, text: question })
+    const text = `使用者問你（${id}）：${question}\n直接回答，幾句話就好；需要時先用 board_read、thread_read、memory_search 查。使用者沒有要你改看板就不要改。`
+    await deliver($, role, routeFor(role, l.roles[role].tier ?? 'S'), text, id)
+    const after = (await read($, live)).roles[role]
+    if (after.state === 'blocked') {
+      await update($, live, s => ({ ...s, asks: Object.fromEntries(Object.entries(s.asks).filter(([r]) => r !== role)) }))
+      return `沒有問到 ${name}：${after.doing}`
+    }
+    return by === 'brain' ? `已問 ${name}（${id}）。${name} 回覆後會再通知你。` : `已問 ${name}（${id}）。回覆後會通知你，用 /crew thread ${id} 看。`
+  }
+  if (verb === 'rotate') {
+    const role = rest[0] ?? ''
+    if (role !== 'pm' && role !== 'qa') return '用法：/crew rotate <pm|qa>'
+    const r = (await read($, live)).roles[role]
+    const name = crewName(role)
+    if (r.agentId === undefined) return `${name} 還沒開始，下次叫它時就是新的 context。`
+    await update($, live, s => ({ ...s, roles: { ...s.roles, [role]: { ...s.roles[role], rotate: true } } }))
+    return `下次叫醒 ${name} 時會換新的 context，帶看板狀況、相關記憶和上一輪的回報重開（目前 context ${Math.round(r.context / 1000)}K）。可以用 /crew ask ${role} <問題> 馬上試。`
+  }
+  if (verb === 'thread') {
+    const item = rest[0] ?? ''
+    const messages = (await read($, live)).threads[item] ?? []
+    if (item === '' || messages.length === 0) return `${item || '這個項目'} 還沒有討論。`
+    return messages.map(m => `${who(m.from)}${m.to === undefined ? '' : ` → ${who(m.to)}`}：${m.text}`).join('\n')
+  }
+  if (verb === 'recall') {
+    const query = rest.join(' ')
+    if (query === '') return '用法：/crew recall <關鍵字或編號>'
+    const hits = searchMemories(await loadMemories($), { text: query, related: relatedOf(await loadBoard($)), limit: 10 }).filter(h => h.why !== 'pref')
+    return hits.length === 0 ? '沒有找到相關記憶。' : packMemories(hits, 4_000).text
+  }
+  if (verb === 'remember') {
+    const text = rest.join(' ')
+    if (text === '') return '用法：/crew remember <要記住的偏好>'
+    const r = await remember($, { type: 'PREF', text, source: 'person' })
+    return r.ok ? `已記住 ${r.entry.id}：${r.entry.text}${r.note === undefined ? '' : `（${r.note}）`}` : r.error
+  }
+  if (verb === 'consolidate') {
+    return await consolidate($, rest[0] ?? dayOf(await $.clock.now()))
+  }
+  if (verb === 'status') {
+    const board = await loadBoard($)
+    const l = await read($, live)
+    const s = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($) })
+    return bandText(s, `crew（${l.flow.stage}）`)
+  }
+  await $.ui.open({ id: PANE, title: 'Crew' })
+  return 'crew 面板已開啟。/crew start <PRD 檔案> 開始一份 PRD。'
 }
 
 export const register: Register = on => {
@@ -466,6 +648,7 @@ export const register: Register = on => {
     } finally {
       booted()
     }
+    await resumeOnStart($)
     return next(e)
   })
 
@@ -478,114 +661,7 @@ export const register: Register = on => {
     // A command typed while the session is still starting waits for crew's roles and tools.
     await boot.ready
     const [verb = '', ...rest] = e.args.trim().split(/\s+/).filter(Boolean)
-    if (verb === 'demo') {
-      if (rest[0] === 'off') {
-        await update($, isDemo, () => false)
-        await $.ui.close({ id: PANE })
-        return { text: '已關閉 crew 設計稿。' }
-      }
-      await update($, isDemo, () => true)
-      await update($, tab, () => 'overview')
-      await update($, scenario, () => 'normal')
-      await update($, thread, () => null)
-      await update($, gate, () => null)
-      await $.ui.open({ id: PANE, title: 'Crew（設計稿）' })
-      return { text: '已開啟 crew 設計稿：面板和輸入框上方那一行都是示意資料。/crew demo off 關閉。' }
-    }
-    if (verb === 'start') {
-      const path = rest.join(' ')
-      if (path === '') return { text: '用法：/crew start <PRD 檔案路徑>' }
-      const full = path.startsWith('/') ? path : `${files.root}/${path}`
-      if (!(await $.fs.exists(full))) return { text: `找不到 ${path}。` }
-      const text: string = await $.fs.read(full)
-      const board = (await loadBoard($, true)) ?? newTracker(files.root.split('/').pop() ?? 'project')
-      await saveBoard($, board)
-      await $.fs.write(`${files.crew}/.gitignore`, 'usage/\nlog/\n')
-      const stage = (await read($, live)).flow.stage
-      if (stage !== 'idle' && stage !== 'done' && stage !== 'escalated') {
-        return { text: `crew 正在進行（${stage}），等這一輪完成再開始新的；卡住的話先用 /crew reset。` }
-      }
-      await update($, isDemo, () => false)
-      await update($, live, l => ({ ...l, prdPath: path }))
-      await note($, { kind: 'prd', path, size: text.length })
-      await feed($, { type: 'start', prd: { path, size: text.length, text: text.slice(0, 4_000) } })
-      await $.ui.open({ id: PANE, title: 'Crew' })
-      const pm = (await read($, live)).roles.pm
-      if (pm.state === 'blocked') return { text: `crew 沒有開始：${pm.doing}` }
-      return { text: `crew 開始：PM 正在拆 ${path}（${pm.tier ?? ''} ${pm.label ?? ''}・${pm.effort ?? ''}）。進度在 /crew 面板。` }
-    }
-    if (verb === 'reset') {
-      await update($, live, () => emptyLive())
-      return { text: '已清掉這個 session 的 crew 狀態。看板（prd-tracker.json）、討論串和記憶（.crew/memory）都保留。' }
-    }
-    if (verb === 'answer') {
-      const [id = '', ...words] = rest
-      const answer = words.join(' ')
-      const q = (await read($, live)).questions.find(x => x.id === id && x.status === 'open')
-      if (q === undefined || answer === '') return { text: '用法：/crew answer <Q-編號> <回答>，編號要是還沒回答的問題。' }
-      await update($, live, l => ({ ...l, questions: l.questions.map(x => (x.id === id ? { ...x, status: 'answered' as const, answer } : x)) }))
-      if (q.item !== undefined) await post($, { item: q.item, from: 'person', to: q.from === 'qa' ? 'qa' : 'pm', text: `${q.question} → ${answer}` })
-      await remember($, { type: 'DEC', text: `使用者決定：${answer}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `person ${q.id}` }, q.from === 'qa' ? 'qa' : 'pm')
-      await feed($, { type: 'answered', question: q.question, answer, role: q.from === 'qa' ? 'qa' : 'pm' })
-      return { text: `已把 ${id} 的回答轉給 ${q.from === 'qa' ? 'QA' : 'PM'}。` }
-    }
-    if (verb === 'ask') {
-      const [role = '', ...words] = rest
-      const question = words.join(' ')
-      if ((role !== 'pm' && role !== 'qa') || question === '') return { text: '用法：/crew ask <pm|qa> <你的問題>' }
-      const l = await read($, live)
-      const name = crewName(role)
-      if (l.roles[role].state === 'working') return { text: `${name} 正在工作，等它這一輪做完再問。` }
-      const id = `ASK-${String(l.asked + 1).padStart(2, '0')}`
-      await update($, live, s => ({ ...s, asked: s.asked + 1, asks: { ...s.asks, [role]: id } }))
-      await post($, { item: id, from: 'person', to: role, text: question })
-      const text = `使用者問你（${id}）：${question}\n直接回答，幾句話就好；需要時先用 board_read、thread_read、memory_search 查。使用者沒有要你改看板就不要改。`
-      await deliver($, role, routeFor(role, l.roles[role].tier ?? 'S'), text, id)
-      const after = (await read($, live)).roles[role]
-      if (after.state === 'blocked') {
-        await update($, live, s => ({ ...s, asks: Object.fromEntries(Object.entries(s.asks).filter(([r]) => r !== role)) }))
-        return { text: `沒有問到 ${name}：${after.doing}` }
-      }
-      return { text: `已問 ${name}（${id}）。回覆後會通知你，用 /crew thread ${id} 看。` }
-    }
-    if (verb === 'rotate') {
-      const role = rest[0] ?? ''
-      if (role !== 'pm' && role !== 'qa') return { text: '用法：/crew rotate <pm|qa>' }
-      const r = (await read($, live)).roles[role]
-      const name = crewName(role)
-      if (r.agentId === undefined) return { text: `${name} 還沒開始，下次叫它時就是新的 context。` }
-      await update($, live, s => ({ ...s, roles: { ...s.roles, [role]: { ...s.roles[role], rotate: true } } }))
-      return { text: `下次叫醒 ${name} 時會換新的 context，帶看板狀況、相關記憶和上一輪的回報重開（目前 context ${Math.round(r.context / 1000)}K）。可以用 /crew ask ${role} <問題> 馬上試。` }
-    }
-    if (verb === 'thread') {
-      const item = rest[0] ?? ''
-      const messages = (await read($, live)).threads[item] ?? []
-      if (item === '' || messages.length === 0) return { text: `${item || '這個項目'} 還沒有討論。` }
-      return { text: messages.map(m => `${who(m.from)}${m.to === undefined ? '' : ` → ${who(m.to)}`}：${m.text}`).join('\n') }
-    }
-    if (verb === 'recall') {
-      const query = rest.join(' ')
-      if (query === '') return { text: '用法：/crew recall <關鍵字或編號>' }
-      const hits = searchMemories(await loadMemories($), { text: query, related: relatedOf(await loadBoard($)), limit: 10 }).filter(h => h.why !== 'pref')
-      return { text: hits.length === 0 ? '沒有找到相關記憶。' : packMemories(hits, 4_000).text }
-    }
-    if (verb === 'remember') {
-      const text = rest.join(' ')
-      if (text === '') return { text: '用法：/crew remember <要記住的偏好>' }
-      const r = await remember($, { type: 'PREF', text, source: 'person' })
-      return { text: r.ok ? `已記住 ${r.entry.id}：${r.entry.text}${r.note === undefined ? '' : `（${r.note}）`}` : r.error }
-    }
-    if (verb === 'consolidate') {
-      return { text: await consolidate($, rest[0] ?? dayOf(await $.clock.now())) }
-    }
-    if (verb === 'status') {
-      const board = await loadBoard($)
-      const l = await read($, live)
-      const s = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($) })
-      return { text: bandText(s, `crew（${l.flow.stage}）`) }
-    }
-    await $.ui.open({ id: PANE, title: 'Crew' })
-    return { text: 'crew 面板已開啟。/crew start <PRD 檔案> 開始一份 PRD。' }
+    return { text: await crewVerb($, verb, rest, 'person') }
   })
 
   on('tool.call', { tool: 'mcp__crew__board_read' }, async ($, e: any) => {
@@ -657,6 +733,27 @@ export const register: Register = on => {
     if (typeof e.question !== 'string' || e.question.trim() === '') return { result: 'ask_person 需要 question。' }
     const id = await ask($, role ?? 'crew', e.question, typeof e.item === 'string' ? e.item : undefined)
     return { result: `已交給使用者（${id}）。先處理其他部分，答案會轉給你。` }
+  })
+
+  // The brain's way to run the team in plain language: the /crew commands, as a tool.
+  on('tool.call', { tool: 'mcp__crew__crew' }, async ($, e: any) => {
+    if (e.agentId !== undefined) return { result: 'crew 工具只給主對話用。' }
+    const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+    const words = (v: unknown): string[] => (str(v) === '' ? [] : [str(v)])
+    const args: Record<string, string[]> = {
+      start: words(e.path),
+      ask: [...words(e.role), ...words(e.text)],
+      answer: [...words(e.question), ...words(e.text)],
+      status: [],
+      remember: words(e.text),
+      recall: words(e.text),
+      rotate: words(e.role),
+    }
+    const verb = str(e.action)
+    const rest = args[verb]
+    if (rest === undefined) return { result: 'action 要是 start、ask、answer、status、remember、recall 或 rotate。' }
+    await boot.ready
+    return { result: await crewVerb($, verb, rest, 'brain') }
   })
 
   on('tool.call', { tool: 'mcp__crew__memory_save' }, async ($, e: any) => {
@@ -763,7 +860,11 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const before = await read($, live)
     const role = e.agentId === undefined ? undefined : before.agents[e.agentId]
-    if (role === undefined) return next(e)
+    if (role === undefined) {
+      // The brain's own turn: anything its crew tool calls left for it goes out now.
+      if (e.agentId === undefined) flushBrain($)
+      return next(e)
+    }
     // An agent crew has since replaced finishing late changes nothing about the role.
     if (before.roles[role].agentId !== e.agentId) return next(e)
     const asking = before.asks[role]
@@ -777,13 +878,16 @@ export const register: Register = on => {
     const done = await next(e)
     await note($, { kind: 'report', role, text: e.answer })
     if (asking !== undefined) {
-      await post($, { item: asking, from: role, to: 'person', text: e.answer.trim() === '' ? '（沒有回覆內容）' : e.answer })
-      $.ui.toast(`crew：${crewName(role)} 回覆了 ${asking}（/crew thread ${asking}）`)
+      const reply = e.answer.trim() === '' ? '（沒有回覆內容）' : e.answer
+      await post($, { item: asking.id, from: role, to: 'person', text: reply })
+      $.ui.toast(`crew：${crewName(role)} 回覆了 ${asking.id}（/crew thread ${asking.id}）`)
+      if (asking.by === 'brain') tellBrain(`${crewName(role)} 回覆了 ${asking.id}：${reply}`)
     }
     await saveUsage($)
     const board = await loadBoard($, true)
     if (board !== null) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l) })
     await consolidateDue($)
+    flushBrain($)
     return done
   })
 

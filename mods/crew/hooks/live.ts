@@ -23,6 +23,7 @@ export const emptyLive = (): CrewLive => ({
   questions: [],
   activity: [],
   asks: {},
+  lead: 'person',
   asked: 0,
   injected: { count: 0, tokens: 0 },
 })

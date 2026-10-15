@@ -30,6 +30,8 @@ export type FlowEvent =
   | { type: 'role_done'; role: 'pm' | 'qa'; board: Tracker; inbox?: Inbox }
   /** The person answered a question: the flow's own, or one a role asked with ask_person. */
   | { type: 'answered'; question: string; answer: string; role?: 'pm' | 'qa' }
+  /** Claude Code started again on a flow the last session left running: its roles are gone. */
+  | { type: 'resume'; board: Tracker; prd: { path: string; size: number; text?: string } }
 
 export type FlowAction =
   | { type: 'spawn'; role: 'pm' | 'qa'; route: Route; prompt: string }
@@ -185,9 +187,48 @@ const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered'
   }
 }
 
+const resumeSplit = (path: string): string =>
+  `${splitPrompt(path)}\n\nClaude Code 重開過，這份 PRD 之前拆到一半：先用 board_read 看看板，已經在看板上的不要重複，把還沒拆的拆完；已經拆完就直接回報。`
+
+/** Picks up a flow whose roles went away with the last session, from what the board shows. */
+const resume = (state: FlowState, event: Extract<FlowEvent, { type: 'resume' }>): StepResult => {
+  const g4 = gateG4(event.board)
+  switch (state.stage) {
+    case 'splitting':
+      // The board cannot tell a finished split from one cut short, so the PM finishes it.
+      return {
+        state,
+        actions: [
+          {
+            type: 'spawn',
+            role: 'pm',
+            route: routeFor('pm', tierFor({ kind: 'split_prd', size: event.prd.size, ...(event.prd.text === undefined ? {} : { text: event.prd.text }) })),
+            prompt: resumeSplit(event.prd.path),
+          },
+        ],
+      }
+    case 'writing_tests':
+    case 'adding_tests':
+      if (g4.gaps.length === 0) return afterTests(state, event.board)
+      return {
+        state,
+        actions: [{ type: 'message', role: 'qa', item: g4.gaps[0]?.id, text: gapsToQa(g4.gaps), route: routeFor('qa', tierFor({ kind: 'add_tests', size: g4.gaps.length })) }],
+      }
+    case 'confirming':
+      if (g4.gaps.length === 0) return afterConfirm(state, event.board)
+      return {
+        state,
+        actions: [{ type: 'message', role: 'pm', item: g4.gaps[0]?.id, text: gapsToPm(g4.gaps), route: routeFor('pm', tierFor({ kind: 'confirm_gaps', size: g4.gaps.length })) }],
+      }
+    default:
+      return { state, actions: [] }
+  }
+}
+
 /** One event in, the next state and what to do out. */
 export const step = (state: FlowState, event: FlowEvent): StepResult => {
   if (event.type === 'answered') return answered(state, event)
+  if (event.type === 'resume') return resume(state, event)
   if (event.type === 'start') {
     if (state.stage !== 'idle' && state.stage !== 'done' && state.stage !== 'escalated') {
       return { state, actions: [{ type: 'status', text: 'PM＋QA 正在進行，等這一輪完成再開始新的。' }] }
