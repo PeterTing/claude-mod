@@ -530,3 +530,18 @@ describe('fifth-round review items', () => {
     expect(w.toasts.some(t => /流程停住了[\s\S]*\/crew resume/.test(t))).toBe(true)
   })
 })
+
+describe('two roles finishing at once', () => {
+  test('do not raise a false alarm that the flow stopped', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await $.command.run(command('ask pm 在嗎？'))
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e' }])
+    await Promise.all([done($, 'a-pm-1', '在'), done($, 'a-qa-2')])
+    expect(w.toasts.some(t => /流程停住了/.test(t))).toBe(false)
+    expect((await $.command.run(command('status'))).text).toMatch(/confirming/)
+  })
+})
