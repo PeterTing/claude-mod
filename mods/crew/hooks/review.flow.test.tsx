@@ -571,6 +571,16 @@ describe('the brain’s own questions', () => {
     expect(w.sent).toHaveLength(sent)
   })
 
+  test('an answer to one is saved and goes back to the brain', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await call($, 'ask_person', { question: '要用深色模式嗎？' })
+    expect((await $.command.run(command('answer Q-01 要'))).text).toMatch(/已記下 Q-01 的回答/)
+    expect(parseMemories(w.disk.get(MEMORIES) ?? '')[0]).toMatchObject({ type: 'DEC', source: 'person Q-01' })
+    await w.clock.advance(61_000)
+    expect(w.prompts.at(-1)).toMatch(/使用者回答了你的問題 Q-01：「要」/)
+  })
+
   test('a flow the person leads that stops does not wake the brain', async ($, on) => {
     const w = world($, on, { denySpawn: '不允許', denySpawnOf: 'crew:qa' })
     await start($)
