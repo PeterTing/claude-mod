@@ -1,0 +1,8 @@
+{
+  "name": "crew",
+  "version": "0.0.1",
+  "description": "A resident product-development team (PM, UI/UX, full-stack, QA, tech lead) that works a PRD as a board, talks in item threads and keeps its memory in the repo. Design preview: /crew demo shows the panes with sample data.",
+  "author": { "name": "PeterTing" },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}
