@@ -478,3 +478,17 @@ describe('fourth-round review items', () => {
     expect(qas).toHaveLength(2)
   })
 })
+
+describe('an agent crew replaced', () => {
+  test('can no longer write as the role', async ($, on) => {
+    world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await $.command.run(command('rotate pm'))
+    await $.command.run(command('ask pm 在嗎？'))
+    const r = await write($, 'a-pm-1', [{ op: 'add_feature', title: '舊 PM 偷寫', summary: '' }])
+    expect(String(r.result)).toMatch(/只給 crew 的角色和主對話/)
+  })
+})

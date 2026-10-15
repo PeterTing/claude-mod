@@ -573,6 +573,8 @@ async function startRole($: any, role: CrewRole, route: Route, work: string, rea
     ...s,
     seen: { ...s.seen, [role]: s.posted },
     agents: { ...s.agents, [started]: role },
+    // The agent this one replaces may still finish a run, but no longer writes as the role.
+    retired: was.agentId !== undefined && was.agentId !== started ? [...new Set([...s.retired, was.agentId])] : s.retired,
     roles: {
       ...s.roles,
       [role]: {
