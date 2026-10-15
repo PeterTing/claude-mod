@@ -561,7 +561,7 @@ async function startRole($: any, role: CrewRole, route: Route, work: string, rea
   let id: string | undefined = spawned.deny === undefined ? spawned.agentId : undefined
   if (spawned.deny === undefined && id === undefined) {
     const agents: { id: string; description?: string; spawnedBy?: string }[] = await $.agent.list()
-    id = [...agents].reverse().find(a => a.description === `crew ${crewName(role)}` && a.spawnedBy === 'crew' && l.agents[a.id] === undefined)?.id
+    id = [...agents].reverse().find(a => a.description === `crew ${crewName(role)}` && a.spawnedBy === 'crew' && l.agents[a.id] === undefined && !l.retired.includes(a.id))?.id
   }
   if (id === undefined) {
     const why: string = spawned.deny ?? '找不到它的 agent id'

@@ -194,6 +194,10 @@ describe('a role at work', () => {
     await $.command.run(command('answer Q-01 不做'))
     expect(w.spawned).toHaveLength(1)
     expect(w.sent.at(-1)).toMatchObject({ to: 'a-pm-1' })
+    // The answer joined the PM's split: that run is still the flow's, and finishing it moves the flow on.
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    expect(w.spawned.at(-1)?.subagentType).toBe('crew:qa')
   })
 })
 

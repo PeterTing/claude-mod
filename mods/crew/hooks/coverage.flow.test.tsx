@@ -89,7 +89,7 @@ describe('the other side of each rule', () => {
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     await done($, 'a-pm-1', `${'說'.repeat(990)} sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123`)
-    expect(w.disk.get(LOG)).not.toMatch(/sk-ant-api03/)
+    expect(w.disk.get(LOG)).not.toMatch(/sk-[A-Za-z]/)
   })
 
   test('a memory a role saved itself is not handed back to it', async ($, on) => {
@@ -122,5 +122,78 @@ describe('the other side of each rule', () => {
     w.replies.push('[{"type":"MEM","text":"上限改成 200 字","supersedes":"MEM-001"}]')
     await $.command.run(command('consolidate'))
     expect(parseMemories(w.disk.get(MEMORIES) ?? '').find(m => m.id === 'MEM-001')?.supersededBy).toBe('MEM-002')
+  })
+})
+
+describe('third test review', () => {
+  test('a finished flow opens again when the PM, asked by the person, adds a criterion', async ($, on) => {
+    world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
+    await done($, 'a-qa-2')
+    expect((await $.command.run(command('status'))).text).toMatch(/done/)
+    await $.command.run(command('ask pm 補一條：可以改方案'))
+    await write($, 'a-pm-1', [{ op: 'add_criterion', feature: 'PRD-001', text: '可以改方案' }])
+    await done($, 'a-pm-1', '補了 AC-003')
+    expect((await $.command.run(command('status'))).text).toMatch(/adding_tests/)
+  })
+
+  test('crew reads none of its files through a link that leads out of the repo', async ($, on) => {
+    const w = world($, on)
+    w.disk.set('/elsewhere/memories.jsonl', `${JSON.stringify({ id: 'MEM-001', type: 'MEM', text: '外面的秘密筆記', refs: [], roles: [], source: 'x', t: 1 })}\n`)
+    w.disk.set('/elsewhere/log.jsonl', '{"kind":"report","text":"外面的流水帳"}\n')
+    w.links.set(`${ROOT}/.crew/memory/memories.jsonl`, '/elsewhere/memories.jsonl')
+    w.links.set(`${ROOT}/.crew/log/2026-10-14.jsonl`, '/elsewhere/log.jsonl')
+    await start($)
+    expect((await $.command.run(command('recall 秘密筆記'))).text).toMatch(/沒有找到/)
+    expect((await $.command.run(command('consolidate 2026-10-14'))).text).toMatch(/沒有流水帳/)
+    expect(w.completions).toEqual([])
+  })
+
+  test('a board that links to another file in the repo is refused too', async ($, on) => {
+    const w = world($, on)
+    w.disk.set(`${ROOT}/other.json`, '{}')
+    w.links.set(`${ROOT}/prd-tracker.json`, `${ROOT}/other.json`)
+    await start($)
+    expect((await $.command.run(command('start docs/PRD.md'))).text).toMatch(/是連結/)
+  })
+
+  test('cuts long questions and answers', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await call($, 'ask_person', { question: '問'.repeat(800) }, 'a-pm-1')
+    await $.command.run(command(`answer Q-01 ${'答'.repeat(800)}`))
+    const state = w.store.get(`state:${ROOT}`) as { questions: { question: string; answer?: string }[] }
+    expect([...(state.questions[0]?.question ?? '')].length).toBe(501)
+    expect([...(state.questions[0]?.answer ?? '')].length).toBe(501)
+  })
+
+  test('numbers with the default prefixes when the schema does not parse', async ($, on) => {
+    const w = world($, on)
+    w.disk.set(`${ROOT}/schemas/prd-tracker.schema.json`, '{ nope')
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    expect(String((await write($, 'a-pm-1', SPLIT)).result)).toMatch(/PRD-001/)
+  })
+
+  test('says the flow stopped, and why, when a role ends on a board it cannot read', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    w.disk.set(`${ROOT}/prd-tracker.json`, '{ broken')
+    await done($, 'a-pm-1')
+    expect(w.toasts.some(t => /流程停在這裡。prd-tracker\.json 讀不懂/.test(t))).toBe(true)
+  })
+
+  test('resume says why it cannot go on with a board it cannot read', async ($, on) => {
+    const w = world($, on, { stopped: ['a-pm-1'] })
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    w.disk.set(`${ROOT}/prd-tracker.json`, '{ broken')
+    expect((await $.command.run(command('resume'))).text).toMatch(/沒有接續：prd-tracker\.json 讀不懂/)
   })
 })
