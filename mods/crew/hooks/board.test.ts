@@ -183,6 +183,11 @@ describe('applyOps errors', () => {
     expect(r.ok && (r.tracker.decisions?.at(-1) as { id: string }).id).toBe('DEC-008')
   })
 
+  test('numbers decisions after ids taken elsewhere, such as decisions kept only in memory', () => {
+    const r = applyOps(withTwoFeatures(), [{ op: 'drop_criterion', id: 'AC-001', reason: '移到下一版' }], { ...CTX, taken: ['DEC-011', 'MEM-020'] })
+    expect(r.ok && (r.tracker.decisions?.at(-1) as { id: string }).id).toBe('DEC-012')
+  })
+
   test('starts a decisions list on a board that has none', () => {
     const { decisions: _, ...rest } = withTwoFeatures()
     const r = run(rest as Tracker, [{ op: 'drop_feature', id: 'PRD-002', reason: '下一版' }])

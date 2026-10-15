@@ -4,13 +4,18 @@ import type { Register } from 'claude-code'
 import type { CrewLive, CrewMessage, CrewScenario, CrewTab } from '../types'
 import { applyOps, criteriaOf, gateG1, gateG4, newTracker, parseOps, prefixesFrom, renderBoard } from './board'
 import type { Tracker } from './board'
+import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './consolidate'
 import { DEMO } from './demo'
 import { step } from './flow'
 import type { FlowAction, FlowEvent } from './flow'
 import { dayOf, emptyLive, snapshotOf } from './live'
+import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, redact, searchMemories, serializeMemories } from './memory'
+import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { ROLE_NAMES } from './model'
+import { composeStart, relatedOf, threadLines, wakePlan, withMemories, workingSet } from './pack'
 import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
 import type { CrewRole } from './roles'
+import { routeFor } from './router'
 import type { Route } from './router'
 import { bandText, CrewPane } from './views'
 import type { Actions } from './views'
@@ -29,7 +34,16 @@ const gate = atom({ plugin: 'crew', key: 'gate' } as const, null as string | nul
 const live = atom({ plugin: 'crew', key: 'live' } as const, emptyLive())
 
 /** Where crew keeps things in the repo the session runs in. */
-const files = { root: '', board: '', schema: '', crew: '' }
+const files = { root: '', board: '', schema: '', crew: '', memories: '' }
+
+/** The memories as last read or written. */
+const memo: { list: MemoryEntry[] | undefined } = { list: undefined }
+
+/** Today's log, as written so far. */
+const diary: { day: string; lines: string[] } = { day: '', lines: [] }
+
+/** The last day crew checked for a log left to tidy. */
+const tidy = { checked: '' }
 
 /** How many role wakes are under way: the roles are offered to the engine only then. */
 const waking = { count: 0 }
@@ -42,6 +56,26 @@ const crewName = (role: CrewRole): string => ROLE_NAMES[role]
 const safe = (item: string): string => item.replace(/[^\w.-]+/g, '_')
 
 const firstLine = (text: string): string => (text.split('\n')[0] ?? '').slice(0, 60)
+
+const cut = (text: string, max: number): string => ([...text].length > max ? `${[...text].slice(0, max).join('')}…` : text)
+
+const who = (name: string): string => (name === 'person' ? '使用者' : (ROLE_NAMES[name as CrewRole] ?? name))
+
+const usageOf = (u: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }) => ({
+  input: u.input_tokens ?? 0,
+  output: u.output_tokens ?? 0,
+  cacheRead: u.cache_read_input_tokens ?? 0,
+  cacheWrite: u.cache_creation_input_tokens ?? 0,
+})
+
+const ZERO = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, wakes: 0, rotations: 0 }
+
+/** What a role's summary keeps when the engine compacts it before crew rotates it. */
+const COMPACT_NOTE =
+  '保留：這次的工作還剩哪些、提到的編號（PRD-、AC-、TC-、DEC-、Q-、ASK- 等）、做過的決定和原因。看板、討論串和記憶都存在 repo，之後用 board_read、thread_read、memory_search 再讀，不用抄進摘要。'
+
+const decisionIdsOf = (board: Tracker | null): string[] =>
+  (board?.decisions ?? []).map(d => (d as { id?: unknown }).id).filter((id): id is string => typeof id === 'string')
 
 async function loadBoard($: any, force = false): Promise<Tracker | null> {
   if (files.board === '') return null
@@ -68,9 +102,89 @@ async function post($: any, message: Omit<CrewMessage, 't'>) {
   }))
   const lines = (next.threads[message.item] ?? []).map(m => JSON.stringify(m)).join('\n')
   await $.fs.write(`${files.crew}/threads/${safe(message.item)}.jsonl`, `${lines}\n`)
+  await note($, { kind: 'post', item: message.item, from: message.from, ...(message.to === undefined ? {} : { to: message.to }), text: message.text })
 }
 
-async function startRole($: any, role: CrewRole, route: Route, prompt: string) {
+/** One line in today's log (.crew/log, kept out of git), secrets masked. */
+async function note($: any, event: Record<string, unknown>) {
+  if (files.crew === '') return
+  const t: number = await $.clock.now()
+  const day = dayOf(t)
+  const path = `${files.crew}/log/${day}.jsonl`
+  if (diary.day !== day) {
+    diary.day = day
+    diary.lines = (await $.fs.exists(path)) ? (await $.fs.read(path)).split('\n').filter((l: string) => l !== '') : []
+  }
+  const clipped = Object.fromEntries(Object.entries(event).map(([k, v]) => [k, typeof v === 'string' ? cut(v, 1_000) : v]))
+  diary.lines.push(redact(JSON.stringify({ t, ...clipped })))
+  await $.fs.write(path, `${diary.lines.join('\n')}\n`)
+}
+
+async function loadMemories($: any): Promise<MemoryEntry[]> {
+  if (memo.list !== undefined) return memo.list
+  memo.list = files.memories !== '' && (await $.fs.exists(files.memories)) ? parseMemories(await $.fs.read(files.memories)) : []
+  return memo.list
+}
+
+/**
+ * Saves a memory to .crew/memory. A decision crew numbers itself goes on the
+ * board's decisions too, so the board and memory share one DEC numbering.
+ */
+async function remember($: any, input: MemoryInput, knownBy?: CrewRole): Promise<AddResult & { isNew?: boolean }> {
+  const before = await loadMemories($)
+  const board = await loadBoard($)
+  const r = addMemory(before, input, { t: await $.clock.now(), taken: decisionIdsOf(board) })
+  if (!r.ok || r.list.length === before.length) return r
+  memo.list = r.list
+  await $.fs.write(files.memories, serializeMemories(r.list))
+  if (r.entry.type === 'DEC' && input.id === undefined && board !== null) {
+    const decisions = (board.decisions ?? []).map(d => {
+      const old = d as { id?: unknown }
+      return old.id === input.supersedes ? { ...(d as object), status: 'superseded', superseded_by: r.entry.id } : d
+    })
+    decisions.push({ id: r.entry.id, date: dayOf(r.entry.t), status: 'accepted', by: r.entry.source, decision: r.entry.text, refs: r.entry.refs })
+    await saveBoard($, { ...board, decisions })
+  }
+  await note($, { kind: 'memory', id: r.entry.id, type: r.entry.type, source: r.entry.source, text: r.entry.text })
+  // The role that said it, or is about to be told it, does not need it attached again.
+  if (knownBy !== undefined) await know($, knownBy, r.entry.id)
+  return { ...r, isNew: true }
+}
+
+async function know($: any, role: CrewRole, id: string) {
+  await update($, live, l => ({ ...l, roles: { ...l.roles, [role]: { ...l.roles[role], given: [...new Set([...(l.roles[role].given ?? []), id])] } } }))
+}
+
+/** The memories that bear on a text, packed under a token budget. */
+async function recall($: any, text: string, options: { role?: string; ids?: string[]; exclude?: string[]; limit?: number; budget?: number }) {
+  const hits = searchMemories(await loadMemories($), {
+    text,
+    ...(options.role === undefined ? {} : { role: options.role }),
+    ...(options.ids === undefined ? {} : { ids: options.ids }),
+    related: relatedOf(await loadBoard($)),
+    exclude: new Set(options.exclude ?? []),
+    limit: options.limit ?? 8,
+  })
+  return packMemories(hits, options.budget ?? 800)
+}
+
+/**
+ * Starts a fresh agent for a role: the working set, the memories that bear on
+ * the work and its recent thread lines go first, the work last. With a reason,
+ * it replaces the role's agent (a rotation) and carries its last report.
+ */
+async function startRole($: any, role: CrewRole, route: Route, task: string, reason?: string) {
+  const l = await read($, live)
+  const was = l.roles[role]
+  const pack = await recall($, `${task}\n${l.prdPath ?? ''}`, { role })
+  const prompt = composeStart({
+    ...(reason === undefined ? {} : { reason }),
+    working: workingSet({ board: await loadBoard($), questions: l.questions }),
+    ...(reason !== undefined && was.report !== undefined ? { report: was.report } : {}),
+    memories: pack.text,
+    lines: threadLines(l.threads, role),
+    task,
+  })
   // Unnamed on purpose: a named agent in a team-enabled session becomes a teammate, whose
   // finish notices reach the main conversation and whose prompt is the lead's, not the role card.
   const spawned = await $.agent.spawn({
@@ -83,25 +197,89 @@ async function startRole($: any, role: CrewRole, route: Route, prompt: string) {
   let id: string | undefined = spawned.deny === undefined ? spawned.agentId : undefined
   if (spawned.deny === undefined && id === undefined) {
     const agents: { id: string; description?: string; spawnedBy?: string }[] = await $.agent.list()
-    id = [...agents].reverse().find(a => a.description === `crew ${crewName(role)}` && a.spawnedBy === 'crew')?.id
+    id = [...agents].reverse().find(a => a.description === `crew ${crewName(role)}` && a.spawnedBy === 'crew' && l.agents[a.id] === undefined)?.id
   }
   if (id === undefined) {
-    const reason: string = spawned.deny ?? '找不到它的 agent id'
-    $.ui.toast(`crew：${crewName(role)} 沒有啟動（${reason}）`)
-    $.ui.log(`crew: ${role} did not start: ${reason}`)
-    await update($, live, l => ({ ...l, roles: { ...l.roles, [role]: { ...l.roles[role], state: 'blocked', doing: `沒有啟動：${reason}` } } }))
+    const why: string = spawned.deny ?? '找不到它的 agent id'
+    $.ui.toast(`crew：${crewName(role)} 沒有啟動（${why}）`)
+    $.ui.log(`crew: ${role} did not start: ${why}`)
+    await update($, live, s => ({ ...s, roles: { ...s.roles, [role]: { ...s.roles[role], state: 'blocked', doing: `沒有啟動：${why}` } } }))
     return
   }
   const started: string = id
+  const rotated = reason !== undefined && was.agentId !== undefined
+  await update($, live, s => ({
+    ...s,
+    seen: { ...s.seen, [role]: s.posted },
+    agents: { ...s.agents, [started]: role },
+    roles: {
+      ...s.roles,
+      [role]: {
+        agentId: started,
+        model: route.model,
+        label: route.label,
+        effort: route.effort,
+        tier: route.tier,
+        limit: route.limit,
+        state: 'working',
+        doing: firstLine(task),
+        context: 0,
+        task: cut(task, 600),
+        ...(was.report === undefined ? {} : { report: was.report }),
+        given: pack.ids,
+      },
+    },
+    usage: rotated ? { ...s.usage, [role]: { ...(s.usage[role] ?? ZERO), rotations: (s.usage[role]?.rotations ?? 0) + 1 } } : s.usage,
+    injected: pack.ids.length > 0 ? { count: s.injected.count + 1, tokens: s.injected.tokens + pack.tokens } : s.injected,
+  }))
+  await note($, { kind: rotated ? 'rotate' : 'start', role, agentId: started, ...(reason === undefined ? {} : { reason }), memories: pack.ids, tokens: estimateTokens(prompt) })
+}
+
+/**
+ * Hands a role work: wakes its agent with the message and the memories it has
+ * not been given yet, or starts a fresh one with the pack when a wake costs more
+ * (see wakePlan) or the agent cannot be woken.
+ */
+async function deliver($: any, role: CrewRole, route: Route, text: string, item?: string) {
+  const state = (await read($, live)).roles[role]
+  const plan = wakePlan(state, route, { forced: state.rotate === true })
+  if (plan.kind !== 'wake' || state.agentId === undefined) {
+    await startRole($, role, route, text, plan.kind === 'rotate' ? plan.reason : undefined)
+    return
+  }
+  const pack = await recall($, text, { role, ...(item === undefined ? {} : { ids: [item] }), exclude: state.given ?? [], limit: 5 })
+  let sent: { isDelivered: boolean; reason?: string } = { isDelivered: false }
+  waking.count += 1
+  try {
+    sent = await $.session.send({ to: { agentId: state.agentId }, text: withMemories(text, pack.text) })
+  } finally {
+    waking.count -= 1
+  }
+  if (!sent.isDelivered) {
+    // A role that cannot be woken starts again; the pack carries what it needs.
+    $.ui.log(`crew: starting ${role} again: ${sent.reason ?? ''}`)
+    await startRole($, role, route, text, `原本的對話叫不醒：${sent.reason ?? '沒有原因'}`)
+    return
+  }
   await update($, live, l => ({
     ...l,
     seen: { ...l.seen, [role]: l.posted },
-    agents: { ...l.agents, [started]: role },
     roles: {
       ...l.roles,
-      [role]: { agentId: started, model: route.model, label: route.label, effort: route.effort, tier: route.tier, limit: route.limit, state: 'working', doing: firstLine(prompt), context: 0 },
+      [role]: {
+        ...l.roles[role],
+        effort: route.effort,
+        tier: route.tier,
+        limit: route.limit,
+        state: 'working',
+        doing: firstLine(text),
+        task: cut(text, 600),
+        given: [...(l.roles[role].given ?? []), ...pack.ids],
+      },
     },
+    injected: pack.ids.length > 0 ? { count: l.injected.count + 1, tokens: l.injected.tokens + pack.tokens } : l.injected,
   }))
+  await note($, { kind: 'wake', role, memories: pack.ids })
 }
 
 async function execute($: any, actions: readonly FlowAction[]) {
@@ -110,30 +288,7 @@ async function execute($: any, actions: readonly FlowAction[]) {
       await startRole($, action.role, action.route, action.prompt)
     } else if (action.type === 'message') {
       await post($, { item: action.item ?? 'crew', from: 'crew', to: action.role, text: action.text, kind: 'route' })
-      const role = (await read($, live)).roles[action.role]
-      let sent: { isDelivered: boolean; reason?: string } = { isDelivered: false, reason: '換模型要用新的 context' }
-      if (role.agentId !== undefined && role.model === action.route.model) {
-        waking.count += 1
-        try {
-          sent = await $.session.send({ to: { agentId: role.agentId }, text: action.text })
-        } finally {
-          waking.count -= 1
-        }
-      }
-      if (sent.isDelivered) {
-        await update($, live, l => ({
-          ...l,
-          seen: { ...l.seen, [action.role]: l.posted },
-          roles: {
-            ...l.roles,
-            [action.role]: { ...l.roles[action.role], effort: action.route.effort, tier: action.route.tier, limit: action.route.limit, state: 'working', doing: firstLine(action.text) },
-          },
-        }))
-      } else {
-        // A new model, or a role that cannot be woken: start it again; it reads the board and its threads.
-        $.ui.log(`crew: starting ${action.role} again: ${sent.reason ?? ''}`)
-        await startRole($, action.role, action.route, `${action.text}\n\n（先用 board_read、thread_read 了解目前狀況。）`)
-      }
+      await deliver($, action.role, action.route, action.text, action.item)
     } else if (action.type === 'ask_person') {
       await ask($, 'crew', action.question, action.item)
     } else {
@@ -150,7 +305,58 @@ async function ask($: any, from: 'pm' | 'qa' | 'crew', question: string, item?: 
     return { ...l, questions: [...l.questions, { id, question, ...(item === undefined ? {} : { item }), from, status: 'open' as const, t }] }
   })
   $.ui.toast(`crew：有一件事等你決定（/crew answer ${id} 你的回答）`)
+  await note($, { kind: 'ask', id, from, question, ...(item === undefined ? {} : { item }) })
   return id
+}
+
+/** Tidies a day's log into memories with the small model; says what it added. */
+async function consolidate($: any, day: string): Promise<string> {
+  const path = `${files.crew}/log/${day}.jsonl`
+  if (!(await $.fs.exists(path))) return `${day} 沒有流水帳。`
+  const log = (await $.fs.read(path)).split('\n').filter((l: string) => l !== '')
+  const reply = await $.model.complete({
+    model: 'haiku',
+    system: CONSOLIDATION_SYSTEM,
+    prompt: consolidationPrompt({ day, log, memories: await loadMemories($) }),
+    maxTokens: 2_000,
+    effort: 'low',
+    timeoutMs: 120_000,
+  })
+  const u = reply.usage === undefined ? undefined : usageOf(reply.usage)
+  if (u !== undefined) {
+    await update($, live, l => {
+      const was = l.usage.memory ?? ZERO
+      return { ...l, usage: { ...l.usage, memory: { ...was, input: was.input + u.input, output: was.output + u.output, cacheRead: was.cacheRead + u.cacheRead, cacheWrite: was.cacheWrite + u.cacheWrite } } }
+    })
+  }
+  if (!reply.isAnswered) return `整理 ${day} 沒有完成：${String(reply.reason)}`
+  const added: string[] = []
+  for (const p of parseProposals(reply.text)) {
+    const r = await remember($, { ...p, source: `整理 ${day}` })
+    if (r.ok && r.isNew === true) added.push(r.entry.id)
+  }
+  const done = `${files.crew}/memory/consolidated.json`
+  const days: string[] = (await $.fs.exists(done)) ? (JSON.parse(await $.fs.read(done)) as { days?: string[] }).days ?? [] : []
+  await $.fs.write(done, `${JSON.stringify({ days: [...new Set([...days, day])].sort().slice(-60) }, null, 2)}\n`)
+  return added.length > 0 ? `整理 ${day}：新增 ${added.join('、')}。` : `整理 ${day}：沒有要補的記憶。`
+}
+
+/** Once a day, tidies the latest earlier day whose log has not been tidied. */
+async function consolidateDue($: any) {
+  const today = dayOf(await $.clock.now())
+  if (tidy.checked === today || files.crew === '') return
+  tidy.checked = today
+  const dir = `${files.crew}/log`
+  if (!(await $.fs.exists(dir))) return
+  const done = `${files.crew}/memory/consolidated.json`
+  const days: string[] = (await $.fs.exists(done)) ? (JSON.parse(await $.fs.read(done)) as { days?: string[] }).days ?? [] : []
+  const logs: { name: string }[] = await $.fs.list(dir)
+  const due = logs
+    .map(e => e.name.replace(/\.jsonl$/, ''))
+    .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d) && d < today && !days.includes(d))
+    .sort()
+    .at(-1)
+  if (due !== undefined) $.ui.log(`crew: ${await consolidate($, due)}`)
 }
 
 async function feed($: any, event: FlowEvent) {
@@ -165,15 +371,6 @@ async function saveUsage($: any) {
   const day = dayOf(await $.clock.now())
   await $.fs.write(`${files.crew}/usage/${day}.json`, `${JSON.stringify({ usage: l.usage, tiers: l.tiers }, null, 2)}\n`)
 }
-
-const usageOf = (u: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }) => ({
-  input: u.input_tokens ?? 0,
-  output: u.output_tokens ?? 0,
-  cacheRead: u.cache_read_input_tokens ?? 0,
-  cacheWrite: u.cache_creation_input_tokens ?? 0,
-})
-
-const ZERO = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, wakes: 0, rotations: 0 }
 
 /** Items whose threads hold a message to each role written after that role was last woken. */
 const inboxOf = (l: CrewLive): { pm: string[]; qa: string[] } => {
@@ -190,12 +387,15 @@ export const register: Register = on => {
     files.board = `${e.cwd}/prd-tracker.json`
     files.schema = `${e.cwd}/schemas/prd-tracker.schema.json`
     files.crew = `${e.cwd}/.crew`
+    files.memories = `${e.cwd}/.crew/memory/memories.jsonl`
     cache.board = undefined
+    memo.list = undefined
+    diary.day = ''
     // State kept from before a reload may predate fields added since: fill them in.
     await update($, live, l => ({ ...emptyLive(), ...l }))
     await $.command.register({
       name: 'crew',
-      description: 'crew 產品團隊：/crew start <PRD 檔案> 開始、/crew answer <Q-編號> <回答>、/crew status、/crew demo',
+      description: 'crew 產品團隊：/crew start <PRD>、answer <Q-編號> <回答>、ask <pm|qa> <問題>、recall <關鍵字>、remember <偏好>、status',
     })
     for (const spec of TOOL_SPECS) {
       await $.tool.register({ ...spec, isDeferred: false })
@@ -235,13 +435,14 @@ export const register: Register = on => {
       const text: string = await $.fs.read(full)
       const board = (await loadBoard($, true)) ?? newTracker(files.root.split('/').pop() ?? 'project')
       await saveBoard($, board)
-      await $.fs.write(`${files.crew}/.gitignore`, 'usage/\n')
+      await $.fs.write(`${files.crew}/.gitignore`, 'usage/\nlog/\n')
       const stage = (await read($, live)).flow.stage
       if (stage !== 'idle' && stage !== 'done' && stage !== 'escalated') {
         return { text: `crew 正在進行（${stage}），等這一輪完成再開始新的；卡住的話先用 /crew reset。` }
       }
       await update($, isDemo, () => false)
       await update($, live, l => ({ ...l, prdPath: path }))
+      await note($, { kind: 'prd', path, size: text.length })
       await feed($, { type: 'start', prd: { path, size: text.length, text: text.slice(0, 4_000) } })
       await $.ui.open({ id: PANE, title: 'Crew' })
       const pm = (await read($, live)).roles.pm
@@ -250,7 +451,7 @@ export const register: Register = on => {
     }
     if (verb === 'reset') {
       await update($, live, () => emptyLive())
-      return { text: '已清掉這個 session 的 crew 狀態。看板（prd-tracker.json）和討論串檔案都保留。' }
+      return { text: '已清掉這個 session 的 crew 狀態。看板（prd-tracker.json）、討論串和記憶（.crew/memory）都保留。' }
     }
     if (verb === 'answer') {
       const [id = '', ...words] = rest
@@ -259,13 +460,63 @@ export const register: Register = on => {
       if (q === undefined || answer === '') return { text: '用法：/crew answer <Q-編號> <回答>，編號要是還沒回答的問題。' }
       await update($, live, l => ({ ...l, questions: l.questions.map(x => (x.id === id ? { ...x, status: 'answered' as const, answer } : x)) }))
       if (q.item !== undefined) await post($, { item: q.item, from: 'person', to: q.from === 'qa' ? 'qa' : 'pm', text: `${q.question} → ${answer}` })
+      await remember($, { type: 'DEC', text: `使用者決定：${answer}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `person ${q.id}` }, q.from === 'qa' ? 'qa' : 'pm')
       await feed($, { type: 'answered', question: q.question, answer, role: q.from === 'qa' ? 'qa' : 'pm' })
       return { text: `已把 ${id} 的回答轉給 ${q.from === 'qa' ? 'QA' : 'PM'}。` }
+    }
+    if (verb === 'ask') {
+      const [role = '', ...words] = rest
+      const question = words.join(' ')
+      if ((role !== 'pm' && role !== 'qa') || question === '') return { text: '用法：/crew ask <pm|qa> <你的問題>' }
+      const l = await read($, live)
+      const name = crewName(role)
+      if (l.roles[role].state === 'working') return { text: `${name} 正在工作，等它這一輪做完再問。` }
+      const id = `ASK-${String(l.asked + 1).padStart(2, '0')}`
+      await update($, live, s => ({ ...s, asked: s.asked + 1, asks: { ...s.asks, [role]: id } }))
+      await post($, { item: id, from: 'person', to: role, text: question })
+      const text = `使用者問你（${id}）：${question}\n直接回答，幾句話就好；需要時先用 board_read、thread_read、memory_search 查。使用者沒有要你改看板就不要改。`
+      await deliver($, role, routeFor(role, l.roles[role].tier ?? 'S'), text, id)
+      const after = (await read($, live)).roles[role]
+      if (after.state === 'blocked') {
+        await update($, live, s => ({ ...s, asks: Object.fromEntries(Object.entries(s.asks).filter(([r]) => r !== role)) }))
+        return { text: `沒有問到 ${name}：${after.doing}` }
+      }
+      return { text: `已問 ${name}（${id}）。回覆後會通知你，用 /crew thread ${id} 看。` }
+    }
+    if (verb === 'rotate') {
+      const role = rest[0] ?? ''
+      if (role !== 'pm' && role !== 'qa') return { text: '用法：/crew rotate <pm|qa>' }
+      const r = (await read($, live)).roles[role]
+      const name = crewName(role)
+      if (r.agentId === undefined) return { text: `${name} 還沒開始，下次叫它時就是新的 context。` }
+      await update($, live, s => ({ ...s, roles: { ...s.roles, [role]: { ...s.roles[role], rotate: true } } }))
+      return { text: `下次叫醒 ${name} 時會換新的 context，帶看板狀況、相關記憶和上一輪的回報重開（目前 context ${Math.round(r.context / 1000)}K）。可以用 /crew ask ${role} <問題> 馬上試。` }
+    }
+    if (verb === 'thread') {
+      const item = rest[0] ?? ''
+      const messages = (await read($, live)).threads[item] ?? []
+      if (item === '' || messages.length === 0) return { text: `${item || '這個項目'} 還沒有討論。` }
+      return { text: messages.map(m => `${who(m.from)}${m.to === undefined ? '' : ` → ${who(m.to)}`}：${m.text}`).join('\n') }
+    }
+    if (verb === 'recall') {
+      const query = rest.join(' ')
+      if (query === '') return { text: '用法：/crew recall <關鍵字或編號>' }
+      const hits = searchMemories(await loadMemories($), { text: query, related: relatedOf(await loadBoard($)), limit: 10 }).filter(h => h.why !== 'pref')
+      return { text: hits.length === 0 ? '沒有找到相關記憶。' : packMemories(hits, 4_000).text }
+    }
+    if (verb === 'remember') {
+      const text = rest.join(' ')
+      if (text === '') return { text: '用法：/crew remember <要記住的偏好>' }
+      const r = await remember($, { type: 'PREF', text, source: 'person' })
+      return { text: r.ok ? `已記住 ${r.entry.id}：${r.entry.text}${r.note === undefined ? '' : `（${r.note}）`}` : r.error }
+    }
+    if (verb === 'consolidate') {
+      return { text: await consolidate($, rest[0] ?? dayOf(await $.clock.now())) }
     }
     if (verb === 'status') {
       const board = await loadBoard($)
       const l = await read($, live)
-      const s = snapshotOf({ board, live: l, now: await $.clock.now() })
+      const s = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($) })
       return { text: bandText(s, `crew（${l.flow.stage}）`) }
     }
     await $.ui.open({ id: PANE, title: 'Crew' })
@@ -286,9 +537,17 @@ export const register: Register = on => {
     if (!parsed.ok) return { result: `board_write 沒有生效：\n${parsed.error}` }
     const board = (await loadBoard($)) ?? newTracker(files.root.split('/').pop() ?? 'project')
     const now = await $.clock.now()
-    const r = applyOps(board, parsed.ops, { by: role, today: dayOf(now), prefixes: await idPrefixes($) })
+    const taken = (await loadMemories($)).map(m => m.id)
+    const r = applyOps(board, parsed.ops, { by: role, today: dayOf(now), prefixes: await idPrefixes($), taken })
     if (!r.ok) return { result: `board_write 沒有生效，看板沒有任何變更：\n- ${r.errors.join('\n- ')}` }
     await saveBoard($, r.tracker)
+    // The board's decisions are memories too, under the same ids.
+    const had = new Set(decisionIdsOf(board))
+    for (const d of (r.tracker.decisions ?? []) as { id?: unknown; decision?: unknown; criteria?: unknown; feature?: unknown }[]) {
+      if (typeof d.id !== 'string' || had.has(d.id) || typeof d.decision !== 'string') continue
+      const refs = [d.criteria, d.feature].filter((x): x is string => typeof x === 'string')
+      await remember($, { id: d.id, type: 'DEC', text: d.decision, refs, source: role }, role === 'pm' || role === 'qa' ? role : undefined)
+    }
     // Done means progress moved: a feature got its first criterion, a criterion its first test case.
     const covered = (t: Tracker) => {
       const g1 = gateG1(t)
@@ -309,6 +568,7 @@ export const register: Register = on => {
       activity: [...l.activity, ...moved.map(id => ({ t: now, day: dayOf(now), role, id, title: titles.get(id) ?? id }))].slice(-200),
     }))
     const written = r.results.map(x => x.id).filter((x): x is string => x !== undefined)
+    await note($, { kind: 'board', role, ops: parsed.ops.map(o => o.op), ids: written })
     return { result: `已寫入：${written.join('、')}。` }
   })
 
@@ -334,6 +594,36 @@ export const register: Register = on => {
     return { result: `已交給使用者（${id}）。先處理其他部分，答案會轉給你。` }
   })
 
+  on('tool.call', { tool: 'mcp__crew__memory_save' }, async ($, e: any) => {
+    const role = (await read($, live)).agents[e.agentId ?? '']
+    const type = e.type as MemoryType
+    const allowed: readonly string[] = role === undefined ? MEMORY_TYPES : ['DEC', 'MEM', 'LES']
+    if (!allowed.includes(type)) return { result: 'memory_save 的 type 要是 DEC、MEM 或 LES（偏好由使用者自己說）。' }
+    if (typeof e.text !== 'string') return { result: 'memory_save 需要 text。' }
+    const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+    const r = await remember($, {
+      type,
+      text: e.text,
+      refs: strings(e.refs),
+      roles: strings(e.roles),
+      source: role ?? 'brain',
+      ...(typeof e.supersedes === 'string' && e.supersedes !== '' ? { supersedes: e.supersedes } : {}),
+    })
+    if (!r.ok) return { result: `沒有存：${r.error}` }
+    // What a role saved itself it already knows: a wake does not hand it back.
+    if (role !== undefined) await know($, role, r.entry.id)
+    return { result: `已存成 ${r.entry.id}。${r.note ?? ''}` }
+  })
+
+  on('tool.call', { tool: 'mcp__crew__memory_search' }, async ($, e: any) => {
+    const role = (await read($, live)).agents[e.agentId ?? '']
+    if (typeof e.query !== 'string' || e.query.trim() === '') return { result: 'memory_search 需要 query。' }
+    const pack = await recall($, e.query, { ...(role === undefined ? {} : { role }), limit: 8, budget: 1_500 })
+    const found = pack.text.split('\n').filter(line => line !== '' && !line.includes('（偏好・'))
+    await note($, { kind: 'search', role: role ?? 'brain', query: e.query, ids: pack.ids })
+    return { result: found.length === 0 ? '沒有找到相關記憶。' : pack.text }
+  })
+
   // A role finishing or reporting is crew's to handle, not a reason to wake the main conversation.
   // In a session with agent teams on, the roles run as teammates (crew-pm, crew-qa) and report through the team mailbox.
   on('session.receive', async ($, e, next) => {
@@ -357,10 +647,18 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A role compacted by the engine (one long run past its window) keeps what crew cannot re-read for it.
+  on('session.compact', async ($, e, next) => {
+    const role = e.agentId === undefined ? undefined : (await read($, live)).agents[e.agentId]
+    if (role === undefined) return next(e)
+    await note($, { kind: 'compact', role, trigger: e.trigger })
+    return next({ ...e, instructions: e.instructions === undefined ? COMPACT_NOTE : `${e.instructions}\n${COMPACT_NOTE}` })
+  })
+
   on('turn.start', async ($, e, next) => {
     const role = e.agentId === undefined ? undefined : (await read($, live)).agents[e.agentId]
     if (role !== undefined) {
-      await update($, live, l => ({ ...l, roles: { ...l.roles, [role]: { ...l.roles[role], state: 'working' } } }))
+      await update($, live, l => (l.roles[role].agentId !== e.agentId ? l : { ...l, roles: { ...l.roles, [role]: { ...l.roles[role], state: 'working' } } }))
     }
     return next(e)
   })
@@ -383,7 +681,8 @@ export const register: Register = on => {
             ...s,
             usage: { ...s.usage, [key]: { ...was, input: was.input + u.input, output: was.output + u.output, cacheRead: was.cacheRead + u.cacheRead, cacheWrite: was.cacheWrite + u.cacheWrite } },
             tiers: tier === undefined ? s.tiers : { ...s.tiers, [tier]: (s.tiers[tier] ?? 0) + spent },
-            roles: role === undefined ? s.roles : { ...s.roles, [role]: { ...s.roles[role], context: u.input + u.cacheRead + u.cacheWrite } },
+            // Only the role's current agent says how full its context is; one it replaced may still finish a run.
+            roles: role === undefined || s.roles[role].agentId !== e.agentId ? s.roles : { ...s.roles, [role]: { ...s.roles[role], context: u.input + u.cacheRead + u.cacheWrite } },
           }
         })
       }
@@ -393,18 +692,29 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    const role = e.agentId === undefined ? undefined : (await read($, live)).agents[e.agentId]
+    const before = await read($, live)
+    const role = e.agentId === undefined ? undefined : before.agents[e.agentId]
     if (role === undefined) return next(e)
+    // An agent crew has since replaced finishing late changes nothing about the role.
+    if (before.roles[role].agentId !== e.agentId) return next(e)
+    const asking = before.asks[role]
     // A role's own turn start is not always raised to this plugin, so a finished run is what counts as a wake.
     const l = await update($, live, s => ({
       ...s,
-      roles: { ...s.roles, [role]: { ...s.roles[role], state: 'idle', doing: '—' } },
+      roles: { ...s.roles, [role]: { ...s.roles[role], state: 'idle', doing: '—', report: cut(e.answer, 600) } },
       usage: { ...s.usage, [role]: { ...(s.usage[role] ?? ZERO), wakes: (s.usage[role]?.wakes ?? 0) + 1 } },
+      asks: Object.fromEntries(Object.entries(s.asks).filter(([r]) => r !== role)),
     }))
     const done = await next(e)
+    await note($, { kind: 'report', role, text: e.answer })
+    if (asking !== undefined) {
+      await post($, { item: asking, from: role, to: 'person', text: e.answer.trim() === '' ? '（沒有回覆內容）' : e.answer })
+      $.ui.toast(`crew：${crewName(role)} 回覆了 ${asking}（/crew thread ${asking}）`)
+    }
     await saveUsage($)
     const board = await loadBoard($, true)
     if (board !== null) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l) })
+    await consolidateDue($)
     return done
   })
 
@@ -428,7 +738,7 @@ export const register: Register = on => {
       reply: id => $.ui.toast(`用 /crew answer ${id} <你的回答> 回覆`),
     }
     const view = { tab: await read($, tab), scenario: await read($, scenario), thread: await read($, thread), gate: await read($, gate) }
-    const snap = demo ? DEMO[view.scenario] : snapshotOf({ board, live: l, now: await $.clock.now() })
+    const snap = demo ? DEMO[view.scenario] : snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($) })
     return CrewPane({ el, snap, view, act, isDemo: demo })
   })
 

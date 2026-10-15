@@ -163,6 +163,10 @@ export type Snapshot = {
   brainShare: number
   alerts: readonly string[]
   actions: readonly string[]
+  /** Memories attached to starts and wakes: how many times, and their average size. */
+  injected?: { count: number; average: number }
+  /** Tokens the small model spent tidying memory today. */
+  chores?: number
 }
 
 /** 41200 → "41K", 950 → "950". */

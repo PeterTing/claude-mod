@@ -242,7 +242,7 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
       {snap.progress !== null && ProgressSummary({ el, p: snap.progress })}
       {snap.prd === null && (
         <Box flexDirection="column">
-          <Text>還沒有 PRD。把 PRD 放進 repo 後，用 /crew prd &lt;檔案&gt; 匯入（規劃中），PM 會把它拆成功能和驗收條件。</Text>
+          <Text>還沒有 PRD。把 PRD 放進 repo 後，用 /crew start &lt;檔案&gt; 開始，PM 會把它拆成功能和驗收條件。</Text>
           <Text dimColor>五個角色都在待命，沒有工作時不花 token。</Text>
         </Box>
       )}
@@ -372,7 +372,7 @@ function MemoryList({ el, snap }: { el: Elements; snap: Snapshot }) {
   if (snap.memories.length === 0) return <Text dimColor>還沒有記憶。角色做了決定、發現限制，或你說了偏好，就會存在這裡。</Text>
   return (
     <Box flexDirection="column" gap={1}>
-      <Text dimColor>搜尋（規劃中）：輸入關鍵字或項目編號</Text>
+      <Text dimColor>搜尋：/crew recall &lt;關鍵字或編號&gt;　記下偏好：/crew remember &lt;內容&gt;</Text>
       <Box flexDirection="column">
         {snap.memories.map(m => {
           const isOld = m.supersededBy !== undefined
@@ -431,6 +431,12 @@ function Tokens({ el, snap }: { el: Elements; snap: Snapshot }) {
         今日 {tokens(snap.today)} tok · 大腦協調佔 {Math.round(snap.brainShare * 100)}%
       </Text>
       <Text dimColor>依複雜度：{snap.tiers.map(t => `${t.tier} ${tokens(t.tokens)}`).join(' · ')}</Text>
+      {snap.injected !== undefined && snap.injected.count > 0 && (
+        <Text dimColor>
+          每次附上的記憶平均 {tokens(snap.injected.average)} tok（{snap.injected.count} 次）
+          {snap.chores !== undefined && snap.chores > 0 ? ` · 記憶整理 ${tokens(snap.chores)} tok` : ''}
+        </Text>
+      )}
       {snap.alerts.length > 0 && (
         <Box flexDirection="column">
           <Text color="warning">提醒已送大腦</Text>

@@ -67,7 +67,8 @@ export type Op =
       fixture?: string
     }
 
-export type OpContext = { by: string; today: string; prefixes: Prefixes }
+/** `taken`: ids in use outside the board, such as decisions kept in crew's memory. */
+export type OpContext = { by: string; today: string; prefixes: Prefixes; taken?: readonly string[] }
 
 export type OpResult = { op: Op['op']; id?: string }
 
@@ -142,7 +143,7 @@ const decisionIds = (t: Tracker): string[] =>
 
 const recordDecision = (t: Tracker, ctx: OpContext, decision: Record<string, unknown>) => {
   t.decisions = t.decisions ?? []
-  t.decisions.push({ id: next(decisionIds(t), 'DEC-'), date: ctx.today, status: 'accepted', by: ctx.by, ...decision })
+  t.decisions.push({ id: next([...decisionIds(t), ...(ctx.taken ?? [])], 'DEC-'), date: ctx.today, status: 'accepted', by: ctx.by, ...decision })
 }
 
 /** Keeps the summary and per-feature counts in step, leaving other fields as they are. */

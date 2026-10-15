@@ -1,6 +1,8 @@
 import type { CrewLive, CrewUsage } from '../types'
 import { criteriaOf, gateG1, gateG4 } from './board'
 import type { GateResult, Tracker } from './board'
+import { estimateTokens } from './memory'
+import type { MemoryEntry } from './memory'
 import { ROLE_NAMES } from './model'
 import type { Feature, Gate, Item, RoleId, RoleRow, Snapshot, Stage, Tier, UsageRow } from './model'
 
@@ -20,6 +22,9 @@ export const emptyLive = (): CrewLive => ({
   seen: {},
   questions: [],
   activity: [],
+  asks: {},
+  asked: 0,
+  injected: { count: 0, tokens: 0 },
 })
 
 const DAY = 86_400_000
@@ -86,8 +91,10 @@ const pendingStage = (label: string): Stage => ({ label, done: 0, total: 0, stat
 
 const name = (who: string): string => (who === 'crew' ? 'crew' : (ROLE_NAMES[who as RoleId] ?? who))
 
-/** Everything the pane draws, from the board on disk and the team this session runs. */
-export const snapshotOf = ({ board, live, now }: { board: Tracker | null; live: CrewLive; now: number }): Snapshot => {
+const MEMORY_ROWS = 40
+
+/** Everything the pane draws, from the board and memories on disk and the team this session runs. */
+export const snapshotOf = ({ board, live, now, memories = [] }: { board: Tracker | null; live: CrewLive; now: number; memories?: readonly MemoryEntry[] }): Snapshot => {
   const g1 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG1(board)
   const g4 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG4(board)
   const stage = live.flow.stage
@@ -207,12 +214,23 @@ export const snapshotOf = ({ board, live, now }: { board: Tracker | null; live: 
         ...(m.kind !== undefined ? { kind: m.kind } : {}),
       })),
     })),
-    memories: [],
-    carrying: [],
+    memories: [...memories]
+      .sort((a, b) => Number(a.supersededBy !== undefined) - Number(b.supersededBy !== undefined) || b.t - a.t)
+      .slice(0, MEMORY_ROWS)
+      .map(m => ({ id: m.id, type: m.type, text: m.text, source: m.source, refs: m.refs, ...(m.supersededBy !== undefined ? { supersededBy: m.supersededBy } : {}) })),
+    carrying: crewRoles
+      .map(r => {
+        const ids = live.roles[r as 'pm' | 'qa'].given ?? []
+        const known = memories.filter(m => ids.includes(m.id))
+        return { role: r, ids, tokens: known.reduce((n, m) => n + estimateTokens(m.text), 0) }
+      })
+      .filter(c => c.ids.length > 0),
     usage,
     tiers,
     brainShare: today + brain === 0 ? 0 : brain / (today + brain),
     alerts: [],
     actions: [],
+    injected: { count: live.injected.count, average: live.injected.count === 0 ? 0 : Math.round(live.injected.tokens / live.injected.count) },
+    chores: total(live.usage.memory),
   }
 }

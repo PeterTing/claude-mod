@@ -1,3 +1,8 @@
 {
-  "extends": "./.claude-plugin/types/tsconfig.json"
+  "extends": "./.claude-plugin/types/tsconfig.json",
+  "compilerOptions": {
+    // The laid MCP types list every MCP tool the session has connected, which varies by
+    // machine and is deep enough to stop the tool.call matchers from type-checking.
+    "types": ["claude-code", "claude-code-tools"]
+  }
 }

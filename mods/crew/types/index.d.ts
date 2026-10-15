@@ -18,6 +18,14 @@ export type CrewLiveRole = {
   doing: string
   /** Tokens in its context at its last request. */
   context: number
+  /** The work it was last given. */
+  task?: string
+  /** What it said at the end of its last run. */
+  report?: string
+  /** Memories its current agent has been given or saved, so a wake adds only new ones. */
+  given?: string[]
+  /** The person asked for a fresh context at its next wake. */
+  rotate?: boolean
 }
 
 export type CrewUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; wakes: number; rotations: number }
@@ -62,6 +70,12 @@ export type CrewLive = {
   seen: Record<string, number>
   questions: CrewQuestion[]
   activity: CrewActivity[]
+  /** Role → the ASK thread of the person's question it is answering. */
+  asks: Record<string, string>
+  /** How many questions the person has asked the roles directly. */
+  asked: number
+  /** Memories attached to starts and wakes: how many times, how many tokens in all. */
+  injected: { count: number; tokens: number }
 }
 
 declare module 'claude-code' {
