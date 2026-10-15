@@ -81,6 +81,14 @@ describe('redact', () => {
     expect(redact('https://hooks.slack.com/services/T000/B000/XXXXXXXX')).toBe('https://hooks.slack.com/services/[已遮罩]')
   })
 
+  test('masks each kind of assigned secret', () => {
+    for (const key of ['passwd', 'pwd', 'secret', 'access_key', 'client_secret', 'ACCESS-KEY']) {
+      expect(redact(`${key}: abc12345`)).toBe(`${key}: [已遮罩]`)
+    }
+    expect(redact('密鑰為 abc12345')).toBe('密鑰為 [已遮罩]')
+    expect(redact('權杖：abc12345')).toBe('權杖：[已遮罩]')
+  })
+
   test('masks private keys and JWTs, even a key cut before its end line', () => {
     expect(redact('-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----')).toBe('[已遮罩]')
     expect(redact('前 -----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\nabc')).toBe('前 [已遮罩]')
@@ -289,6 +297,18 @@ describe('preferences', () => {
     ]
     expect(packMemories(hits, 40).ids).toEqual(['PREF-001'])
     expect(packMemories(hits, 400).ids).toEqual(['MEM-001', 'PREF-001'])
+  })
+})
+
+describe('limits', () => {
+  test('takes five preferences at most, the latest first', () => {
+    const prefs = Array.from({ length: 7 }, (_, i) => entry({ id: `PREF-00${i + 1}`, type: 'PREF', text: `偏好 ${i}`, source: 'person', t: i }))
+    const hits = searchMemories(prefs, { text: '無關' })
+    expect(hits.map(h => h.entry.id)).toEqual(['PREF-007', 'PREF-006', 'PREF-005', 'PREF-004', 'PREF-003'])
+  })
+
+  test('an empty store serializes to nothing', () => {
+    expect(serializeMemories([])).toBe('')
   })
 })
 

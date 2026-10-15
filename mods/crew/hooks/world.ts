@@ -16,7 +16,7 @@ export const PRD = '# 會員訂閱\n\n使用者可以選月繳方案，可以隨
 
 export type Spawn = { subagentType: string; name?: string; description: string; model?: string; prompt: string }
 
-export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '' } = {}) => {
+export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', stopped = [] as string[] } = {}) => {
   const clock = mock.clock(on, { now: NOW })
   /** crew's own store, which outlives sessions and is not in the repo. */
   const store = new Map<string, unknown>()
@@ -115,7 +115,10 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '' }
     return { model: input.model ?? 'claude-sonnet-5-5' }
   })
   on('agent.list', () => ({
-    value: spawned.map((s, i) => ({ id: `a-${s.subagentType.replace('crew:', '')}-${i + 1}`, spawnedBy: 'crew', type: s.subagentType, status: 'running', description: s.description })),
+    value: spawned.map((s, i) => {
+      const id = `a-${s.subagentType.replace('crew:', '')}-${i + 1}`
+      return { id, spawnedBy: 'crew', type: s.subagentType, status: stopped.includes(id) ? 'completed' : 'running', description: s.description }
+    }),
   }))
   // Resuming a finished agent asks whether its type is offered, as the engine does.
   on('session.send', async (_$, e) => {

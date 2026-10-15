@@ -174,8 +174,10 @@ describe('a role run that failed', () => {
     expect(w.sent).toEqual([])
     expect(w.toasts.at(-1)).toMatch(/QA 這一輪沒有完成（error）/)
     expect((await $.command.run(command('status'))).text).toMatch(/writing_tests/)
+    const before = w.spawned.length
     const r = await $.command.run(command('resume'))
     expect(r.text).toMatch(/接續/)
+    expect(w.spawned).toHaveLength(before + 1)
     expect(w.spawned.at(-1)?.subagentType).toBe('crew:qa')
   })
 })
@@ -428,5 +430,51 @@ describe('third-round review items', () => {
     await $.command.run(command('start docs/PRD.md'))
     w.disk.set(`${ROOT}/prd-tracker.json`, '{ broken')
     expect(String((await call($, 'board_read', {}, 'a-pm-1')).result)).toMatch(/讀不懂/)
+  })
+})
+
+describe('fourth-round review items', () => {
+  test('a role taking in the person’s answer is not taken to have finished the flow’s work', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    // QA asks the person, covers AC-001 and stops: the PM confirms the AC-002 gap.
+    await call($, 'ask_person', { question: 'AC-002 的價格含稅嗎？', item: 'AC-002' }, 'a-qa-2')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e' }])
+    await done($, 'a-qa-2')
+    expect((await $.command.run(command('status'))).text).toMatch(/confirming/)
+    // The answer wakes QA; the PM keeps AC-002 meanwhile, and that work waits for QA.
+    await $.command.run(command('answer Q-01 含稅'))
+    expect(w.sent.at(-1)?.to).toBe('a-qa-2')
+    await call($, 'thread_post', { item: 'AC-002', to: 'qa', text: '要做，價格含稅' }, 'a-pm-1')
+    await done($, 'a-pm-1')
+    const sentBefore = w.sent.length
+    await done($, 'a-qa-2', '知道了，含稅')
+    // QA's answer turn is not test writing: the PM is not asked to drop AC-002; QA gets the AC-002 work.
+    expect(w.sent.slice(sentBefore).map(s => s.to)).toEqual(['a-qa-2'])
+    expect(w.sent.at(-1)?.text).toMatch(/AC-002/)
+    expect((await $.command.run(command('status'))).text).toMatch(/adding_tests/)
+  })
+
+  test('resume starts a role whose agent is gone without a word', async ($, on) => {
+    const w = world($, on, { stopped: ['a-pm-1'] })
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    expect((await $.command.run(command('resume'))).text).toMatch(/接續/)
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:pm'])
+  })
+
+  test('hands waiting work to a role one task at a time', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await $.command.run(command('ask qa 在嗎？'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await done($, 'a-qa-2', '在')
+    const qas = w.spawned.filter(s => s.subagentType === 'crew:qa')
+    expect(qas).toHaveLength(2)
   })
 })

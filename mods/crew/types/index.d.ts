@@ -26,6 +26,8 @@ export type CrewLiveRole = {
   given?: string[]
   /** The person asked for a fresh context at its next wake. */
   rotate?: boolean
+  /** Whom its current or last run was for: the flow's work, or the person (a question, an answer). */
+  run?: 'flow' | 'person'
 }
 
 export type CrewUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; wakes: number; rotations: number }
@@ -58,6 +60,7 @@ export type CrewWork = {
   route: { tier: CrewTier; model: string; label: string; effort: string; limit: number }
   text: string
   item?: string
+  run?: 'flow' | 'person'
 }
 
 /** Everything crew keeps for a running team in this session. */

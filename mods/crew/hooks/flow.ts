@@ -38,7 +38,8 @@ export type FlowEvent =
 
 export type FlowAction =
   | { type: 'spawn'; role: 'pm' | 'qa'; route: Route; prompt: string }
-  | { type: 'message'; role: 'pm' | 'qa'; item?: string; text: string; route: Route }
+  /** `person`: the message carries the person's answer, not the flow's next step. */
+  | { type: 'message'; role: 'pm' | 'qa'; item?: string; text: string; route: Route; person?: true }
   | { type: 'ask_person'; question: string; item?: string }
   | { type: 'status'; text: string }
   | { type: 'done'; text: string }
@@ -184,7 +185,8 @@ const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered'
     text: answerText(event.question, event.answer),
     route: routeFor(role, tierFor({ kind: 'confirm_gaps', size: 1 })),
   }
-  if (state.stage !== 'escalated') return { state, actions: [message] }
+  // Mid-flow the answer is the person's, for the role to take in; an escalated flow goes on with it.
+  if (state.stage !== 'escalated') return { state, actions: [{ ...message, person: true }] }
   const resumeAt = state.resumeAt ?? 'confirming'
   const { resumeAt: _, ...rest } = state
   return {

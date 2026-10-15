@@ -533,7 +533,7 @@ const withUnread = (l: CrewLive, role: CrewRole, text: string, item?: string): s
  * the work and its recent thread lines go first, the work last. With a reason,
  * it replaces the role's agent (a rotation) and carries its last report.
  */
-async function startRole($: any, role: CrewRole, route: Route, work: string, reason?: string) {
+async function startRole($: any, role: CrewRole, route: Route, work: string, reason?: string, run: 'flow' | 'person' = 'flow') {
   const l = await read($, live)
   const was = l.roles[role]
   const task = withUnread(l, role, work)
@@ -588,6 +588,7 @@ async function startRole($: any, role: CrewRole, route: Route, work: string, rea
         task: cut(task, 600),
         ...(was.report === undefined ? {} : { report: was.report }),
         given: pack.ids,
+        run,
       },
     },
     usage: rotated ? { ...s.usage, [role]: { ...(s.usage[role] ?? ZERO), rotations: (s.usage[role]?.rotations ?? 0) + 1 } } : s.usage,
@@ -601,14 +602,14 @@ async function startRole($: any, role: CrewRole, route: Route, work: string, rea
  * not been given yet, or starts a fresh one with the pack when a wake costs more
  * (see wakePlan) or the agent cannot be woken.
  */
-async function deliver($: any, role: CrewRole, route: Route, work: string, item?: string) {
+async function deliver($: any, role: CrewRole, route: Route, work: string, item?: string, run: 'flow' | 'person' = 'flow') {
   const l0 = await read($, live)
   const state = l0.roles[role]
   // A role at work is never replaced: the message waits in its inbox, and a rotation waits for it to be idle.
   const busy = state.state === 'working' && state.agentId !== undefined
   const plan = busy ? ({ kind: 'wake' } as const) : wakePlan(state, route, { forced: state.rotate === true })
   if (plan.kind !== 'wake' || state.agentId === undefined) {
-    await startRole($, role, route, work, plan.kind === 'rotate' ? plan.reason : undefined)
+    await startRole($, role, route, work, plan.kind === 'rotate' ? plan.reason : undefined, run)
     return
   }
   const text = withUnread(l0, role, work, item)
@@ -623,7 +624,7 @@ async function deliver($: any, role: CrewRole, route: Route, work: string, item?
   if (!sent.isDelivered) {
     // A role that cannot be woken starts again; the pack carries what it needs.
     $.ui.log(`crew: starting ${role} again: ${sent.reason ?? ''}`)
-    await startRole($, role, route, text, `原本的對話叫不醒：${sent.reason ?? '沒有原因'}`)
+    await startRole($, role, route, text, `原本的對話叫不醒：${sent.reason ?? '沒有原因'}`, run)
     return
   }
   await update($, live, l => ({
@@ -635,7 +636,9 @@ async function deliver($: any, role: CrewRole, route: Route, work: string, item?
         ...l.roles[role],
         ...(busy ? {} : { effort: route.effort, tier: route.tier, limit: route.limit }),
         // A busy role may have finished while the message went out: what its turn's end said stands.
+        // Joining a run under way, the message is part of that run.
         state: busy ? l.roles[role].state : 'working',
+        run: busy ? (l.roles[role].run ?? 'flow') : run,
         doing: firstLine(text),
         task: cut(text, 600),
         given: [...(l.roles[role].given ?? []), ...pack.ids],
@@ -646,6 +649,26 @@ async function deliver($: any, role: CrewRole, route: Route, work: string, item?
   await note($, { kind: 'wake', role, memories: pack.ids })
 }
 
+/**
+ * Gives a role work. A new task waits for a busy role's turn to end, and so
+ * does anything for a role whose run is the person's: that run's end is an
+ * answer, not the flow's work. Work starts one task at a time.
+ */
+async function handOver($: any, role: CrewRole, works: readonly CrewWork[]) {
+  for (const [i, work] of works.entries()) {
+    const r = (await read($, live)).roles[role]
+    const busy = r.state === 'working' && r.agentId !== undefined
+    if (busy && (work.kind === 'spawn' || r.run === 'person')) {
+      const rest = works.slice(i)
+      await update($, live, s => ({ ...s, pending: { ...s.pending, [role]: [...(s.pending[role] ?? []), ...rest] } }))
+      return
+    }
+    const route = work.route as Route
+    if (work.kind === 'spawn') await startRole($, role, route, work.text, undefined, work.run ?? 'flow')
+    else await deliver($, role, route, work.text, work.item, work.run ?? 'flow')
+  }
+}
+
 async function execute($: any, actions: readonly FlowAction[]) {
   for (const action of actions) {
     if (action.type === 'spawn' || action.type === 'message') {
@@ -653,16 +676,9 @@ async function execute($: any, actions: readonly FlowAction[]) {
       const r = l.roles[action.role]
       const text = action.type === 'spawn' ? action.prompt : action.text
       if (action.type === 'message') await post($, { item: action.item ?? 'crew', from: 'crew', to: action.role, text, kind: 'route' })
-      // A new task waits for a busy role's turn to end, and so does anything for a role answering the person:
-      // that turn's end is the answer, not the flow's work.
-      if (r.state === 'working' && r.agentId !== undefined && (action.type === 'spawn' || l.asks[action.role] !== undefined)) {
-        const work: CrewWork = { kind: action.type, route: action.route, text, ...(action.type === 'message' && action.item !== undefined ? { item: action.item } : {}) }
-        await update($, live, s => ({ ...s, pending: { ...s.pending, [action.role]: [...(s.pending[action.role] ?? []), work] } }))
-      } else if (action.type === 'spawn') {
-        await startRole($, action.role, action.route, text)
-      } else {
-        await deliver($, action.role, action.route, text, action.item)
-      }
+      const run = action.type === 'message' && action.person === true ? 'person' : 'flow'
+      const work: CrewWork = { kind: action.type, route: action.route, text, run, ...(action.type === 'message' && action.item !== undefined ? { item: action.item } : {}) }
+      await handOver($, action.role, [work])
     } else if (action.type === 'ask_person') {
       await ask($, 'crew', action.question, action.item)
     } else {
@@ -860,10 +876,19 @@ async function resumeOnStart($: any) {
 async function resumeFlow($: any): Promise<string> {
   const l = await read($, live)
   if (!RUNNING.includes(l.flow.stage) || l.prdPath === null) return '沒有進行中的 PRD 可以接續。'
-  // A role still at work is left alone; one whose agent is gone without a word is not at work.
+  // A role still at work is left alone; one whose agent is gone without a word is not at work, and is let go.
   const running = new Set(((await $.agent.list()) as { id: string; status?: string }[]).filter(a => a.status === 'running').map(a => a.id))
   const busy = CREW_ROLES.find(r => l.roles[r].state === 'working' && running.has(l.roles[r].agentId ?? ''))
   if (busy !== undefined) return `${crewName(busy)} 還在工作，等它這一輪做完再接續。`
+  const gone = CREW_ROLES.filter(r => l.roles[r].state === 'working')
+  if (gone.length > 0) {
+    await update($, live, s => ({
+      ...s,
+      roles: Object.fromEntries(Object.entries(s.roles).map(([r, v]) => [r, gone.includes(r as CrewRole) ? { ...v, state: 'blocked' as const, doing: '原本的 agent 不在了' } : v])) as CrewLive['roles'],
+      pending: Object.fromEntries(Object.entries(s.pending).filter(([r]) => !gone.includes(r as CrewRole))),
+      asks: Object.fromEntries(Object.entries(s.asks).filter(([r]) => !gone.includes(r as CrewRole))),
+    }))
+  }
   const prd = await prdFile($, l.prdPath)
   const board = await loadBoard($)
   if (board === null) return `沒有接續：${boardProblem() ?? '找不到看板 prd-tracker.json。'}`
@@ -988,7 +1013,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     await update($, live, s => ({ ...s, asked: s.asked + 1, asks: { ...s.asks, [role]: { id, by } } }))
     await post($, { item: id, from: 'person', to: role, text: question })
     const text = `使用者問你（${id}）：${question}\n直接回答，幾句話就好；需要時先用 board_read、thread_read、memory_search 查。使用者沒有要你改看板就不要改。`
-    await deliver($, role, routeFor(role, l.roles[role].tier ?? 'S'), text, id)
+    await deliver($, role, routeFor(role, l.roles[role].tier ?? 'S'), text, id, 'person')
     const after = (await read($, live)).roles[role]
     if (after.state === 'blocked') {
       await update($, live, s => ({ ...s, asks: Object.fromEntries(Object.entries(s.asks).filter(([r]) => r !== role)) }))
@@ -1370,7 +1395,7 @@ export const register: Register = on => {
     }
     await saveUsage($)
     // A turn that answered the person is not the flow's work: it moves a running flow on only once it is done or idle.
-    const flowWork = asking === undefined || !RUNNING.includes(l.flow.stage)
+    const flowWork = before.roles[role].run !== 'person' || !RUNNING.includes(l.flow.stage)
     const board = await loadBoard($)
     if (board !== null && flowWork) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l) })
     else if (board === null && boardProblem() !== undefined) $.ui.toast(`crew：流程停在這裡。${boardProblem() ?? ''}`)
@@ -1378,11 +1403,7 @@ export const register: Register = on => {
     const waiting = (await read($, live)).pending[role] ?? []
     if (waiting.length > 0) {
       await update($, live, s => ({ ...s, pending: Object.fromEntries(Object.entries(s.pending).filter(([r]) => r !== role)) }))
-      for (const work of waiting) {
-        const route = work.route as Route
-        if (work.kind === 'spawn') await startRole($, role, route, work.text)
-        else await deliver($, role, route, work.text, work.item)
-      }
+      await handOver($, role, waiting)
     }
     await consolidateDue($)
     // Notes for the brain wait for the engine's notice of this run, which follows.

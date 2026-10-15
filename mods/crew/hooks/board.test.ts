@@ -256,9 +256,61 @@ describe('ids after a drop', () => {
     expect(added.ok && gateG4(added.tracker).gaps.map(g => g.id)).toContain('AC-004')
   })
 
+  test('a criterion dropped before any test case covered it keeps its id too', () => {
+    const dropped = run(withTwoFeatures(), [{ op: 'drop_criterion', id: 'AC-003', reason: '下一版' }])
+    if (!dropped.ok) throw new Error('drop')
+    const added = run(dropped.tracker, [{ op: 'add_criterion', feature: 'PRD-001', text: '新的' }])
+    expect(added.ok && added.results[0]?.id).toBe('AC-004')
+  })
+
+  test('a criterion only a test case still points at keeps its id', () => {
+    const t = withTwoFeatures()
+    const covered = run(t, [{ op: 'add_test_case', criteria: ['AC-003'], title: 't', steps: ['s'], expected: 'e' }], 'qa')
+    if (!covered.ok) throw new Error('setup')
+    const removed = covered.tracker
+    const item = removed.prd_items[1]
+    if (item === undefined) throw new Error('setup')
+    item.acceptance_criteria = item.acceptance_criteria.slice(0, 1)
+    const added = run(removed, [{ op: 'add_criterion', feature: 'PRD-001', text: '新的' }])
+    expect(added.ok && added.results[0]?.id).toBe('AC-004')
+  })
+
   test('G4 leaves out the criteria of a dropped feature', () => {
     const r = run(withTwoFeatures(), [{ op: 'drop_feature', id: 'PRD-002', reason: '下一版' }])
     expect(r.ok && gateG4(r.tracker).gaps.map(g => g.id)).toEqual(['AC-001'])
+  })
+})
+
+describe('test case details', () => {
+  test('refuses a test case with no steps or a blank expected result', () => {
+    const r = run(withTwoFeatures(), [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: [], expected: 'e' }], 'qa')
+    expect(r.ok).toBe(false)
+    const blank = run(withTwoFeatures(), [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: '  ' }], 'qa')
+    expect(!blank.ok && blank.errors[0]).toMatch(/步驟或預期結果是空白的/)
+  })
+
+  test('keeps the types, role and fixture a test case is given', () => {
+    const r = run(withTwoFeatures(), [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e', types: ['e2e'], role: '管理員', fixture: '已登入' }], 'qa')
+    expect(r.ok && r.tracker.prd_items[0]?.test_cases[0]).toMatchObject({ types: ['e2e'], role: '管理員', fixture: '已登入' })
+  })
+
+  test('parseOps says what is wrong with each kind of op', () => {
+    const r = parseOps([
+      'x',
+      { op: 'add_feature', title: 't', priority: 'P9' },
+      { op: 'drop_feature', id: 'PRD-001' },
+      { op: 'add_test_case', criteria: 'AC-001' },
+      { op: 'add_test_case', criteria: ['AC-001'], steps: 's' },
+      { op: 'add_test_case', criteria: ['AC-001'], steps: ['s'] },
+    ])
+    expect(!r.ok && r.error.split('\n')).toEqual([
+      '第 1 筆 不是物件',
+      '第 2 筆 add_feature 的 priority 要是 P0、P1 或 P2',
+      '第 3 筆 drop_feature 缺少 reason',
+      '第 4 筆 add_test_case 的 criteria 要是驗收條件編號的陣列',
+      '第 5 筆 add_test_case 的 steps 要是字串陣列',
+      '第 6 筆 add_test_case 缺少 title 或 expected',
+    ])
   })
 })
 
