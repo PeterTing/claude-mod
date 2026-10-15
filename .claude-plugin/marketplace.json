@@ -25,6 +25,25 @@
       ]
     },
     {
+      "name": "crew",
+      "description": "A resident product team in Claude Code: a PM splits your PRD into features and acceptance criteria, QA writes a test case for each, and gaps and product questions come back to you. Keeps its memory in the repo; you can run it with /crew or by asking Claude. Made here. Work in progress: PM and QA today.",
+      "source": "./mods/crew",
+      "author": {
+        "name": "PeterTing",
+        "url": "https://github.com/PeterTing"
+      },
+      "homepage": "https://github.com/PeterTing/claude-mod/tree/main/mods/crew",
+      "license": "MIT",
+      "category": "productivity",
+      "tags": [
+        "mod",
+        "agents",
+        "prd",
+        "qa",
+        "memory"
+      ]
+    },
+    {
       "name": "usage-meter",
       "description": "Your plan's 5-hour and 7-day usage as small bars above the prompt, with the reset countdown and the session's cost. Reviewed: Recommend.",
       "source": {

@@ -165,7 +165,7 @@ footer { font-size: var(--step--1); color: var(--muted); border-top: 1px solid v
   <h1>Crew：常駐的產品開發 agent 團隊</h1>
   <p class="lede">PM、UI/UX 設計師、全端工程師、QA 工程師、Tech lead 五個角色常駐在你的 Claude Code 裡，把 PRD 拆成各自的工作項目，彼此討論、互相確認。你的主對話是協調所有角色的大腦。每個角色的 context 都有上限，靠存在 repo 的記憶接續先前的事。</p>
   <div class="chips">
-    <span class="chip wait">第 3 階段完成・等你試用記憶與輪替</span>
+    <span class="chip wait">第 3 階段完成・大腦指揮與重開接續・已過上線前 review</span>
     <span class="chip">2026-10-15</span>
     <span class="chip">Claude Code 2.1.299</span>
     <span class="chip">名稱 crew</span>
@@ -187,6 +187,7 @@ footer { font-size: var(--step--1); color: var(--muted); border-top: 1px solid v
     <li><a href="#spike">實測結果</a></li>
     <li><a href="#phase2">第 2 階段結果</a></li>
     <li><a href="#phase3">第 3 階段結果</a></li>
+    <li><a href="#release">大腦指揮、重開接續與上線前 review</a></li>
     <li><a href="#phases">開發階段</a></li>
     <li><a href="#verify">驗證</a></li>
     <li><a href="#risks">風險</a></li>
@@ -676,6 +677,34 @@ flowchart LR
     <li>引擎自動壓縮角色：只在單一輪超過引擎的壓縮門檻時才會發生。有整合測試。</li>
     <li>每天自動整理前一天的流水帳：要跨日才會觸發。有整合測試；手動 /crew consolidate 已實跑。</li>
     <li>50 次喚醒的長時間 context 測試，以及開與不開記憶的 token 比較：留到第 4 階段，用較大的 PRD 一起做。</li>
+  </ul>
+</section>
+
+<section id="release">
+  <h2>大腦指揮、重開接續與上線前 review（2026-10-15）</h2>
+  <p class="prose">你決定了三件事：跟大腦說就能讓團隊動起來、開 Claude Code 就自動接續、裝成正式 mod。上線前照你的規則，請三個沒參與實作的 agent 分別做安全、品質、測試 review，反覆修到 critical / important 清零。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>功能</th><th>做法</th><th>實測</th></tr></thead>
+      <tbody>
+        <tr><td>跟大腦說</td><td>主對話有一個 <code>crew</code> 工具，做得到 /crew 指令能做的事。大腦開始的工作，角色的回覆、要你決定的事、流程結束，都會通知大腦；通知搭在角色本來就會送出的完成通知上，不另外多開一輪。</td><td><span class="tag ok">通過</span> 說「請用 crew 團隊開始處理 docs/PRD.md」，大腦自己呼叫工具；問 PM 的問題，PM 回覆後大腦一兩句話轉告。</td></tr>
+        <tr><td>重開自動接續</td><td>流程、PRD、待答問題存在 crew 自己的本機 store（以 repo 路徑為 key），不放 repo，所以 clone 來的 repo 不能讓 crew 自己動手。重開時從看板判斷接到哪裡。</td><td><span class="tag ok">通過</span> QA 寫到一半關掉 Claude Code，重開後跳出「接續」，QA 只補還沒覆蓋的條件。</td></tr>
+        <tr><td>/crew 指令開始的工作</td><td>只用面板、提示列和通知，不叫醒大腦，不花大腦的 token。</td><td><span class="tag ok">通過</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>review 找到並修好的重點</h3>
+  <ul class="plain prose">
+    <li><strong>秘密</strong>：討論串、看板、問題和回答寫入前都會遮罩；先遮再截斷，被截斷的私鑰也遮得到；「密碼：至少 8 個字元」這類規則文字不會被誤遮。</li>
+    <li><strong>repo 帶來的風險</strong>：看板讀不懂（例如 merge 衝突）時絕不覆寫；crew 的檔案是連結或指到 repo 外時，不讀也不寫；PRD 必須在 repo 內。</li>
+    <li><strong>權限</strong>：不是 crew 開的 agent、被 reset 或輪替換掉的舊 agent，都不能寫看板、討論串、問題和記憶；角色不能改你的偏好和你（或大腦代你）做的決定；每日整理只補事實和教訓。</li>
+    <li><strong>流程正確性</strong>：角色在工作或在回應你時，不會被換掉，新工作會排隊；回應你的那一輪不算流程的工作完成；只有回答流程自己的問題才會接續卡住的流程；失敗的回合不會推進流程，用 /crew resume 重來；同時發生的寫入不會互相覆蓋。</li>
+  </ul>
+  <p class="prose">最後一版：311 個單元與整合測試、validator、型別檢查全過；三個 review 最後一輪都沒有 critical / important。核心模組的分支覆蓋（reviewer 讀碼估計）：flow、board、memory、pack 都在 95% 以上。最後用最新版實跑一份 PRD：15 條驗收條件、39 個 test case 全部覆蓋，回答問題後 PM 補條件、QA 補 test case，主對話沒有被叫醒。</p>
+  <h3>沒處理的 minor</h3>
+  <ul class="plain prose">
+    <li>crew 的本機 store 不會清掉舊 repo 的紀錄；名字比對的過濾器沒有錨定到通知的固定格式（格式不明，錨錯會更糟）；遮罩靠樣式比對，形狀特殊的秘密仍可能漏掉。</li>
+    <li>程式裡有幾處重複定義（流程階段、工具名），以及 <code>$</code> 沒有型別，留到第 4 階段整理。</li>
   </ul>
 </section>
 
