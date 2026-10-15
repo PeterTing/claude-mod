@@ -68,6 +68,12 @@ describe('redact', () => {
     expect(redact('token="s3cr3t-value"')).toBe('token="[已遮罩]"')
   })
 
+  test('masks GitHub, Slack and Google keys', () => {
+    expect(redact('github_pat_11ABCDEFG0123456789_abcdefghij')).toBe('[已遮罩]')
+    expect(redact('xoxb-1234567890-abcdefghij')).toBe('[已遮罩]')
+    expect(redact('AIzaSyA1234567890abcdefghijklmnopqrstu')).toBe('[已遮罩]')
+  })
+
   test('masks secrets in JSON, URLs and headers', () => {
     expect(redact('{"password": "hunter2xyz", "user": "amy"}')).toBe('{"password": "[已遮罩]", "user": "amy"}')
     expect(redact('postgres://admin:S3cretPass@db:5432/app')).toBe('postgres://admin:[已遮罩]@db:5432/app')
@@ -174,6 +180,13 @@ describe('addMemory', () => {
   test('keeps an id given to it, such as a decision the board already numbered', () => {
     const r = addMemory([], { id: 'DEC-004', type: 'DEC', text: 'AC-009 移出範圍', source: 'pm' }, ctx)
     expect(r.ok && r.entry.id).toBe('DEC-004')
+  })
+
+  test('keeps a decision the board numbered under its own id, even with words already saved', () => {
+    const list = [entry({ id: 'DEC-001', type: 'DEC', text: 'AC-009 移出範圍' })]
+    const r = addMemory(list, { id: 'DEC-002', type: 'DEC', text: 'AC-009 移出範圍', source: 'pm' }, ctx)
+    expect(r.ok && r.entry.id).toBe('DEC-002')
+    expect(r.ok && r.list).toHaveLength(2)
   })
 
   test('refuses an id already in use', () => {

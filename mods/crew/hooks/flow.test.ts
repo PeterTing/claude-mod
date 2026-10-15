@@ -218,6 +218,42 @@ describe('step', () => {
   })
 })
 
+describe('edges', () => {
+  test('names the features still without criteria when the split stays stuck', () => {
+    const half = board([...SPLIT, { op: 'add_feature', title: '帳單', summary: '' }])
+    const once = run([START, { type: 'role_done', role: 'pm', board: half }])
+    const twice = run([{ type: 'role_done', role: 'pm', board: half }], once.state)
+    expect(twice.state).toMatchObject({ stage: 'escalated', resumeAt: 'splitting' })
+    expect((twice.actions.at(-1) as { question: string }).question).toMatch(/這些功能還是沒有驗收條件：PRD-002/)
+  })
+
+  test('a finished flow opens again for a thread message to the other role', () => {
+    const covered = board(SPLIT, [tc(['AC-001', 'AC-002'])])
+    const done: FlowState = { stage: 'done', round: 1, retries: 0 }
+    const toQa = step(done, { type: 'role_done', role: 'pm', board: covered, inbox: { qa: ['AC-001'] } })
+    expect(toQa.state.stage).toBe('adding_tests')
+    expect(toQa.actions[0]).toMatchObject({ type: 'message', role: 'qa', item: 'AC-001' })
+    const toPm = step(done, { type: 'role_done', role: 'qa', board: covered, inbox: { pm: ['AC-002'] } })
+    expect(toPm.state.stage).toBe('confirming')
+    expect(toPm.actions[0]).toMatchObject({ type: 'message', role: 'pm', item: 'AC-002' })
+  })
+
+  test('takes an answer back to the gaps when the flow did not say where it stopped', () => {
+    const r = step({ stage: 'escalated', round: 3, retries: 0 }, { type: 'answered', question: 'q', answer: 'a' })
+    expect(r.state).toEqual({ stage: 'confirming', round: 0, retries: 0 })
+  })
+
+  test('finishes when the PM drops the feature that held the gaps', () => {
+    const dropped = board([...SPLIT, { op: 'drop_feature', id: 'PRD-001', reason: '下一版' }])
+    expect(step({ stage: 'confirming', round: 1, retries: 0 }, { type: 'role_done', role: 'pm', board: dropped }).state.stage).toBe('done')
+  })
+
+  test('a restart in confirming with no gaps left finishes', () => {
+    const r = step({ stage: 'confirming', round: 1, retries: 0 }, { type: 'resume', board: board(SPLIT, [tc(['AC-001', 'AC-002'])]), prd: { path: 'p', size: 1 } })
+    expect(r.state.stage).toBe('done')
+  })
+})
+
 describe('resume', () => {
   const at = (stage: FlowState['stage']): FlowState => ({ stage, round: 1, retries: 0 })
   const resume = (state: FlowState, b: Tracker) => step(state, { type: 'resume', board: b, prd: { path: 'docs/PRD.md', size: 600 } })

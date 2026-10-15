@@ -98,10 +98,11 @@ describe('the brain runs crew', () => {
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     await askPerson($, 'a-pm-1', '年繳要不要做？')
-    await $.command.run(command('ask pm 嗨'))
-    await done($, 'a-pm-1', '嗨')
-    expect(w.prompts).toEqual([])
+    await done($, 'a-pm-1')
+    expect((await notice($, 'a-pm-1')).drop).toBeDefined()
     expect(w.toasts.some(t => /Q-01/.test(t))).toBe(true)
+    await w.clock.advance(61_000)
+    expect(w.prompts).toEqual([])
   })
 
   test('is for the main conversation only', async ($, on) => {

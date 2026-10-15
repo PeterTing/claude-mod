@@ -248,13 +248,21 @@ const stateKey = (): string => `state:${files.root}`
 async function restore($: any) {
   const l = await read($, live)
   if (l.prdPath === null) {
-    const saved = (await $.store.get(stateKey())) as Partial<Pick<CrewLive, 'prdPath' | 'flow' | 'questions' | 'lead'>> | undefined
+    const saved = (await $.store.get(stateKey())) as Partial<Record<'prdPath' | 'flow' | 'questions' | 'lead', unknown>> | undefined
     if (saved !== undefined && saved !== null && typeof saved === 'object') {
+      // Only what still has the shape crew wrote: anything else starts clean.
+      const flow = saved.flow as Partial<CrewLive['flow']> | undefined
+      const stages: readonly string[] = ['idle', 'done', 'escalated', ...RUNNING]
+      const isFlow = typeof flow === 'object' && flow !== null && stages.includes(String(flow.stage)) && typeof flow.round === 'number' && typeof flow.retries === 'number'
+      const questions = (Array.isArray(saved.questions) ? saved.questions : []).filter(
+        (q): q is CrewLive['questions'][number] =>
+          typeof q === 'object' && q !== null && typeof q.id === 'string' && typeof q.question === 'string' && (q.status === 'open' || q.status === 'answered'),
+      )
       await update($, live, (x): CrewLive => ({
         ...x,
         prdPath: typeof saved.prdPath === 'string' ? saved.prdPath : null,
-        flow: saved.flow ?? x.flow,
-        questions: Array.isArray(saved.questions) ? saved.questions : [],
+        flow: isFlow ? (flow as CrewLive['flow']) : x.flow,
+        questions,
         lead: saved.lead === 'brain' ? 'brain' : 'person',
       }))
     }
@@ -670,7 +678,10 @@ function flushBrain($: any, all = false) {
 async function resumeOnStart($: any) {
   const l = await read($, live)
   const open = l.questions.filter(q => q.status === 'open').length
-  if (RUNNING.includes(l.flow.stage) && Object.keys(l.agents).length === 0) await resumeFlow($)
+  if (RUNNING.includes(l.flow.stage) && Object.keys(l.agents).length === 0) {
+    const said = await resumeFlow($)
+    if (!said.startsWith('接續')) $.ui.toast(`crew：${said}`)
+  }
   if (open > 0) $.ui.toast(`crew：有 ${open} 件事等你決定（/crew status）`)
   flushBrain($, true)
 }
@@ -681,9 +692,10 @@ async function resumeFlow($: any): Promise<string> {
   if (!RUNNING.includes(l.flow.stage) || l.prdPath === null) return '沒有進行中的 PRD 可以接續。'
   const prd = await prdFile($, l.prdPath)
   const board = await loadBoard($)
-  if ('error' in prd) return `沒有接續：${prd.error}`
   if (board === null) return '沒有接續：找不到看板 prd-tracker.json。'
-  const text: string = await $.fs.read(prd.full)
+  // Only a split needs the PRD itself; tests and gaps go on from the board.
+  if ('error' in prd && l.flow.stage === 'splitting') return `沒有接續：${prd.error}`
+  const text: string = 'error' in prd ? '' : await $.fs.read(prd.full)
   // The roles' old conversations are gone or stuck: whoever the flow calls starts fresh.
   await update($, live, s => ({ ...s, roles: { pm: { ...s.roles.pm, rotate: true }, qa: { ...s.roles.qa, rotate: true } } }))
   $.ui.toast(`crew：接續 ${l.prdPath}（${l.flow.stage}）`)
@@ -867,7 +879,12 @@ export const register: Register = on => {
     // State kept from before a reload may predate fields added since: fill them in.
     try {
       await update($, live, l => ({ ...emptyLive(), ...l }))
-      await restore($)
+      try {
+        await restore($)
+      } catch (err) {
+        // What the last session left is unreadable: crew starts clean rather than not at all.
+        $.ui.log(`crew: could not pick up the last session, starting clean: ${String(err)}`)
+      }
       // The roles first: each tool takes a moment to become visible, and a command can run meanwhile.
       for (const role of CREW_ROLES) {
         await $.agent.register(AGENT_SPECS[role])
@@ -942,7 +959,8 @@ export const register: Register = on => {
       const g1 = gateG1(t)
       const g4 = gateG4(t)
       const open = new Set([...g1.gaps.map(g => g.id), ...g4.gaps.map(g => g.id)])
-      const ids = [...t.prd_items.filter(i => i.crew_dropped === undefined).map(i => i.id), ...t.prd_items.flatMap(criteriaOf).map(c => c.id)]
+      const kept = t.prd_items.filter(i => i.crew_dropped === undefined)
+      const ids = [...kept.map(i => i.id), ...kept.flatMap(criteriaOf).map(c => c.id)]
       return new Set(ids.filter(id => !open.has(id)))
     }
     const before = covered(board)

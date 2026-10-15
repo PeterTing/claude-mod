@@ -90,6 +90,8 @@ describe('crew, PM and QA', () => {
     await done($, 'a-pm-1')
     const after = await $.command.run(command('status'))
     expect(after.text).toMatch(/done/)
+    const usage = JSON.parse(w.disk.get(`${ROOT}/.crew/usage/2026-10-15.json`) ?? '{}') as { usage: Record<string, { wakes: number }> }
+    expect([usage.usage.pm?.wakes, usage.usage.qa?.wakes]).toEqual([2, 1])
   })
 
   test('starts the role again with the message when it cannot be woken', async ($, on) => {

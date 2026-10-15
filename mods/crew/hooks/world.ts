@@ -16,7 +16,7 @@ export const PRD = '# 會員訂閱\n\n使用者可以選月繳方案，可以隨
 
 export type Spawn = { subagentType: string; name?: string; description: string; model?: string; prompt: string }
 
-export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
+export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '' } = {}) => {
   const clock = mock.clock(on, { now: NOW })
   /** crew's own store, which outlives sessions and is not in the repo. */
   const store = new Map<string, unknown>()
@@ -50,7 +50,10 @@ export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
     const isDir = [...disk.keys()].some(p => p.startsWith(`${e.path}/`))
     if (!disk.has(e.path) && !isDir && !links.has(e.path)) return { deny: `ENOENT ${e.path}` }
     const real = links.get(e.path) ?? e.path
-    return { value: { kind: isDir ? ('dir' as const) : ('file' as const), size: 0, mtimeMs: 0, isLink: links.has(e.path), ...(e.resolve ? { realPath: real } : {}) } }
+    // A file's version follows its content, as a modified time follows a write.
+    const text = disk.get(e.path) ?? ''
+    const mtimeMs = [...text].reduce((h, c) => (h * 31 + (c.codePointAt(0) ?? 0)) % 1_000_000_007, text.length)
+    return { value: { kind: isDir ? ('dir' as const) : ('file' as const), size: text.length, mtimeMs, isLink: links.has(e.path), ...(e.resolve ? { realPath: real } : {}) } }
   })
   on('fs.list', (_$, e) => {
     const dir = e.path.endsWith('/') ? e.path : `${e.path}/`
@@ -88,6 +91,7 @@ export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
   // The kit hands a plugin's spawn down as the Agent tool's input, and keeps the agent id to the engine:
   // the plugin finds its agent in the list instead, as it would behind a hook that kept the id back.
   on('agent.spawn', (_$, e) => {
+    if (denySpawn !== '') return { deny: denySpawn }
     const input = e as unknown as { subagent_type?: string; subagentType?: string; name?: string; description: string; model?: string; prompt: string }
     order.push(`spawn:${input.subagentType ?? input.subagent_type ?? ''}`)
     spawned.push({

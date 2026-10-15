@@ -164,10 +164,9 @@ describe('crew memory', () => {
     expect(fresh?.prompt).toMatch(/DEC-001（決定・pm）：AC-002 的到期日以台北時間計算/)
     expect(fresh?.prompt).toMatch(/## 這次的工作\n使用者問你（ASK-01）：AC-002 的到期日用哪個時區？/)
 
-    const status = await $.command.run(command('status'))
-    expect(status.text).toMatch(/PM/)
+    expect(w.disk.get(`${ROOT}/.crew/log/2026-10-15.jsonl`)).toMatch(/"kind":"rotate","role":"pm"[^\n]*"reason":"你要求輪替"/)
     const tokens = await paneText($, 'tokens')
-    expect(tokens).toMatch(/每次附上的記憶/)
+    expect(tokens).toMatch(/每次附上的記憶平均/)
   })
 
   test('pays no heed to a run the replaced agent finishes late', async ($, on) => {
@@ -217,6 +216,7 @@ describe('crew memory', () => {
     // Live, a command can run while session.start is still registering tools (about 0.1–0.6 s each).
     const w = world($, on)
     await start($)
+    expect(w.order.indexOf('agent:qa')).toBeGreaterThan(-1)
     expect(w.order.indexOf('agent:qa')).toBeLessThan(w.order.indexOf('tool:board_read'))
   })
 

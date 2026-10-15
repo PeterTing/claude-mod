@@ -188,7 +188,13 @@ const apply = (t: Tracker, op: Op, ctx: OpContext): string | OpResult => {
       const item = feature(op.feature)
       if (item === undefined) return `add_criterion：找不到功能 ${op.feature}`
       if (op.text.trim() === '') return `add_criterion：${op.feature} 的條件內容是空白的`
-      const id = next(allCriteria(t).map(c => c.id), 'AC-')
+      // A dropped criterion's id stays taken: test cases and decisions still point at it.
+      const used = [
+        ...allCriteria(t).map(c => c.id),
+        ...t.prd_items.flatMap(i => i.test_cases.flatMap(c => c.acceptance_criteria ?? [])),
+        ...(t.decisions ?? []).map(d => (d as { criteria?: unknown }).criteria).filter((c): c is string => typeof c === 'string'),
+      ]
+      const id = next(used, 'AC-')
       item.acceptance_criteria.push(`[${id}] ${op.text.trim()}`)
       return { op: op.op, id }
     }

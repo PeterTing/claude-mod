@@ -244,6 +244,24 @@ describe('gates', () => {
   })
 })
 
+describe('ids after a drop', () => {
+  test('a new criterion never takes the id of one that was dropped', () => {
+    const covered = run(withTwoFeatures(), [{ op: 'add_test_case', criteria: ['AC-003'], title: 't', steps: ['s'], expected: 'e' }], 'qa')
+    if (!covered.ok) throw new Error('setup')
+    const dropped = run(covered.tracker, [{ op: 'drop_criterion', id: 'AC-003', reason: '下一版' }])
+    if (!dropped.ok) throw new Error('drop')
+    const added = run(dropped.tracker, [{ op: 'add_criterion', feature: 'PRD-001', text: '新的條件' }])
+    expect(added.ok && added.results[0]?.id).toBe('AC-004')
+    // The old test case still points at AC-003; the new criterion is a gap.
+    expect(added.ok && gateG4(added.tracker).gaps.map(g => g.id)).toContain('AC-004')
+  })
+
+  test('G4 leaves out the criteria of a dropped feature', () => {
+    const r = run(withTwoFeatures(), [{ op: 'drop_feature', id: 'PRD-002', reason: '下一版' }])
+    expect(r.ok && gateG4(r.tracker).gaps.map(g => g.id)).toEqual(['AC-001'])
+  })
+})
+
 describe('renderBoard, edges', () => {
   test('says when the board is empty or the feature is unknown', () => {
     expect(renderBoard(newTracker('x'))).toBe('看板是空的。')

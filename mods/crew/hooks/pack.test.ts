@@ -140,6 +140,12 @@ describe('wakePlan', () => {
     expect(wakePlan(role({ context: 61_000 }), route)).toEqual({ kind: 'rotate', reason: 'context 61K 已達上限 60K' })
   })
 
+  test('rotates at exactly the limit and at exactly half of it', () => {
+    expect(wakePlan(role({ context: 60_000 }), route)).toMatchObject({ kind: 'rotate', reason: 'context 60K 已達上限 60K' })
+    expect(wakePlan(role({ context: 30_000 }), route)).toMatchObject({ kind: 'rotate' })
+    expect(wakePlan(role({ context: 29_999 }), route)).toEqual({ kind: 'wake' })
+  })
+
   test('rotates past half the limit, where a wake would resend the whole conversation', () => {
     expect(wakePlan(role({ context: 31_000 }), route)).toEqual({ kind: 'rotate', reason: 'context 31K 超過上限的一半，叫醒要重送整段對話，帶記憶重開比較省' })
   })

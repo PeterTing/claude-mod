@@ -122,7 +122,8 @@ export const addMemory = (list: readonly MemoryEntry[], input: MemoryInput, ctx:
   const clean = same(redact(input.text))
   if (clean === '') return { ok: false, error: '記憶內容是空白的。' }
   const text = [...clean].slice(0, MAX_TEXT).join('')
-  const twin = list.find(m => m.type === input.type && m.supersededBy === undefined && same(m.text) === text)
+  // A memory numbered elsewhere (the board's own decision) is kept under its number even when the words repeat.
+  const twin = input.id === undefined ? list.find(m => m.type === input.type && m.supersededBy === undefined && same(m.text) === text) : undefined
   if (twin !== undefined) return { ok: true, list: [...list], entry: twin, note: `已經有同樣的記憶 ${twin.id}。` }
   if (input.supersedes !== undefined) {
     const old = list.find(m => m.id === input.supersedes)
