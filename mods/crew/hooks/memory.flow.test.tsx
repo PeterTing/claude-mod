@@ -75,6 +75,16 @@ describe('crew memory', () => {
     expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\n')
   })
 
+  test('leaves the person’s decisions and preferences for the person to change', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await $.command.run(command('remember 金額用新台幣'))
+    const r = await save($, 'a-pm-1', { type: 'MEM', text: '金額用美金', supersedes: 'PREF-001' })
+    expect(String(r.result)).toMatch(/只有使用者能改/)
+    expect(memories(w.disk).map(m => m.id)).toEqual(['PREF-001'])
+  })
+
   test('finds memories for a role that searches', async ($, on) => {
     world($, on)
     await start($)
@@ -203,6 +213,29 @@ describe('crew memory', () => {
     expect(thread.text).toBe('使用者 → PM：為什麼拆成兩個功能？\nPM → 使用者：因為選方案和取消是兩件使用者感受得到的事。')
   })
 
+  test('registers its roles before its slow tools, so a command right after start can reach them', async ($, on) => {
+    // Live, a command can run while session.start is still registering tools (about 0.1–0.6 s each).
+    const w = world($, on)
+    await start($)
+    expect(w.order.indexOf('agent:qa')).toBeLessThan(w.order.indexOf('tool:board_read'))
+  })
+
+  test('picks up the threads and today’s token use a previous session left in the repo', async ($, on) => {
+    const w = world($, on)
+    const old = [
+      { t: 1, n: 7, item: 'ASK-01', from: 'person', to: 'pm', text: '舊問題' },
+      { t: 2, n: 8, item: 'ASK-01', from: 'pm', to: 'person', text: '舊回答' },
+    ]
+    w.disk.set(`${ROOT}/.crew/threads/ASK-01.jsonl`, `${old.map(m => JSON.stringify(m)).join('\n')}\n`)
+    w.disk.set(`${ROOT}/.crew/usage/2026-10-15.json`, JSON.stringify({ usage: { pm: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, wakes: 5, rotations: 1 } }, tiers: { M: 10 } }))
+    await start($)
+    const r = await $.command.run(command('ask pm 新問題'))
+    expect(r.text).toMatch(/ASK-02/)
+    expect((await $.command.run(command('thread ASK-01'))).text).toBe('使用者 → PM：舊問題\nPM → 使用者：舊回答')
+    expect(w.disk.get(`${ROOT}/.crew/threads/ASK-01.jsonl`)).toMatch(/舊回答/)
+    expect((await $.command.run(command('status'))).text).toMatch(/今日 10 tok/)
+  })
+
   test('says how to ask, and who can be asked', async ($, on) => {
     world($, on)
     await start($)
@@ -216,12 +249,33 @@ describe('crew memory', () => {
     const w = world($, on)
     await start($)
     await splitAndTest($)
-    w.replies.push('[{"type":"LES","text":"PRD 沒寫時區時先問使用者","refs":["AC-002"]},{"type":"PREF","text":"不該存"}]')
+    await $.command.run(command('remember 金額用新台幣'))
+    w.replies.push('[{"type":"LES","text":"PRD 沒寫時區時先問使用者","refs":["AC-002"]},{"type":"PREF","text":"不該存"},{"type":"MEM","text":"金額可以用美金","supersedes":"PREF-001"}]')
     const r = await $.command.run(command('consolidate'))
-    expect(r.text).toMatch(/新增 LES-001/)
+    expect(r.text).toMatch(/新增 LES-001、MEM-001/)
     expect(w.completions[0]).toMatchObject({ model: 'haiku' })
     expect(w.completions[0]?.prompt).toMatch(/拆成 2 個功能、2 條驗收條件/)
-    expect(memories(w.disk).map(m => [m.id, m.source])).toEqual([['LES-001', '整理 2026-10-15']])
+    // The tidy-up adds facts and lessons; it never replaces what the person said.
+    expect(memories(w.disk).map(m => [m.id, m.source, m.supersededBy])).toEqual([
+      ['PREF-001', 'person', undefined],
+      ['LES-001', '整理 2026-10-15', undefined],
+      ['MEM-001', '整理 2026-10-15', undefined],
+    ])
+  })
+
+  test('tidies the latest earlier day’s log by itself, once', async ($, on) => {
+    const w = world($, on)
+    w.disk.set(`${ROOT}/.crew/log/2026-10-13.jsonl`, '{"kind":"report","role":"pm","text":"舊的"}\n')
+    w.disk.set(`${ROOT}/.crew/log/2026-10-14.jsonl`, '{"kind":"report","role":"qa","text":"昨天 QA 發現 AC-002 要測時區"}\n')
+    await start($)
+    w.replies.push('[{"type":"LES","text":"AC-002 要測時區","refs":["AC-002"]}]')
+    await splitAndTest($)
+    expect(w.completions).toHaveLength(1)
+    expect(w.completions[0]?.prompt).toMatch(/昨天 QA 發現/)
+    expect(JSON.parse(w.disk.get(`${ROOT}/.crew/memory/consolidated.json`) ?? '{}')).toEqual({ days: ['2026-10-14'] })
+    expect(memories(w.disk).map(m => [m.id, m.source])).toEqual([['LES-001', '整理 2026-10-14']])
+    await done($, 'a-qa-2')
+    expect(w.completions).toHaveLength(1)
   })
 
   test('shows the real memories and what each role carries on the memory tab', async ($, on) => {

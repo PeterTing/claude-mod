@@ -26,7 +26,7 @@ export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
   /** What the small model is asked, and the replies it gives in turn. */
   const completions: { model: string; prompt: string; system?: string }[] = []
   const replies: string[] = []
-  on('fs.exists', (_$, e) => ({ value: disk.has(e.path) }))
+  on('fs.exists', (_$, e) => ({ value: disk.has(e.path) || [...disk.keys()].some(p => p.startsWith(`${e.path}/`)) }))
   on('fs.read', (_$, e) => (disk.has(e.path) ? { value: disk.get(e.path) ?? '' } : { deny: `ENOENT ${e.path}` }))
   on('fs.write', (_$, e) => {
     disk.set(e.path, e.text)
@@ -41,11 +41,15 @@ export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
     completions.push({ model: e.model, prompt: e.prompt, ...(e.system === undefined ? {} : { system: e.system }) })
     return { value: { isAnswered: true as const, text: replies.shift() ?? '[]', usage: { input_tokens: 1200, output_tokens: 80, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }
   })
+  /** Registrations and spawns, in the order they happened. */
+  const order: string[] = []
   on('tool.register', (_$, e) => {
+    order.push(`tool:${e.name}`)
     registered.tools.push(e.name)
     return { value: { tool: `mcp__crew__${e.name}` } }
   })
   on('agent.register', (_$, e) => {
+    order.push(`agent:${e.name}`)
     registered.agents.push(e.name)
     return { value: { agent: `crew:${e.name}` } }
   })
@@ -60,6 +64,7 @@ export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
   // the plugin finds its agent in the list instead, as it would behind a hook that kept the id back.
   on('agent.spawn', (_$, e) => {
     const input = e as unknown as { subagent_type?: string; subagentType?: string; name?: string; description: string; model?: string; prompt: string }
+    order.push(`spawn:${input.subagentType ?? input.subagent_type ?? ''}`)
     spawned.push({
       subagentType: input.subagentType ?? input.subagent_type ?? '',
       description: input.description,
@@ -84,7 +89,7 @@ export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
   on('prompt.submit', (_$, e) => ({ text: e.text }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   const board = () => JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? 'null') as Tracker | null
-  return { disk, spawned, sent, toasts, registered, board, completions, replies }
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)

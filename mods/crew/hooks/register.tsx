@@ -45,6 +45,9 @@ const diary: { day: string; lines: string[] } = { day: '', lines: [] }
 /** The last day crew checked for a log left to tidy. */
 const tidy = { checked: '' }
 
+/** Settles once session.start has registered the command, the roles and the tools. */
+const boot: { ready: Promise<void> } = { ready: Promise.resolve() }
+
 /** How many role wakes are under way: the roles are offered to the engine only then. */
 const waking = { count: 0 }
 
@@ -118,6 +121,50 @@ async function note($: any, event: Record<string, unknown>) {
   const clipped = Object.fromEntries(Object.entries(event).map(([k, v]) => [k, typeof v === 'string' ? cut(v, 1_000) : v]))
   diary.lines.push(redact(JSON.stringify({ t, ...clipped })))
   await $.fs.write(path, `${diary.lines.join('\n')}\n`)
+}
+
+/**
+ * A new session picks up what the last one left in the repo: the threads (so
+ * ASK and message numbers go on rather than overwrite) and today's token use.
+ */
+async function restore($: any) {
+  const l = await read($, live)
+  if (Object.keys(l.threads).length > 0 || Object.keys(l.usage).length > 0) return
+  const threads: Record<string, CrewMessage[]> = {}
+  const dir = `${files.crew}/threads`
+  if (await $.fs.exists(dir)) {
+    const entries: { name: string; kind: string }[] = await $.fs.list(dir)
+    for (const f of entries.filter(x => x.kind === 'file' && x.name.endsWith('.jsonl'))) {
+      const messages = (await $.fs.read(`${dir}/${f.name}`))
+        .split('\n')
+        .filter((line: string) => line.trim() !== '')
+        .flatMap((line: string): CrewMessage[] => {
+          try {
+            const m = JSON.parse(line) as Partial<CrewMessage>
+            return typeof m.item === 'string' && typeof m.text === 'string' && typeof m.from === 'string' && typeof m.t === 'number' ? [m as CrewMessage] : []
+          } catch {
+            return []
+          }
+        })
+      const first = messages[0]
+      if (first !== undefined) threads[first.item] = messages
+    }
+  }
+  const all = Object.values(threads).flat()
+  const posted = all.reduce((n, m) => Math.max(n, m.n ?? 0), 0)
+  const asked = Object.keys(threads).reduce((n, item) => Math.max(n, Number(/^ASK-(\d+)$/.exec(item)?.[1] ?? 0)), 0)
+  const usagePath = `${files.crew}/usage/${dayOf(await $.clock.now())}.json`
+  const saved = (await $.fs.exists(usagePath)) ? (JSON.parse(await $.fs.read(usagePath)) as { usage?: CrewLive['usage']; tiers?: CrewLive['tiers'] }) : {}
+  await update($, live, s => ({
+    ...s,
+    threads,
+    posted,
+    asked,
+    // Old messages are history to a role that starts fresh, not unread mail.
+    seen: { pm: posted, qa: posted },
+    usage: saved.usage ?? {},
+    tiers: saved.tiers ?? {},
+  }))
 }
 
 async function loadMemories($: any): Promise<MemoryEntry[]> {
@@ -332,7 +379,11 @@ async function consolidate($: any, day: string): Promise<string> {
   if (!reply.isAnswered) return `整理 ${day} 沒有完成：${String(reply.reason)}`
   const added: string[] = []
   for (const p of parseProposals(reply.text)) {
-    const r = await remember($, { ...p, source: `整理 ${day}` })
+    // The tidy-up may replace only the facts and lessons it could have written itself.
+    const replaced = p.supersedes === undefined ? undefined : (await loadMemories($)).find(m => m.id === p.supersedes)
+    const { supersedes: _, ...rest } = p
+    const proposal = replaced !== undefined && (replaced.type === 'MEM' || replaced.type === 'LES') ? p : rest
+    const r = await remember($, { ...proposal, source: `整理 ${day}` })
     if (r.ok && r.isNew === true) added.push(r.entry.id)
   }
   const done = `${files.crew}/memory/consolidated.json`
@@ -383,6 +434,11 @@ const inboxOf = (l: CrewLive): { pm: string[]; qa: string[] } => {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    // Set before the first await, so no command slips in ahead of the gate.
+    let booted = () => {}
+    boot.ready = new Promise<void>(resolve => {
+      booted = resolve
+    })
     files.root = e.cwd
     files.board = `${e.cwd}/prd-tracker.json`
     files.schema = `${e.cwd}/schemas/prd-tracker.schema.json`
@@ -391,17 +447,24 @@ export const register: Register = on => {
     cache.board = undefined
     memo.list = undefined
     diary.day = ''
+    tidy.checked = ''
     // State kept from before a reload may predate fields added since: fill them in.
-    await update($, live, l => ({ ...emptyLive(), ...l }))
-    await $.command.register({
-      name: 'crew',
-      description: 'crew 產品團隊：/crew start <PRD>、answer <Q-編號> <回答>、ask <pm|qa> <問題>、recall <關鍵字>、remember <偏好>、status',
-    })
-    for (const spec of TOOL_SPECS) {
-      await $.tool.register({ ...spec, isDeferred: false })
-    }
-    for (const role of CREW_ROLES) {
-      await $.agent.register(AGENT_SPECS[role])
+    try {
+      await update($, live, l => ({ ...emptyLive(), ...l }))
+      await restore($)
+      // The roles first: each tool takes a moment to become visible, and a command can run meanwhile.
+      for (const role of CREW_ROLES) {
+        await $.agent.register(AGENT_SPECS[role])
+      }
+      await $.command.register({
+        name: 'crew',
+        description: 'crew 產品團隊：/crew start <PRD>、answer <Q-編號> <回答>、ask <pm|qa> <問題>、recall <關鍵字>、remember <偏好>、status',
+      })
+      for (const spec of TOOL_SPECS) {
+        await $.tool.register({ ...spec, isDeferred: false })
+      }
+    } finally {
+      booted()
     }
     return next(e)
   })
@@ -412,6 +475,8 @@ export const register: Register = on => {
   on('agent.offer', { agent: 'crew:qa' }, ($, e, next) => (waking.count > 0 ? next(e) : { isOffered: false }))
 
   on('command.run', { command: 'crew' }, async ($, e) => {
+    // A command typed while the session is still starting waits for crew's roles and tools.
+    await boot.ready
     const [verb = '', ...rest] = e.args.trim().split(/\s+/).filter(Boolean)
     if (verb === 'demo') {
       if (rest[0] === 'off') {
@@ -601,6 +666,10 @@ export const register: Register = on => {
     if (!allowed.includes(type)) return { result: 'memory_save 的 type 要是 DEC、MEM 或 LES（偏好由使用者自己說）。' }
     if (typeof e.text !== 'string') return { result: 'memory_save 需要 text。' }
     const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+    const replaced = typeof e.supersedes === 'string' ? (await loadMemories($)).find(m => m.id === e.supersedes) : undefined
+    if (role !== undefined && replaced !== undefined && replaced.source.startsWith('person')) {
+      return { result: `${replaced.id} 是使用者說的，只有使用者能改。需要改的話用 ask_person 問。` }
+    }
     const r = await remember($, {
       type,
       text: e.text,

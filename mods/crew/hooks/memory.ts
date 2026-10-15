@@ -28,6 +28,9 @@ export type MemoryEntry = {
 
 export const MAX_TEXT = 300
 
+/** A memory that references everything would be attached to every message. */
+export const MAX_REFS = 8
+
 const ID = /\b[A-Z][A-Z0-9]{0,7}-\d+\b/g
 
 /** The board, test case, question and memory ids a text mentions, in order, once each. */
@@ -114,7 +117,7 @@ export const addMemory = (list: readonly MemoryEntry[], input: MemoryInput, ctx:
     id,
     type: input.type,
     text,
-    refs: [...new Set([...(input.refs ?? []), ...idsIn(text)])],
+    refs: [...new Set([...(input.refs ?? []), ...idsIn(text)])].slice(0, MAX_REFS),
     roles: [...(input.roles ?? [])],
     source: input.source,
     t: ctx.t,
@@ -147,7 +150,8 @@ const RELATED = 5
 /**
  * The memories that bear on a text, best first: those referencing an id it
  * mentions (or that id's feature), then those sharing at least two of its
- * words, then the person's preferences. Superseded ones never come back.
+ * words or one long English term, then the person's preferences. Superseded
+ * ones never come back.
  */
 export const searchMemories = (list: readonly MemoryEntry[], query: SearchQuery): Hit[] => {
   const docs = list.filter(
@@ -172,10 +176,12 @@ export const searchMemories = (list: readonly MemoryEntry[], query: SearchQuery)
     for (const t of bag) tf.set(t, (tf.get(t) ?? 0) + 1)
     let match = 0
     let shared = 0
+    let specific = false
     for (const w of words) {
       const f = tf.get(w) ?? 0
       if (f === 0) continue
       shared += 1
+      if (/^[a-z0-9]{5,}$/.test(w)) specific = true
       const n = df.get(w) ?? 0
       const idf = Math.log(1 + (docs.length - n + 0.5) / (n + 0.5))
       match += (idf * f * (K1 + 1)) / (f + K1 * (1 - B + (B * bag.length) / avg))
@@ -183,7 +189,8 @@ export const searchMemories = (list: readonly MemoryEntry[], query: SearchQuery)
     const keys = [m.id, ...m.refs]
     const link = keys.reduce((n, k) => n + (direct.has(k) ? DIRECT : near.has(k) ? RELATED : 0), 0)
     if (link > 0) return { entry: m, score: link + match, why: 'link' }
-    if (shared >= 2) return { entry: m, score: match, why: 'match' }
+    // One shared Chinese pair is too weak to call related; one long English term is specific enough.
+    if (shared >= 2 || specific) return { entry: m, score: match, why: 'match' }
     return { entry: m, score: m.type === 'PREF' ? 0.01 : 0, why: 'pref' }
   })
   return hits

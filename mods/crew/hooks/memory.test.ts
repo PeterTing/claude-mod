@@ -99,6 +99,12 @@ describe('addMemory', () => {
     expect(r.ok && r.entry.refs).toEqual(['PRD-001', 'AC-001'])
   })
 
+  test('keeps at most eight refs, so one memory does not match every message', () => {
+    const refs = Array.from({ length: 12 }, (_, i) => `AC-${String(i + 1).padStart(3, '0')}`)
+    const r = addMemory([], { type: 'MEM', text: '對應表', refs, source: 'pm' }, ctx)
+    expect(r.ok && r.entry.refs).toEqual(refs.slice(0, 8))
+  })
+
   test('masks secrets before saving', () => {
     const r = addMemory([], { type: 'MEM', text: '測試帳號 password=abc', source: 'qa' }, ctx)
     expect(r.ok && r.entry.text).toBe('測試帳號 password=[已遮罩]')
@@ -200,6 +206,12 @@ describe('searchMemories', () => {
   test('needs more than one shared word to count a match', () => {
     // "登入" alone appears in a memory; one shared pair is too weak to be related.
     expect(searchMemories(list, { text: '登入' }).filter(h => h.why === 'match')).toEqual([])
+  })
+
+  test('counts one specific English term as enough to match', () => {
+    const hits = searchMemories([entry({ id: 'DEC-009', type: 'DEC', text: '篩選存在 localStorage' })], { text: 'localStorage 的決定' })
+    expect(hits[0]).toMatchObject({ entry: { id: 'DEC-009' }, why: 'match' })
+    expect(searchMemories([entry({ id: 'MEM-009', text: 'see the api docs' })], { text: 'api 呢' })).toEqual([])
   })
 
   test('adds the person’s preferences after the related memories', () => {
