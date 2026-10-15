@@ -149,6 +149,55 @@ describe('step', () => {
     expect((r.actions.at(-1) as { text: string }).text).toMatch(/要不要做年繳？[\s\S]*不做/)
   })
 
+  test('picks up new criteria the PM adds after the flow finished, and sends them to QA', () => {
+    const covered = board(SPLIT, [tc(['AC-001', 'AC-002'])])
+    const finished = run([START, { type: 'role_done', role: 'pm', board: board(SPLIT) }, { type: 'role_done', role: 'qa', board: covered }])
+    expect(finished.state.stage).toBe('done')
+
+    const more = applyOps(covered, [{ op: 'add_criterion', feature: 'PRD-001', text: '標題前後空白會去掉' }], ctx('pm'))
+    expect(more.ok).toBe(true)
+    if (!more.ok) return
+    const reopened = run([{ type: 'role_done', role: 'pm', board: more.tracker }], finished.state)
+    expect(reopened.state.stage).toBe('adding_tests')
+    expect(reopened.actions.at(-1)).toMatchObject({ type: 'message', role: 'qa', item: 'AC-003' })
+
+    const unchanged = run([{ type: 'role_done', role: 'pm', board: covered }], finished.state)
+    expect(unchanged.state.stage).toBe('done')
+    expect(unchanged.actions).toEqual([])
+  })
+
+  test('wakes the PM for questions QA left in threads, even when every criterion is covered', () => {
+    const covered = board(SPLIT, [tc(['AC-001', 'AC-002'])])
+    const r = run([
+      START,
+      { type: 'role_done', role: 'pm', board: board(SPLIT) },
+      { type: 'role_done', role: 'qa', board: covered, inbox: { pm: ['AC-002'] } },
+    ])
+    expect(r.state.stage).toBe('confirming')
+    expect(r.actions.at(-1)).toMatchObject({ type: 'message', role: 'pm', item: 'AC-002' })
+    expect((r.actions.at(-1) as { text: string }).text).toMatch(/AC-002[\s\S]*thread_read/)
+
+    const answered = run([{ type: 'role_done', role: 'pm', board: covered, inbox: { qa: ['AC-002'] } }], r.state)
+    expect(answered.state.stage).toBe('adding_tests')
+    expect(answered.actions.at(-1)).toMatchObject({ type: 'message', role: 'qa', item: 'AC-002' })
+
+    const settled = run([{ type: 'role_done', role: 'qa', board: covered }], answered.state)
+    expect(settled.state.stage).toBe('done')
+  })
+
+  test('stops passing thread messages back and forth after three rounds', () => {
+    const covered = board(SPLIT, [tc(['AC-001', 'AC-002'])])
+    let r = run([START, { type: 'role_done', role: 'pm', board: board(SPLIT) }])
+    for (let round = 0; round < 3; round += 1) {
+      r = run([
+        { type: 'role_done', role: 'qa', board: covered, inbox: { pm: ['AC-002'] } },
+        { type: 'role_done', role: 'pm', board: covered, inbox: { qa: ['AC-002'] } },
+      ], r.state)
+    }
+    r = run([{ type: 'role_done', role: 'qa', board: covered, inbox: { pm: ['AC-002'] } }], r.state)
+    expect(r.state.stage).toBe('done')
+  })
+
   test('ignores a role that finishes out of turn', () => {
     const r = run([START, { type: 'role_done', role: 'qa', board: board(SPLIT) }])
     expect(r.state.stage).toBe('splitting')

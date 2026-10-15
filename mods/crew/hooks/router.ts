@@ -15,7 +15,8 @@ export type TaskSignals = {
 
 export type Route = {
   tier: Tier
-  model: string
+  /** The model alias the Agent tool takes: its `model` parameter accepts these, not full ids. */
+  model: Model
   label: string
   effort: Effort
   /** Context tokens before the role is rotated. */
@@ -23,17 +24,12 @@ export type Route = {
 }
 
 type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-type Model = 'haiku' | 'sonnet' | 'opus'
+export type Model = 'haiku' | 'sonnet' | 'opus'
 
 const TIERS: readonly Tier[] = ['S', 'M', 'L', 'XL']
 const MODELS: readonly Model[] = ['haiku', 'sonnet', 'opus']
 const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 
-const MODEL_IDS: Record<Model, string> = {
-  haiku: 'claude-haiku-5-5',
-  sonnet: 'claude-sonnet-5-5',
-  opus: 'claude-opus-5-5',
-}
 const MODEL_LABELS: Record<Model, string> = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' }
 
 /** The size steps of each kind of task: at or under the first, S; the second, M; the third, L; over, XL. */
@@ -85,7 +81,7 @@ export const routeFor = (role: RoleId, tier: Tier, options: { beyond?: boolean }
   const model = higher(MODELS, base.model, floor.model)
   return {
     tier,
-    model: MODEL_IDS[model],
+    model,
     label: MODEL_LABELS[model],
     effort: higher(EFFORTS, base.effort, floor.effort),
     limit: base.limit,

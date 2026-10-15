@@ -35,10 +35,10 @@ describe('tierFor', () => {
 
 describe('routeFor', () => {
   test('maps each tier to its model, effort and context limit', () => {
-    expect(routeFor('qa', 'S')).toEqual({ tier: 'S', model: 'claude-sonnet-5-5', label: 'Sonnet', effort: 'medium', limit: 60_000 })
-    expect(routeFor('qa', 'M')).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'high', limit: 100_000 })
-    expect(routeFor('qa', 'L')).toMatchObject({ model: 'claude-opus-5-5', effort: 'high', limit: 160_000 })
-    expect(routeFor('qa', 'XL')).toMatchObject({ model: 'claude-opus-5-5', effort: 'xhigh', limit: 256_000 })
+    expect(routeFor('qa', 'S')).toEqual({ tier: 'S', model: 'sonnet', label: 'Sonnet', effort: 'medium', limit: 60_000 })
+    expect(routeFor('qa', 'M')).toMatchObject({ model: 'sonnet', effort: 'high', limit: 100_000 })
+    expect(routeFor('qa', 'L')).toMatchObject({ model: 'opus', effort: 'high', limit: 160_000 })
+    expect(routeFor('qa', 'XL')).toMatchObject({ model: 'opus', effort: 'xhigh', limit: 256_000 })
   })
 
   test('keeps each role at or above its floor', () => {

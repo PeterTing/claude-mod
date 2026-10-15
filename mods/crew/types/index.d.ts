@@ -22,7 +22,8 @@ export type CrewLiveRole = {
 
 export type CrewUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; wakes: number; rotations: number }
 
-export type CrewMessage = { t: number; item: string; from: string; to?: string; text: string; kind?: 'message' | 'route' | 'memory' }
+/** `n` numbers messages in the order they were posted; a role has read up to the number it was woken at. */
+export type CrewMessage = { t: number; n?: number; item: string; from: string; to?: string; text: string; kind?: 'message' | 'route' | 'memory' }
 
 export type CrewQuestion = {
   id: string
@@ -55,6 +56,10 @@ export type CrewLive = {
   /** Tokens by the tier of the task that spent them. */
   tiers: Record<string, number>
   threads: Record<string, CrewMessage[]>
+  /** The number of the last message posted. */
+  posted: number
+  /** The last message number each role was woken after: later messages to it are unread. */
+  seen: Record<string, number>
   questions: CrewQuestion[]
   activity: CrewActivity[]
 }

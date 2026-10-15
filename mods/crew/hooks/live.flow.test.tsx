@@ -14,9 +14,9 @@ const NOW = Date.UTC(2026, 9, 15, 6, 0, 0)
 
 const PRD = '# 會員訂閱\n\n使用者可以選月繳方案，可以隨時取消，取消後用到期末。'
 
-type Spawn = { subagentType: string; name?: string; model?: string; prompt: string }
+type Spawn = { subagentType: string; name?: string; description: string; model?: string; prompt: string }
 
-const world = (on: On) => {
+const world = (engine: Engine, on: On, { deliver = true } = {}) => {
   mock.clock(on, { now: NOW })
   const disk = new Map<string, string>([[`${ROOT}/docs/PRD.md`, PRD]])
   const spawned: Spawn[] = []
@@ -47,17 +47,27 @@ const world = (on: On) => {
   // The kit hands a plugin's spawn down as the Agent tool's input, and keeps the agent id to the engine:
   // the plugin finds its agent in the list instead, as it would behind a hook that kept the id back.
   on('agent.spawn', (_$, e) => {
-    const input = e as unknown as { subagent_type?: string; subagentType?: string; name?: string; model?: string; prompt: string }
-    spawned.push({ subagentType: input.subagentType ?? input.subagent_type ?? '', prompt: input.prompt, ...(input.name === undefined ? {} : { name: input.name }), ...(input.model === undefined ? {} : { model: input.model }) })
+    const input = e as unknown as { subagent_type?: string; subagentType?: string; name?: string; description: string; model?: string; prompt: string }
+    spawned.push({
+      subagentType: input.subagentType ?? input.subagent_type ?? '',
+      description: input.description,
+      prompt: input.prompt,
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.model === undefined ? {} : { model: input.model }),
+    })
     return { model: input.model ?? 'claude-sonnet-5-5' }
   })
   on('agent.list', () => ({
-    value: spawned.map((s, i) => ({ id: `a-${s.name ?? 'x'}-${i + 1}`, name: s.name, spawnedBy: 'crew', type: s.subagentType, status: 'running', description: '' })),
+    value: spawned.map((s, i) => ({ id: `a-${s.subagentType.replace('crew:', '')}-${i + 1}`, spawnedBy: 'crew', type: s.subagentType, status: 'running', description: s.description })),
   }))
-  on('session.send', (_$, e) => {
+  // Resuming a finished agent asks whether its type is offered, as the engine does.
+  on('session.send', async (_$, e) => {
     sent.push({ to: String(e.to), text: e.text })
-    return { isDelivered: true }
+    const offer = (await engine.agent.offer({ agent: 'crew:pm', description: 'crew PM', source: 'plugin', provider: { plugin: 'crew', tier: 'user' } } as never)) as { isOffered: boolean }
+    if (!offer.isOffered) return { isDelivered: false, reason: "Agent type 'crew:pm' is not offered in this session." }
+    return deliver ? { isDelivered: true } : { isDelivered: false, reason: 'Agent could not be resumed' }
   })
+  on('agent.offer', () => ({ isOffered: true }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('prompt.submit', (_$, e) => ({ text: e.text }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
@@ -89,19 +99,21 @@ const SPLIT = [
 
 describe('crew, PM and QA', () => {
   test('registers its tools and its two roles when the session starts', async ($, on) => {
-    const w = world(on)
+    const w = world($, on)
     await start($)
     expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person'])
     expect(w.registered.agents).toEqual(['pm', 'qa'])
   })
 
   test('walks a PRD from split to every criterion covered', async ($, on) => {
-    const w = world(on)
+    const w = world($, on)
     await start($)
 
     const started = await $.command.run(command('start docs/PRD.md'))
     expect(started.text).toMatch(/PM 正在拆 docs\/PRD\.md/)
-    expect(w.spawned[0]).toMatchObject({ subagentType: 'crew:pm', name: 'pm', model: 'claude-sonnet-5-5' })
+    expect(w.spawned[0]).toMatchObject({ subagentType: 'crew:pm', model: 'sonnet' })
+    // Unnamed, so a team-enabled session runs it as a background agent, not a teammate.
+    expect(w.spawned[0]?.name).toBeUndefined()
     expect(w.spawned[0]?.prompt).toMatch(/docs\/PRD\.md/)
     expect(w.board()?.mode).toBe('local-only')
     expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\n')
@@ -109,17 +121,17 @@ describe('crew, PM and QA', () => {
     const wrote = await write($, 'a-pm-1', SPLIT)
     expect(String(wrote.result)).toMatch(/已寫入：PRD-001、PRD-002、AC-001、AC-002/)
     await done($, 'a-pm-1')
-    expect(w.spawned[1]).toMatchObject({ subagentType: 'crew:qa', name: 'qa', model: 'claude-sonnet-5-5' })
+    expect(w.spawned[1]).toMatchObject({ subagentType: 'crew:qa', model: 'sonnet' })
 
     await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001'], title: '選月繳', steps: ['選月繳'], expected: '扣款成功' }])
     await done($, 'a-qa-2')
-    expect(w.sent.at(-1)?.to).toBe('pm')
+    expect(w.sent.at(-1)?.to).toBe('a-pm-1')
     expect(w.sent.at(-1)?.text).toMatch(/AC-002 取消後仍可使用到期末/)
     expect(w.disk.get(`${ROOT}/.crew/threads/AC-002.jsonl`)).toMatch(/AC-002/)
 
     await $.tool.call({ tool: 'mcp__crew__thread_post', tool_use_id: 't-post', agentId: 'a-pm-1', item: 'AC-002', to: 'qa', text: '要做：取消後到期前登入仍可使用' } as never)
     await done($, 'a-pm-1')
-    expect(w.sent.at(-1)?.to).toBe('qa')
+    expect(w.sent.at(-1)?.to).toBe('a-qa-2')
     const thread = await $.tool.call({ tool: 'mcp__crew__thread_read', tool_use_id: 't-read', agentId: 'a-qa-2', item: 'AC-002' } as never)
     expect(String((thread as { result: unknown }).result)).toMatch(/pm → qa：要做/)
 
@@ -132,8 +144,89 @@ describe('crew, PM and QA', () => {
     expect(tracker?.summary).toMatchObject({ total_prds: 2, total_test_cases: 2 })
   })
 
+  test('counts as done only what moves progress: a feature’s first criterion, a criterion’s first test case', async ($, on) => {
+    world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [
+      { op: 'add_test_case', criteria: ['AC-001'], title: '選月繳', steps: ['s'], expected: 'e' },
+      { op: 'add_test_case', criteria: ['AC-001'], title: '選月繳，餘額不足', steps: ['s'], expected: 'e' },
+    ])
+    const status = await $.command.run(command('status'))
+    expect(status.text).toMatch(/進度 75%（3\/4）/)
+    const ui = await $.ui.mount({
+      plugin: 'crew',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'crew',
+      props: { title: 'Crew', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 60 } } as unknown as RenderPropsOf['Pane'],
+    })
+    const text = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+    expect(text).toMatch(/今天完成 3 項/)
+  })
+
+  test('wakes the PM for a question QA left in a thread, and counts each role’s wakes', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: '全部', steps: ['s'], expected: 'e' }])
+    await $.tool.call({ tool: 'mcp__crew__thread_post', tool_use_id: 't-q', agentId: 'a-qa-2', item: 'AC-002', to: 'pm', text: '到期日用哪個時區？' } as never)
+    await done($, 'a-qa-2')
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-pm-1' })
+    expect(w.sent.at(-1)?.text).toMatch(/AC-002[\s\S]*thread_read/)
+    const status = await $.command.run(command('status'))
+    expect(status.text).toMatch(/confirming/)
+
+    await done($, 'a-pm-1')
+    const after = await $.command.run(command('status'))
+    expect(after.text).toMatch(/done/)
+  })
+
+  test('starts the role again with the message when it cannot be woken', async ($, on) => {
+    const w = world($, on, { deliver: false })
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001'], title: '選月繳', steps: ['s'], expected: 'e' }])
+    await done($, 'a-qa-2')
+    expect(w.spawned).toHaveLength(3)
+    expect(w.spawned[2]).toMatchObject({ subagentType: 'crew:pm' })
+    expect(w.spawned[2]?.prompt).toMatch(/AC-002[\s\S]*board_read/)
+  })
+
+  test('hides the roles from the main model only', async ($, on) => {
+    world($, on)
+    await start($)
+    const offer = await $.agent.offer({ agent: 'crew:pm', description: 'crew PM', source: 'plugin', provider: { plugin: 'crew', tier: 'user' } } as never)
+    expect((offer as { isOffered: boolean }).isOffered).toBe(false)
+  })
+
+  test('lists the questions already waiting for the person when a role reads the board', async ($, on) => {
+    world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 't-ask', agentId: 'a-pm-1', question: '超過 100 字怎麼處理？' } as never)
+    const read = await $.tool.call({ tool: 'mcp__crew__board_read', tool_use_id: 't-read', agentId: 'a-pm-1' } as never)
+    expect(String((read as { result: unknown }).result)).toMatch(/等使用者回答[\s\S]*Q-01 超過 100 字怎麼處理？/)
+  })
+
+  test('takes a role’s completion notice at the mailbox, before it becomes a prompt', async ($, on) => {
+    world($, on)
+    on('session.receive', (_$, e) => ({ text: e.text }))
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    const r = await $.session.receive({ text: '<task-notification><task-id>a-pm-1</task-id></task-notification>', origin: { kind: 'task-notification' } } as never)
+    expect(typeof (r as { consumed?: string }).consumed).toBe('string')
+  })
+
   test('keeps each role to its own kind of change', async ($, on) => {
-    world(on)
+    world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     await write($, 'a-pm-1', SPLIT)
@@ -143,7 +236,7 @@ describe('crew, PM and QA', () => {
   })
 
   test('tells a role what is wrong with ops it wrote', async ($, on) => {
-    world(on)
+    world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     const r = await write($, 'a-pm-1', [{ op: 'add_criterion', feature: 'PRD-001' }])
@@ -151,7 +244,7 @@ describe('crew, PM and QA', () => {
   })
 
   test('drops a role’s completion notice so the main conversation is not woken', async ($, on) => {
-    world(on)
+    world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     const r = await $.prompt.submit({ text: '<task-notification><task-id>a-pm-1</task-id></task-notification>', wait: false, origin: { kind: 'task-notification' } as PromptOrigin, isMeta: true })
@@ -160,8 +253,29 @@ describe('crew, PM and QA', () => {
     expect(other.drop).toBeUndefined()
   })
 
+  test('keeps a role’s team-mailbox message from the main conversation, and lets others through', async ($, on) => {
+    world($, on)
+    on('session.receive', (_$, e) => ({ text: e.text }))
+    await start($)
+    const fromCrew = await $.session.receive({ text: 'QA 寫完了 26 個 test case', origin: { kind: 'peer', teammate: 'crew-qa', isVerified: true } } as never)
+    expect(typeof (fromCrew as { consumed?: string }).consumed).toBe('string')
+    const fromOther = await $.session.receive({ text: 'hello', origin: { kind: 'peer', teammate: 'researcher', isVerified: true } } as never)
+    expect((fromOther as { consumed?: string }).consumed).toBeUndefined()
+    const toAgent = await $.session.receive({ text: 'x', origin: { kind: 'peer', teammate: 'crew-pm', isVerified: true }, agentId: 'a-qa-2' } as never)
+    expect((toAgent as { consumed?: string }).consumed).toBeUndefined()
+  })
+
+  test('drops a peer prompt that names a crew role', async ($, on) => {
+    world($, on)
+    await start($)
+    const r = await $.prompt.submit({ text: 'Message from @crew-qa: done', wait: false, origin: { kind: 'peer' } as PromptOrigin })
+    expect(typeof (r as { drop?: string }).drop).toBe('string')
+    const other = await $.prompt.submit({ text: 'Message from @researcher: done', wait: false, origin: { kind: 'peer' } as PromptOrigin })
+    expect((other as { drop?: string }).drop).toBeUndefined()
+  })
+
   test('passes a question to the person and their answer back to the role', async ($, on) => {
-    const w = world(on)
+    const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     const asked = await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 't-ask', agentId: 'a-pm-1', question: '年繳要不要做？', item: 'PRD-001' } as never)
@@ -173,7 +287,7 @@ describe('crew, PM and QA', () => {
 
     const answered = await $.command.run(command('answer Q-01 這一版不做年繳'))
     expect(answered.text).toMatch(/轉給 PM/)
-    expect(w.sent.at(-1)).toMatchObject({ to: 'pm' })
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-pm-1' })
     expect(w.sent.at(-1)?.text).toMatch(/年繳要不要做？[\s\S]*這一版不做年繳/)
 
     const again = await $.command.run(command('answer Q-01 再答一次'))
@@ -181,7 +295,7 @@ describe('crew, PM and QA', () => {
   })
 
   test('draws the pane and the line above the prompt from the real board', async ($, on) => {
-    world(on)
+    world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     await write($, 'a-pm-1', SPLIT)
@@ -211,7 +325,7 @@ describe('crew, PM and QA', () => {
   })
 
   test('says what is missing when the PRD path is wrong or absent', async ($, on) => {
-    world(on)
+    world($, on)
     await start($)
     expect((await $.command.run(command('start'))).text).toMatch(/用法/)
     expect((await $.command.run(command('start docs/NOPE.md'))).text).toMatch(/找不到 docs\/NOPE\.md/)

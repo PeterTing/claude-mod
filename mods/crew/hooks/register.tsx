@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { CrewLive, CrewMessage, CrewScenario, CrewTab } from '../types'
-import { applyOps, newTracker, parseOps, prefixesFrom, renderBoard } from './board'
+import { applyOps, criteriaOf, gateG1, gateG4, newTracker, parseOps, prefixesFrom, renderBoard } from './board'
 import type { Tracker } from './board'
 import { DEMO } from './demo'
 import { step } from './flow'
@@ -17,6 +17,10 @@ import type { Actions } from './views'
 
 const PANE = 'crew'
 
+/** The names the roles get as teammates, and how a message names them. */
+const CREW_TEAMMATE = /^crew-(pm|qa)\b/i
+const CREW_MENTION = /@crew-(pm|qa)\b/i
+
 const isDemo = atom({ plugin: 'crew', key: 'isDemo' } as const, false)
 const tab = atom({ plugin: 'crew', key: 'tab' } as const, 'overview' as CrewTab)
 const scenario = atom({ plugin: 'crew', key: 'scenario' } as const, 'normal' as CrewScenario)
@@ -26,6 +30,9 @@ const live = atom({ plugin: 'crew', key: 'live' } as const, emptyLive())
 
 /** Where crew keeps things in the repo the session runs in. */
 const files = { root: '', board: '', schema: '', crew: '' }
+
+/** How many role wakes are under way: the roles are offered to the engine only then. */
+const waking = { count: 0 }
 
 /** The board as last read or written; reloaded from disk when a role finishes. */
 const cache: { board: Tracker | null | undefined } = { board: undefined }
@@ -56,16 +63,18 @@ async function post($: any, message: Omit<CrewMessage, 't'>) {
   const t = await $.clock.now()
   const next = await update($, live, l => ({
     ...l,
-    threads: { ...l.threads, [message.item]: [...(l.threads[message.item] ?? []), { ...message, t }].slice(-50) },
+    posted: l.posted + 1,
+    threads: { ...l.threads, [message.item]: [...(l.threads[message.item] ?? []), { ...message, t, n: l.posted + 1 }].slice(-50) },
   }))
   const lines = (next.threads[message.item] ?? []).map(m => JSON.stringify(m)).join('\n')
   await $.fs.write(`${files.crew}/threads/${safe(message.item)}.jsonl`, `${lines}\n`)
 }
 
 async function startRole($: any, role: CrewRole, route: Route, prompt: string) {
+  // Unnamed on purpose: a named agent in a team-enabled session becomes a teammate, whose
+  // finish notices reach the main conversation and whose prompt is the lead's, not the role card.
   const spawned = await $.agent.spawn({
     subagentType: `crew:${role}`,
-    name: role,
     description: `crew ${crewName(role)}`,
     prompt,
     model: route.model,
@@ -73,17 +82,20 @@ async function startRole($: any, role: CrewRole, route: Route, prompt: string) {
   // The engine answers the new agent's id; when a hook beneath kept it back, find the agent by name.
   let id: string | undefined = spawned.deny === undefined ? spawned.agentId : undefined
   if (spawned.deny === undefined && id === undefined) {
-    const agents: { id: string; name?: string; spawnedBy?: string }[] = await $.agent.list()
-    id = [...agents].reverse().find(a => a.name === role && a.spawnedBy === 'crew')?.id
+    const agents: { id: string; description?: string; spawnedBy?: string }[] = await $.agent.list()
+    id = [...agents].reverse().find(a => a.description === `crew ${crewName(role)}` && a.spawnedBy === 'crew')?.id
   }
   if (id === undefined) {
-    $.ui.toast(`crew：${crewName(role)} 沒有啟動（${spawned.deny ?? '找不到它的 agent id'}）`)
-    await update($, live, l => ({ ...l, roles: { ...l.roles, [role]: { ...l.roles[role], state: 'blocked', doing: '沒有啟動' } } }))
+    const reason: string = spawned.deny ?? '找不到它的 agent id'
+    $.ui.toast(`crew：${crewName(role)} 沒有啟動（${reason}）`)
+    $.ui.log(`crew: ${role} did not start: ${reason}`)
+    await update($, live, l => ({ ...l, roles: { ...l.roles, [role]: { ...l.roles[role], state: 'blocked', doing: `沒有啟動：${reason}` } } }))
     return
   }
   const started: string = id
   await update($, live, l => ({
     ...l,
+    seen: { ...l.seen, [role]: l.posted },
     agents: { ...l.agents, [started]: role },
     roles: {
       ...l.roles,
@@ -99,17 +111,27 @@ async function execute($: any, actions: readonly FlowAction[]) {
     } else if (action.type === 'message') {
       await post($, { item: action.item ?? 'crew', from: 'crew', to: action.role, text: action.text, kind: 'route' })
       const role = (await read($, live)).roles[action.role]
+      let sent: { isDelivered: boolean; reason?: string } = { isDelivered: false, reason: '換模型要用新的 context' }
       if (role.agentId !== undefined && role.model === action.route.model) {
+        waking.count += 1
+        try {
+          sent = await $.session.send({ to: { agentId: role.agentId }, text: action.text })
+        } finally {
+          waking.count -= 1
+        }
+      }
+      if (sent.isDelivered) {
         await update($, live, l => ({
           ...l,
+          seen: { ...l.seen, [action.role]: l.posted },
           roles: {
             ...l.roles,
             [action.role]: { ...l.roles[action.role], effort: action.route.effort, tier: action.route.tier, limit: action.route.limit, state: 'working', doing: firstLine(action.text) },
           },
         }))
-        await $.session.send({ to: action.role, text: action.text })
       } else {
-        // A different model means a fresh context: the role reads the board and its threads again.
+        // A new model, or a role that cannot be woken: start it again; it reads the board and its threads.
+        $.ui.log(`crew: starting ${action.role} again: ${sent.reason ?? ''}`)
         await startRole($, action.role, action.route, `${action.text}\n\n（先用 board_read、thread_read 了解目前狀況。）`)
       }
     } else if (action.type === 'ask_person') {
@@ -153,6 +175,15 @@ const usageOf = (u: { input_tokens?: number; output_tokens?: number; cache_read_
 
 const ZERO = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, wakes: 0, rotations: 0 }
 
+/** Items whose threads hold a message to each role written after that role was last woken. */
+const inboxOf = (l: CrewLive): { pm: string[]; qa: string[] } => {
+  const unread = (role: 'pm' | 'qa') =>
+    Object.entries(l.threads)
+      .filter(([, messages]) => messages.some(m => m.to === role && m.from !== 'crew' && (m.n ?? 0) > (l.seen[role] ?? 0)))
+      .map(([item]) => item)
+  return { pm: unread('pm'), qa: unread('qa') }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     files.root = e.cwd
@@ -160,6 +191,8 @@ export const register: Register = on => {
     files.schema = `${e.cwd}/schemas/prd-tracker.schema.json`
     files.crew = `${e.cwd}/.crew`
     cache.board = undefined
+    // State kept from before a reload may predate fields added since: fill them in.
+    await update($, live, l => ({ ...emptyLive(), ...l }))
     await $.command.register({
       name: 'crew',
       description: 'crew 產品團隊：/crew start <PRD 檔案> 開始、/crew answer <Q-編號> <回答>、/crew status、/crew demo',
@@ -173,9 +206,10 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The roles are crew's to start, not the main conversation's.
-  on('agent.offer', { agent: 'crew:pm' }, () => ({ isOffered: false }))
-  on('agent.offer', { agent: 'crew:qa' }, () => ({ isOffered: false }))
+  // The roles are crew's to start, not the main conversation's. While crew wakes a finished role
+  // the engine asks again whether its type is offered, so the roles are offered for that moment.
+  on('agent.offer', { agent: 'crew:pm' }, ($, e, next) => (waking.count > 0 ? next(e) : { isOffered: false }))
+  on('agent.offer', { agent: 'crew:qa' }, ($, e, next) => (waking.count > 0 ? next(e) : { isOffered: false }))
 
   on('command.run', { command: 'crew' }, async ($, e) => {
     const [verb = '', ...rest] = e.args.trim().split(/\s+/).filter(Boolean)
@@ -202,12 +236,21 @@ export const register: Register = on => {
       const board = (await loadBoard($, true)) ?? newTracker(files.root.split('/').pop() ?? 'project')
       await saveBoard($, board)
       await $.fs.write(`${files.crew}/.gitignore`, 'usage/\n')
+      const stage = (await read($, live)).flow.stage
+      if (stage !== 'idle' && stage !== 'done' && stage !== 'escalated') {
+        return { text: `crew 正在進行（${stage}），等這一輪完成再開始新的；卡住的話先用 /crew reset。` }
+      }
       await update($, isDemo, () => false)
       await update($, live, l => ({ ...l, prdPath: path }))
       await feed($, { type: 'start', prd: { path, size: text.length, text: text.slice(0, 4_000) } })
       await $.ui.open({ id: PANE, title: 'Crew' })
       const pm = (await read($, live)).roles.pm
+      if (pm.state === 'blocked') return { text: `crew 沒有開始：${pm.doing}` }
       return { text: `crew 開始：PM 正在拆 ${path}（${pm.tier ?? ''} ${pm.label ?? ''}・${pm.effort ?? ''}）。進度在 /crew 面板。` }
+    }
+    if (verb === 'reset') {
+      await update($, live, () => emptyLive())
+      return { text: '已清掉這個 session 的 crew 狀態。看板（prd-tracker.json）和討論串檔案都保留。' }
     }
     if (verb === 'answer') {
       const [id = '', ...words] = rest
@@ -232,7 +275,9 @@ export const register: Register = on => {
   on('tool.call', { tool: 'mcp__crew__board_read' }, async ($, e: any) => {
     const board = await loadBoard($)
     if (board === null) return { result: '還沒有看板。' }
-    return { result: renderBoard(board, typeof e.feature === 'string' ? { feature: e.feature } : {}) }
+    const open = (await read($, live)).questions.filter(q => q.status === 'open')
+    const waiting = open.length === 0 ? '' : `\n\n等使用者回答的問題（不要重複問）：\n${open.map(q => `- ${q.id} ${q.question}`).join('\n')}`
+    return { result: `${renderBoard(board, typeof e.feature === 'string' ? { feature: e.feature } : {})}${waiting}` }
   })
 
   on('tool.call', { tool: 'mcp__crew__board_write' }, async ($, e: any) => {
@@ -244,16 +289,27 @@ export const register: Register = on => {
     const r = applyOps(board, parsed.ops, { by: role, today: dayOf(now), prefixes: await idPrefixes($) })
     if (!r.ok) return { result: `board_write 沒有生效，看板沒有任何變更：\n- ${r.errors.join('\n- ')}` }
     await saveBoard($, r.tracker)
+    // Done means progress moved: a feature got its first criterion, a criterion its first test case.
+    const covered = (t: Tracker) => {
+      const g1 = gateG1(t)
+      const g4 = gateG4(t)
+      const open = new Set([...g1.gaps.map(g => g.id), ...g4.gaps.map(g => g.id)])
+      const ids = [...t.prd_items.filter(i => i.crew_dropped === undefined).map(i => i.id), ...t.prd_items.flatMap(criteriaOf).map(c => c.id)]
+      return new Set(ids.filter(id => !open.has(id)))
+    }
+    const before = covered(board)
     const titles = new Map<string, string>()
-    parsed.ops.forEach((op, i) => {
-      const id = r.results[i]?.id
-      if (id !== undefined) titles.set(id, 'title' in op ? op.title : 'text' in op ? op.text : op.op)
-    })
+    for (const item of r.tracker.prd_items) {
+      titles.set(item.id, item.title)
+      for (const c of criteriaOf(item)) titles.set(c.id, c.text)
+    }
+    const moved = [...covered(r.tracker)].filter(id => !before.has(id))
     await update($, live, l => ({
       ...l,
-      activity: [...l.activity, ...[...titles].map(([id, title]) => ({ t: now, day: dayOf(now), role, id, title }))].slice(-200),
+      activity: [...l.activity, ...moved.map(id => ({ t: now, day: dayOf(now), role, id, title: titles.get(id) ?? id }))].slice(-200),
     }))
-    return { result: `已寫入：${[...titles.keys()].join('、')}。` }
+    const written = r.results.map(x => x.id).filter((x): x is string => x !== undefined)
+    return { result: `已寫入：${written.join('、')}。` }
   })
 
   on('tool.call', { tool: 'mcp__crew__thread_post' }, async ($, e: any) => {
@@ -278,11 +334,25 @@ export const register: Register = on => {
     return { result: `已交給使用者（${id}）。先處理其他部分，答案會轉給你。` }
   })
 
-  // A role finishing is crew's to handle, not a reason to wake the main conversation.
-  on('prompt.submit', async ($, e, next) => {
-    if (e.origin.kind === 'task-notification') {
+  // A role finishing or reporting is crew's to handle, not a reason to wake the main conversation.
+  // In a session with agent teams on, the roles run as teammates (crew-pm, crew-qa) and report through the team mailbox.
+  on('session.receive', async ($, e, next) => {
+    const origin = e.origin as { kind: string; teammate?: string }
+    if (e.agentId === undefined && origin.teammate !== undefined && CREW_TEAMMATE.test(origin.teammate)) {
+      return { consumed: `crew 自己處理 ${origin.teammate} 的回報` }
+    }
+    if (e.agentId === undefined && origin.kind === 'task-notification') {
       const ids = Object.keys((await read($, live)).agents)
-      if (ids.some(id => e.text.includes(id))) return { drop: 'crew 自己處理角色的完成通知' }
+      if (ids.some(id => e.text.includes(id))) return { consumed: 'crew 自己處理角色的完成通知' }
+    }
+    return next(e)
+  })
+
+  on('prompt.submit', async ($, e, next) => {
+    const kind = e.origin.kind
+    if (kind === 'task-notification' || kind === 'peer' || kind === 'peer-send-message' || kind === 'coordinator') {
+      const ids = Object.keys((await read($, live)).agents)
+      if (ids.some(id => e.text.includes(id)) || CREW_MENTION.test(e.text)) return { drop: 'crew 自己處理角色的回報' }
     }
     return next(e)
   })
@@ -290,11 +360,7 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     const role = e.agentId === undefined ? undefined : (await read($, live)).agents[e.agentId]
     if (role !== undefined) {
-      await update($, live, l => ({
-        ...l,
-        roles: { ...l.roles, [role]: { ...l.roles[role], state: 'working' } },
-        usage: { ...l.usage, [role]: { ...(l.usage[role] ?? ZERO), wakes: (l.usage[role]?.wakes ?? 0) + 1 } },
-      }))
+      await update($, live, l => ({ ...l, roles: { ...l.roles, [role]: { ...l.roles[role], state: 'working' } } }))
     }
     return next(e)
   })
@@ -329,11 +395,16 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const role = e.agentId === undefined ? undefined : (await read($, live)).agents[e.agentId]
     if (role === undefined) return next(e)
-    await update($, live, l => ({ ...l, roles: { ...l.roles, [role]: { ...l.roles[role], state: 'idle', doing: '—' } } }))
+    // A role's own turn start is not always raised to this plugin, so a finished run is what counts as a wake.
+    const l = await update($, live, s => ({
+      ...s,
+      roles: { ...s.roles, [role]: { ...s.roles[role], state: 'idle', doing: '—' } },
+      usage: { ...s.usage, [role]: { ...(s.usage[role] ?? ZERO), wakes: (s.usage[role]?.wakes ?? 0) + 1 } },
+    }))
     const done = await next(e)
     await saveUsage($)
     const board = await loadBoard($, true)
-    if (board !== null) await feed($, { type: 'role_done', role, board })
+    if (board !== null) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l) })
     return done
   })
 

@@ -26,7 +26,8 @@ export const INITIAL: FlowState = { stage: 'idle', round: 0, retries: 0 }
 
 export type FlowEvent =
   | { type: 'start'; prd: { path: string; size: number; text?: string } }
-  | { type: 'role_done'; role: 'pm' | 'qa'; board: Tracker }
+  /** `inbox`: items whose threads hold messages to that role it has not been woken for yet. */
+  | { type: 'role_done'; role: 'pm' | 'qa'; board: Tracker; inbox?: Inbox }
   /** The person answered a question: the flow's own, or one a role asked with ask_person. */
   | { type: 'answered'; question: string; answer: string; role?: 'pm' | 'qa' }
 
@@ -38,6 +39,8 @@ export type FlowAction =
   | { type: 'done'; text: string }
 
 export type StepResult = { state: FlowState; actions: FlowAction[] }
+
+export type Inbox = { pm?: readonly string[]; qa?: readonly string[] }
 
 const MAX_ROUNDS = 3
 const MAX_RETRIES = 2
@@ -79,6 +82,9 @@ const gapsToPm = (gaps: readonly GateGap[]): string =>
 const gapsToQa = (gaps: readonly GateGap[]): string =>
   [`PM 確認以下 ${gaps.length} 條驗收條件要做，請補上 test case（PM 的說明在各自的討論串，用 thread_read 看）：`, list(gaps)].join('\n')
 
+const threadNotice = (from: string, items: readonly string[]): string =>
+  `${from} 在這些項目的討論串留言給你：${items.join('、')}。請先用 thread_read 看完再處理：要回覆就用 thread_post，要調整看板就用 board_write。做完用一句話回報。`
+
 const finish = (state: FlowState, board: Tracker): StepResult => {
   const g4 = gateG4(board)
   return {
@@ -116,9 +122,17 @@ const afterSplit = (state: FlowState, board: Tracker): StepResult => {
   }
 }
 
-const afterTests = (state: FlowState, board: Tracker): StepResult => {
+const afterTests = (state: FlowState, board: Tracker, inbox: Inbox = {}): StepResult => {
   const g4 = gateG4(board)
-  if (g4.gaps.length === 0) return finish(state, board)
+  const forPm = inbox.pm ?? []
+  if (g4.gaps.length === 0) {
+    // Everything is covered, but QA asked the PM something: one more round, bounded like the others.
+    if (forPm.length === 0 || state.round >= MAX_ROUNDS) return finish(state, board)
+    return {
+      state: { ...state, stage: 'confirming', round: state.round + 1 },
+      actions: [{ type: 'message', role: 'pm', item: forPm[0], text: threadNotice('QA', forPm), route: routeFor('pm', tierFor({ kind: 'confirm_gaps', size: forPm.length })) }],
+    }
+  }
   if (state.round >= MAX_ROUNDS) {
     return escalate(
       state,
@@ -134,9 +148,16 @@ const afterTests = (state: FlowState, board: Tracker): StepResult => {
   }
 }
 
-const afterConfirm = (state: FlowState, board: Tracker): StepResult => {
+const afterConfirm = (state: FlowState, board: Tracker, inbox: Inbox = {}): StepResult => {
   const g4 = gateG4(board)
-  if (g4.gaps.length === 0) return finish(state, board)
+  const forQa = inbox.qa ?? []
+  if (g4.gaps.length === 0) {
+    if (forQa.length === 0) return finish(state, board)
+    return {
+      state: { ...state, stage: 'adding_tests' },
+      actions: [{ type: 'message', role: 'qa', item: forQa[0], text: threadNotice('PM', forQa), route: routeFor('qa', tierFor({ kind: 'add_tests', size: forQa.length })) }],
+    }
+  }
   const route = routeFor('qa', tierFor({ kind: 'add_tests', size: g4.gaps.length }))
   return {
     state: { ...state, stage: 'adding_tests' },
@@ -178,8 +199,14 @@ export const step = (state: FlowState, event: FlowEvent): StepResult => {
     }
   }
   const { role, board } = event
+  const inbox = event.inbox ?? {}
   if (role === 'pm' && state.stage === 'splitting') return afterSplit(state, board)
-  if (role === 'qa' && (state.stage === 'writing_tests' || state.stage === 'adding_tests')) return afterTests(state, board)
-  if (role === 'pm' && state.stage === 'confirming') return afterConfirm(state, board)
+  if (role === 'qa' && (state.stage === 'writing_tests' || state.stage === 'adding_tests')) return afterTests(state, board, inbox)
+  if (role === 'pm' && state.stage === 'confirming') return afterConfirm(state, board, inbox)
+  // A finished board can open again: the PM adds criteria after an answer, or one role writes to the other.
+  if (state.stage === 'done') {
+    if (role === 'pm' && (gateG4(board).gaps.length > 0 || (inbox.qa ?? []).length > 0)) return afterConfirm(state, board, inbox)
+    if (role === 'qa' && (inbox.pm ?? []).length > 0) return afterTests(state, board, inbox)
+  }
   return { state, actions: [] }
 }

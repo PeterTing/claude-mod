@@ -16,6 +16,8 @@ export const emptyLive = (): CrewLive => ({
   usage: {},
   tiers: {},
   threads: {},
+  posted: 0,
+  seen: {},
   questions: [],
   activity: [],
 })
