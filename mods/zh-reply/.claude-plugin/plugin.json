@@ -1,0 +1,31 @@
+{
+  "name": "zh-reply",
+  "version": "0.1.0",
+  "description": "Makes Claude and its agents reply in Chinese (Traditional by default), and asks for a rewrite when a reply comes back in another language.",
+  "author": { "name": "PeterTing" },
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "variant": {
+      "type": "string",
+      "title": "Chinese variant",
+      "description": "zh-TW: Traditional Chinese (Taiwan usage). zh-CN: Simplified Chinese.",
+      "default": "zh-TW",
+      "options": ["zh-TW", "zh-CN"]
+    },
+    "enforce": {
+      "type": "string",
+      "title": "When a reply is not in Chinese",
+      "description": "rewrite: ask Claude to say it again in Chinese, once (one extra turn). remind: show a notice and remind Claude with your next prompt.",
+      "default": "rewrite",
+      "options": ["rewrite", "remind"]
+    },
+    "scope": {
+      "type": "string",
+      "title": "Who it applies to",
+      "description": "all: the main conversation, subagents and teammates. main: the main conversation only.",
+      "default": "all",
+      "options": ["all", "main"]
+    }
+  }
+}

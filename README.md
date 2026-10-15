@@ -51,7 +51,7 @@ Mods by other authors are not sandboxed: they run with your permissions. Each on
 
 | Mod | What it does | Kind |
 | --- | --- | --- |
-| _none yet_ | | |
+| [`zh-reply`](mods/zh-reply) | Claude and its agents reply in Chinese (Traditional by default); a reply in another language is asked for again | System prompt, agent tasks, messages; sends a rewrite prompt |
 
 ## Repository layout
 

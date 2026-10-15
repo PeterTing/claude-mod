@@ -51,7 +51,7 @@ mod 沒有 sandbox，會以你的權限執行。下面每個 mod 收錄前都完
 
 | Mod | 功能 | 類型 |
 | --- | --- | --- |
-| _尚無_ | | |
+| [`zh-reply`](mods/zh-reply) | Claude 和它的 agent 都用中文回覆（預設繁體）；回覆不是中文時請它重說一次 | system prompt、agent 任務、訊息；會代你送出重寫要求 |
 
 ## Repo 結構
 

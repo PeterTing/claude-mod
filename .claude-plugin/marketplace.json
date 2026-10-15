@@ -7,6 +7,24 @@
   },
   "plugins": [
     {
+      "name": "zh-reply",
+      "description": "Makes Claude and its agents reply in Chinese (Traditional by default) and asks for a rewrite when a reply comes back in another language. Made here.",
+      "source": "./mods/zh-reply",
+      "author": {
+        "name": "PeterTing",
+        "url": "https://github.com/PeterTing"
+      },
+      "homepage": "https://github.com/PeterTing/claude-mod/tree/main/mods/zh-reply",
+      "license": "MIT",
+      "category": "language",
+      "tags": [
+        "mod",
+        "language",
+        "chinese",
+        "system-prompt"
+      ]
+    },
+    {
       "name": "usage-meter",
       "description": "Your plan's 5-hour and 7-day usage as small bars above the prompt, with the reset countdown and the session's cost. Reviewed: Recommend.",
       "source": {
