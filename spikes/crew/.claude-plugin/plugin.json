@@ -1,0 +1,5 @@
+{
+  "name": "crew-spike",
+  "version": "0.0.1",
+  "description": "Phase 0 spike for crew: checks the agent-team APIs crew depends on and logs what happens. Not for release."
+}

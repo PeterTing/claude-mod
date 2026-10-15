@@ -1,0 +1,674 @@
+<title>Crew 常駐團隊</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@700&display=swap">
+<style>
+/* Layout: one reading column (~46rem) for prose; figures (mockups, diagrams, wide tables) break out to ~64rem. */
+:root {
+  --bg: #F4F5F2;
+  --surface: #FFFFFF;
+  --fg: #1C2127;
+  --muted: #5B646D;
+  --line: #D9DDD8;
+  --accent: #1E6B64;
+  --accent-soft: #E1EEEA;
+  --warn: #9A5A0C;
+  --warn-soft: #F6EBDB;
+  --ok: #2C743B;
+  --term-bg: #15191E;
+  --term-panel: #1C2229;
+  --term-fg: #D8DEE4;
+  --term-dim: #7F8A95;
+  --term-line: #2B333C;
+  --term-acc: #6CC4B9;
+  --term-warn: #E3A64F;
+  --term-ok: #7CCB8A;
+  --font-body: "Noto Sans TC", "PingFang TC", "Heiti TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-display: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.1875rem;
+  --step-2: 1.5rem;
+  --step-3: 2.125rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101417; --surface: #171C20; --fg: #E3E7EA; --muted: #9AA3AB; --line: #2A3238;
+    --accent: #62BBB0; --accent-soft: #17302C; --warn: #E1A757; --warn-soft: #33281A; --ok: #73C383;
+    --term-bg: #0B0E11; --term-panel: #12171C; --term-fg: #D8DEE4; --term-dim: #7F8A95; --term-line: #252C33;
+    --term-acc: #6CC4B9; --term-warn: #E3A64F; --term-ok: #7CCB8A;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101417; --surface: #171C20; --fg: #E3E7EA; --muted: #9AA3AB; --line: #2A3238;
+  --accent: #62BBB0; --accent-soft: #17302C; --warn: #E1A757; --warn-soft: #33281A; --ok: #73C383;
+  --term-bg: #0B0E11; --term-panel: #12171C; --term-fg: #D8DEE4; --term-dim: #7F8A95; --term-line: #252C33;
+  --term-acc: #6CC4B9; --term-warn: #E3A64F; --term-ok: #7CCB8A;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: var(--step-0);
+  line-height: 1.75;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 2.5rem 4rem;
+}
+.page { max-width: 64rem; margin: 0 auto; display: grid; gap: 3rem; }
+.prose { max-width: 46rem; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: var(--step-3); letter-spacing: 0.01em; }
+h2 { font-size: var(--step-2); }
+h3 { font-size: var(--step-1); font-family: var(--font-body); font-weight: 700; }
+p { margin: 0; }
+section { display: grid; gap: 1.25rem; min-width: 0; }
+section > * { min-width: 0; }
+.eyebrow { font-size: var(--step--1); letter-spacing: 0.08em; color: var(--muted); font-weight: 500; }
+code, .mono { font-family: var(--font-mono); font-size: 0.875em; }
+code { background: var(--accent-soft); padding: 0.05em 0.35em; border-radius: 4px; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header.top { display: grid; gap: 1rem; border-bottom: 1px solid var(--line); padding-bottom: 2rem; }
+.lede { font-size: var(--step-1); color: var(--muted); max-width: 46rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.chip { font-size: var(--step--1); border: 1px solid var(--line); border-radius: 999px; padding: 0.15rem 0.7rem; color: var(--muted); background: var(--surface); }
+.chip.wait { border-color: var(--warn); color: var(--warn); background: var(--warn-soft); }
+
+nav.toc ol { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; font-size: var(--step--1); }
+nav.toc a { color: var(--muted); text-decoration: none; }
+nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+
+.answer { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 1.25rem 1.5rem; display: grid; gap: 0.75rem; max-width: 46rem; }
+.answer strong { color: var(--accent); }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; line-height: 1.6; }
+th, td { text-align: left; vertical-align: top; padding: 0.6rem 0.85rem; border-bottom: 1px solid var(--line); }
+th { font-weight: 500; color: var(--muted); font-size: var(--step--1); letter-spacing: 0.04em; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.nw { white-space: nowrap; }
+.tag { display: inline-block; font-size: 0.75rem; padding: 0 0.45rem; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.tag.ok { color: var(--ok); border-color: var(--ok); }
+.tag.spike { color: var(--warn); border-color: var(--warn); }
+
+ul.plain, ol.plain { margin: 0; padding-left: 1.25rem; display: grid; gap: 0.4rem; }
+
+figure { margin: 0; display: grid; gap: 0.6rem; min-width: 0; }
+figcaption { font-size: var(--step--1); color: var(--muted); }
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 1rem; }
+pre.mermaid { margin: 0; font-family: var(--font-body); background: transparent; }
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1rem; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 1rem 1.15rem; display: grid; gap: 0.4rem; align-content: start; }
+.card h3 { font-size: var(--step-0); }
+.card p { color: var(--muted); font-size: 0.9375rem; }
+
+/* Terminal mockups */
+.mock-label { display: inline-flex; gap: 0.5rem; align-items: center; font-size: var(--step--1); color: var(--warn); }
+.mock-label::before { content: ""; width: 0.5rem; height: 0.5rem; border: 1.5px dashed var(--warn); border-radius: 2px; }
+.term { background: var(--term-bg); color: var(--term-fg); font-family: var(--font-mono); font-size: 0.8125rem; line-height: 1.6; border-radius: 8px; padding: 0.9rem 1rem; overflow-x: auto; border: 1.5px dashed var(--term-warn); }
+.term .dim { color: var(--term-dim); }
+.term .acc { color: var(--term-acc); }
+.term .warn { color: var(--term-warn); }
+.term .ok { color: var(--term-ok); }
+.term-bar { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; border-bottom: 1px solid var(--term-line); padding-bottom: 0.5rem; margin-bottom: 0.5rem; }
+.term-tabs { display: flex; gap: 1.1rem; margin-bottom: 0.75rem; color: var(--term-dim); flex-wrap: wrap; }
+.term-tabs .on { color: var(--term-fg); border-bottom: 2px solid var(--term-acc); }
+.tgrid { display: grid; gap: 0.15rem 1rem; min-width: 40rem; }
+.tgrid.roles { grid-template-columns: 6.5rem 5rem minmax(10rem, 1fr) 11rem 6rem; }
+.tgrid.mem { grid-template-columns: 5rem 3.5rem minmax(14rem, 1fr) 6rem 8rem; }
+.tgrid.tok { grid-template-columns: 6.5rem repeat(4, 5.5rem) 5rem 4.5rem; }
+.tgrid .h { color: var(--term-dim); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.bar { display: inline-grid; grid-template-columns: 5rem auto; gap: 0.5rem; align-items: center; }
+.bar i { display: block; height: 0.45rem; background: var(--term-line); border-radius: 2px; position: relative; overflow: hidden; }
+.bar i b { position: absolute; inset: 0 auto 0 0; background: var(--term-acc); }
+.bar i b.hi { background: var(--term-warn); }
+.term-block { margin-top: 0.85rem; padding-top: 0.6rem; border-top: 1px solid var(--term-line); display: grid; gap: 0.25rem; }
+.thread { display: grid; gap: 0.35rem; }
+.msg { display: grid; grid-template-columns: 7.5rem 1fr; gap: 1rem; }
+.band { background: var(--term-panel); border-radius: 4px; padding: 0.35rem 0.6rem; white-space: nowrap; }
+
+.phases { display: grid; gap: 0.75rem; }
+.phase { display: grid; grid-template-columns: 4.5rem 1fr; gap: 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 1rem 1.15rem; }
+.phase .pn { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+.phase h3 { font-size: var(--step-0); }
+.phase .body { display: grid; gap: 0.35rem; min-width: 0; }
+.phase .meta { font-size: 0.9375rem; color: var(--muted); }
+.phase.opt { border-style: dashed; }
+
+.decide { border: 1.5px solid var(--warn); background: var(--warn-soft); border-radius: 6px; padding: 1.25rem 1.5rem; display: grid; gap: 0.75rem; max-width: 46rem; }
+.decide h2 { font-size: var(--step-1); }
+.decide ol { margin: 0; padding-left: 1.25rem; display: grid; gap: 0.5rem; }
+
+footer { font-size: var(--step--1); color: var(--muted); border-top: 1px solid var(--line); padding-top: 1.25rem; }
+
+@media (max-width: 34rem) {
+  .phase { grid-template-columns: 1fr; gap: 0.35rem; }
+  .msg { grid-template-columns: 1fr; gap: 0; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <div class="eyebrow">claude-mod · 自製 mod 規劃</div>
+  <h1>Crew：常駐的產品開發 agent 團隊</h1>
+  <p class="lede">PM、UI/UX 設計師、全端工程師、QA 工程師、Tech lead 五個角色常駐在你的 Claude Code 裡，把 PRD 拆成各自的工作項目，彼此討論、互相確認。你的主對話是協調所有角色的大腦。每個角色的 context 都有上限，靠存在 repo 的記憶接續先前的事。</p>
+  <div class="chips">
+    <span class="chip wait">第 1 階段：介面設計稿</span>
+    <span class="chip">2026-10-15</span>
+    <span class="chip">Claude Code 2.1.299</span>
+    <span class="chip">名稱 crew</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="目錄">
+  <ol>
+    <li><a href="#answer">記憶與 RAG</a></li>
+    <li><a href="#goals">目標</a></li>
+    <li><a href="#arch">架構</a></li>
+    <li><a href="#resident">常駐</a></li>
+    <li><a href="#memory">context 與記憶</a></li>
+    <li><a href="#team">團隊與流程</a></li>
+    <li><a href="#talk">溝通規則</a></li>
+    <li><a href="#ui">介面設計稿</a></li>
+    <li><a href="#tokens">token</a></li>
+    <li><a href="#files">repo 檔案</a></li>
+    <li><a href="#spike">實測結果</a></li>
+    <li><a href="#phases">開發階段</a></li>
+    <li><a href="#verify">驗證</a></li>
+    <li><a href="#risks">風險</a></li>
+    <li><a href="#decide">已確認的決定</a></li>
+  </ol>
+</nav>
+
+<section id="answer">
+  <h2>要有記憶，也要 RAG 化</h2>
+  <div class="answer">
+    <p><strong>要有記憶。</strong>context 只是工作桌，不是檔案櫃。重要的事一發生就寫進 repo（看板或記憶），所以任何角色的 context 隨時可以清掉重開，不會失憶。</p>
+    <p><strong>也要 RAG 化。</strong>角色每次被叫醒時，mod 只把和這件事有關的幾條記憶（800 token 以內）附在訊息後面，不載入整段歷史。這樣 context 不會一直變大，角色也知道目前的狀況。</p>
+    <p><strong>第一版用「編號連結＋關鍵字檢索」，不用向量。</strong>Claude Code 沒有提供 embedding 給 mod，要用向量就得另外跑一個 embedding 模型。專案記憶大多是編號、名詞和決策，用編號和關鍵字就找得到，而且不花 token。等抽考分數不達標，再加向量檢索。</p>
+  </div>
+</section>
+
+<section id="goals">
+  <h2>目標與成功條件</h2>
+  <p class="prose">我把「像 grok bot」理解成：一直在線、隨時叫得到、會自己定時看狀況、記得之前的事。如果你指的是其他特性，告訴我，我再調整。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>目標</th><th>怎麼算達成</th></tr></thead>
+      <tbody>
+        <tr><td>五個角色常駐，大腦協調</td><td>主 session 開著，角色就一直在。沒工作時閒置、不花 token，收到訊息就醒來</td></tr>
+        <tr><td>context 不會無限累積</td><td>長時間執行時，每個角色每次請求的 context 都不超過門檻再加一輪的量</td></tr>
+        <tr><td>持續掌握狀況</td><td>context 清掉重開後抽考 20 題先前的決定，答對 18 題以上，且引用正確編號</td></tr>
+        <tr><td>PRD 拆成各角色的工作項目</td><td>看板上每個項目都有負責角色和狀態，覆蓋缺口由程式自動算出</td></tr>
+        <tr><td>角色互相確認</td><td>例如 QA 列完 test case，缺口自動送給 PM 確認，討論串留在該項目底下</td></tr>
+        <tr><td>看得到 token 用量</td><td>每個角色的用量都看得到，不設上限；用量異常時大腦收到提醒並自己調整</td></tr>
+        <tr><td>存在 repo</td><td>看板沿用你現有的 <code>prd-tracker.json</code> 格式，其他資料放在 <code>.crew/</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="arch">
+  <h2>整體架構</h2>
+  <p class="prose">每個角色是 mod 開出的具名 agent，做完就閒置、收到訊息才醒來（第 0 階段實測確認，不需要實驗中的 agent team 功能）。角色之間不直接互傳訊息，而是寫進 crew 的討論串，由 mod 轉送並附上相關記憶。crew mod 也負責角色定義、模型路由、看板與記憶工具、token 計量和面板。所有狀態都存在 repo。</p>
+  <figure>
+    <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  U["你"] &lt;--&gt; L["大腦&lt;br/&gt;你的主對話"]
+  subgraph CC["Claude Code 主 session（常駐）"]
+    L
+    subgraph T["具名角色 agent（閒置不花 token）"]
+      PM["PM"]
+      UX["UI/UX"]
+      FS["全端"]
+      QA["QA"]
+      TL["Tech lead"]
+    end
+    M["crew mod&lt;br/&gt;看板工具・記憶檢索・訊息把關&lt;br/&gt;token 計量・面板・心跳"]
+  end
+  subgraph R["repo"]
+    P["prd-tracker.json&lt;br/&gt;PRD・驗收條件・test case・task"]
+    C[".crew/&lt;br/&gt;角色卡・討論串・記憶・用量"]
+  end
+  M --&gt;|"轉送訊息＋相關記憶"| T
+  T --&gt;|"討論串、看板更新"| M
+  T --&gt;|"工具呼叫"| M
+  L --&gt;|"工具呼叫"| M
+  M &lt;--&gt; P
+  M &lt;--&gt; C
+</pre>
+    </div>
+    <figcaption>角色把訊息寫進討論串，mod 轉送給收件的角色並附上相關記憶；例行回報由 mod 整理成摘要給大腦。</figcaption>
+  </figure>
+
+  <h3>每個需求靠哪個 API 做到</h3>
+  <p class="prose">下表的介面都已經在型別定義裡確認過，第 0 階段也實際跑過，結果見「實測結果」。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>需求</th><th>Claude Code 的介面</th><th>狀態</th></tr></thead>
+      <tbody>
+        <tr><td>定義角色：模型、effort、工具、不載入 CLAUDE.md</td><td><code>$.agent.register</code></td><td><span class="tag ok">型別已確認</span></td></tr>
+        <tr><td>開出常駐角色，閒置時等訊息</td><td><code>$.agent.spawn({ name })</code> 開出的具名 agent</td><td><span class="tag ok">S1 通過</span></td></tr>
+        <tr><td>角色呼叫看板與記憶工具，並知道是誰呼叫的</td><td><code>$.tool.register</code>，每次呼叫都帶 <code>agentId</code></td><td><span class="tag ok">S2 通過</span></td></tr>
+        <tr><td>量每個角色目前的 context 大小</td><td><code>turn.step</code> 每次請求結束時的 usage，帶 <code>agentId</code></td><td><span class="tag ok">S3 通過</span></td></tr>
+        <tr><td>結束角色再用同名重開</td><td>同名再 <code>$.agent.spawn</code>，舊的自動退役</td><td><span class="tag ok">S4 通過</span></td></tr>
+        <tr><td>訊息附上記憶、攔下例行通知</td><td>mod 用 <code>$.session.send</code> 轉送時組進記憶；<code>prompt.submit</code> 攔下完成通知</td><td><span class="tag ok">S5 備案通過</span></td></tr>
+        <tr><td>引擎自動壓縮角色時，改用記憶包</td><td><code>session.compact</code> hook，帶 <code>agentId</code>，可換掉 messages</td><td><span class="tag spike">S6 部分，第 3 階段再測</span></td></tr>
+        <tr><td>便宜的摘要與記憶整理</td><td><code>$.model.complete</code>，可指定 haiku 與 prompt 快取</td><td><span class="tag ok">型別已確認</span></td></tr>
+        <tr><td>定時檢查</td><td><code>$.clock.every</code></td><td><span class="tag ok">文件已確認</span></td></tr>
+        <tr><td>面板、輸入框上方一行</td><td><code>$.ui.open</code>、<code>AbovePrompt</code></td><td><span class="tag ok">文件已確認</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="resident">
+  <h2>「常駐」怎麼做到</h2>
+  <div class="cols">
+    <div class="card"><h3>主 session 是團隊辦公室</h3><p>在一個 Warp 分頁（或 tmux）開著 Claude Code 不關。角色在裡面閒置等訊息，閒置時不送請求，不花 token。</p></div>
+    <div class="card"><h3>心跳只用程式檢查</h3><p>mod 每 5 分鐘檢查新 commit、測試結果、卡住的項目、等你決定的問題。檢查不呼叫模型，有事才叫醒對應的角色。</p></div>
+    <div class="card"><h3>重開就接續</h3><p>Claude Code 重開時，mod 從 repo 讀回看板和記憶。角色有工作時才帶著乾淨的 context 和相關記憶上線，不重播舊對話。</p></div>
+    <div class="card"><h3>遠端（選用）</h3><p>可以搭配 Claude Code 的 Remote Control，從手機跟大腦說話。</p></div>
+  </div>
+  <p class="prose">做不到的是：電腦關機或 Claude Code 關閉時，團隊不會繼續工作。如果之後需要 24 小時運作，再評估用雲端排程處理固定工作，例如每晚跑一次測試。</p>
+</section>
+
+<section id="memory">
+  <h2>Context 控制與記憶</h2>
+  <p class="prose">用四道機制控制 context：<strong>事情一發生就存、喚醒時檢索、超過門檻就輪替、引擎壓縮時換成記憶包</strong>。輪替指的是：角色還是同一個人、同一個名字，只是把桌面清乾淨，換一份精簡的資料重新開始。</p>
+
+  <h3>記憶分層</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>層</th><th>內容</th><th>存在哪</th><th>何時進 context</th><th>大小</th></tr></thead>
+      <tbody>
+        <tr><td class="nw">角色卡</td><td>角色職責、訊息規則，以及從你的 CLAUDE.md 挑出的相關規則（例如 QA 拿測試流程，Tech lead 拿 review 規則）</td><td><code>.crew/roles/*.md</code></td><td>每次都在，放在固定開頭，吃 prompt 快取</td><td class="nw">約 2K</td></tr>
+        <tr><td class="nw">工作記憶</td><td>我手上的項目、等我處理的項目、影響這些項目的最新決定</td><td>程式從看板即時產生</td><td>喚醒和輪替時</td><td class="nw">≤ 1.5K</td></tr>
+        <tr><td class="nw">相關記憶</td><td>和這則訊息有關的決定、事實、教訓</td><td>從長期記憶檢索前幾名</td><td>喚醒時附在訊息後</td><td class="nw">≤ 0.8K</td></tr>
+        <tr><td class="nw">看板</td><td>PRD、驗收條件、test case、task 和狀態</td><td><code>prd-tracker.json</code></td><td>需要時用工具查，不整份載入</td><td class="nw">不限</td></tr>
+        <tr><td class="nw">長期記憶</td><td>決定（DEC）、事實（MEM）、教訓（LES）、你的偏好（PREF）</td><td><code>.crew/memory/</code></td><td>只透過檢索</td><td class="nw">不限</td></tr>
+        <tr><td class="nw">流水帳</td><td>每則訊息、每次狀態變化、每次用量</td><td><code>.crew/log/</code></td><td>不載入，只用來整理和查詢</td><td class="nw">不限</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">每條長期記憶都有：編號、類型、內容（300 字以內）、引用的項目或檔案（例如 AC-07、TASK-12）、適用角色、來源（誰在哪則訊息說的）、時間，以及它取代了哪條、被哪條取代。被取代的記憶保留下來，但不會再被檢索到。</p>
+
+  <figure>
+    <div class="diagram">
+<pre class="mermaid">
+flowchart TB
+  subgraph CTX["每個角色的 context（有上限）"]
+    RC["角色卡 約 2K&lt;br/&gt;固定開頭、吃快取"]
+    WS["工作記憶 ≤1.5K&lt;br/&gt;程式從看板產生"]
+    INJ["相關記憶 ≤0.8K&lt;br/&gt;每次喚醒檢索"]
+    CONV["最近的對話"]
+  end
+  subgraph REPO["repo（不限大小、可搜尋）"]
+    B["看板&lt;br/&gt;prd-tracker.json"]
+    MEM["長期記憶"]
+    LOG["流水帳"]
+  end
+  CONV --&gt;|"做了決定、發現限制&lt;br/&gt;memory_save"| MEM
+  CONV --&gt;|"自動記錄，0 token"| LOG
+  LOG --&gt;|"每日整理（Haiku）"| MEM
+  B --&gt;|"產生"| WS
+  MEM --&gt;|"檢索前幾名"| INJ
+</pre>
+    </div>
+    <figcaption>寫入和讀出的路徑。context 裡只有角色卡、精簡過的工作狀態，以及這次需要的記憶。</figcaption>
+  </figure>
+
+  <h3>記憶怎麼寫進去</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>方式</th><th>誰做</th><th>成本</th></tr></thead>
+      <tbody>
+        <tr><td>當下存：做了決定、發現限制、你表達偏好時，呼叫 <code>memory_save</code></td><td>角色</td><td>一次工具呼叫</td></tr>
+        <tr><td>自動記錄：訊息、狀態變化、用量寫進流水帳</td><td>mod 程式</td><td>0</td></tr>
+        <tr><td>輪替前補存：請角色把還沒存的補上，最多 5 條</td><td>角色</td><td>一小輪</td></tr>
+        <tr><td>每日整理：讀流水帳補漏、合併重複、標記被取代的記憶</td><td>Haiku</td><td>少量</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>怎麼找出相關記憶</h3>
+  <ul class="plain prose">
+    <li><strong>編號連結</strong>：訊息提到 AC-07，就找出所有引用 AC-07 的記憶，以及 AC-07 所屬功能的決定。</li>
+    <li><strong>關鍵字</strong>：中文切成兩字一組，英文照詞切，用 BM25 排序。全部在 mod 裡用 TypeScript 計算，不跑外部程式、不連網。</li>
+    <li><strong>新近程度和角色</strong>：較新的、適用這個角色的排前面；被取代的排除。</li>
+    <li><strong>主動補拉</strong>：角色覺得不夠時，可以自己呼叫 <code>memory_search</code>。</li>
+  </ul>
+
+  <h3>輪替</h3>
+  <p class="prose">mod 從每次請求的用量算出每個角色目前的 context。超過門檻時，等那個角色閒置下來才輪替，不打斷它手上的工作。</p>
+  <figure>
+    <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+  participant M as crew mod
+  participant Q as QA（context 62K）
+  participant R as repo
+  M-&gt;&gt;M: QA 超過 60K 門檻，等它閒置
+  M-&gt;&gt;Q: 把還沒存的決定存下來，最多 5 條
+  Q-&gt;&gt;R: memory_save ×3
+  M-&gt;&gt;R: 寫交接摘要
+  M-&gt;&gt;Q: 結束
+  M-&gt;&gt;Q: 同名重開：角色卡＋工作記憶＋相關記憶＋交接摘要
+  Note over Q: 角色自己的內容約 5K，&lt;br/&gt;另加 Claude Code 固定成本（S7 實測）
+</pre>
+    </div>
+    <figcaption>輪替前後，QA 的名字和收件地址不變，其他角色照常找得到它。</figcaption>
+  </figure>
+  <p class="prose"><strong>保底</strong>：如果角色在輪替前就碰到引擎的自動壓縮，mod 的 <code>session.compact</code> hook 會改用同一份記憶包取代，不再另外呼叫模型寫摘要，也比較省（S6 實測）。</p>
+  <p class="prose"><strong>大腦自己的 context</strong>：角色的例行回報不直接送給大腦，mod 每 30 分鐘合併成一則摘要；需要大腦判斷時才立刻送。大腦壓縮時也換成記憶包，並且可以用 <code>memory_search</code>。</p>
+</section>
+
+<section id="team">
+  <h2>團隊與流程</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>角色</th><th>負責</th><th>寫進看板的產出</th><th>模型・effort 範圍</th><th>context 門檻</th></tr></thead>
+      <tbody>
+        <tr><td class="nw">大腦</td><td>你的主對話。分派工作、解決衝突、處理需要判斷的轉送、跟你對話；產品決策交給你</td><td>決定（DEC）</td><td>維持你現在的設定</td><td>摘要減量＋壓縮</td></tr>
+        <tr><td class="nw">PM</td><td>把 PRD 拆成功能和驗收條件、排優先順序、確認覆蓋缺口、最後驗收</td><td>prd_items、acceptance_criteria、decisions</td><td class="nw">Haiku – Opus</td><td>60K</td></tr>
+        <tr><td class="nw">UI/UX 設計師</td><td>每個功能的流程、頁面和各種狀態，用 Figma 或 HTML 做設計稿，標好產品地圖節點</td><td>設計項目（SCR）</td><td class="nw">Haiku – Opus</td><td>60K</td></tr>
+        <tr><td class="nw">全端工程師</td><td>依 task 用 TDD 實作前後端，連結 commit</td><td>tasks 狀態、commit、layers</td><td class="nw">Sonnet – Opus</td><td>100K</td></tr>
+        <tr><td class="nw">QA 工程師</td><td>每條驗收條件寫 test case、執行測試、附證據、回報 bug</td><td>test_cases、evidence、bug</td><td class="nw">Haiku – Opus</td><td>60K</td></tr>
+        <tr><td class="nw">Tech lead</td><td>架構設計與 ADR、拆 task、code review</td><td>ADR、tasks、review 意見</td><td class="nw">Sonnet high – Opus</td><td>60K</td></tr>
+        <tr><td class="nw">記憶整理</td><td>每日整理流水帳、合併重複的記憶</td><td>memories</td><td class="nw">Haiku・low</td><td>不常駐</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">模型不寫死，依任務複雜度動態決定，表中是各角色允許的範圍。context 門檻是你確認的值，第 0 階段量到固定成本後再微調。全域的 xhigh 只保留給大腦，角色一律由路由決定 effort，不沿用全域設定。</p>
+
+  <h3>模型與 effort 依任務動態分配</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>複雜度</th><th>判斷依據（程式計算，不花 token）</th><th>模型・effort</th></tr></thead>
+      <tbody>
+        <tr><td>S</td><td>列清單、改文案、補單一 test case、格式整理</td><td>Haiku・low</td></tr>
+        <tr><td>M</td><td>一般功能、單一頁面或 API、驗收條件 3 條以內</td><td>Sonnet・medium</td></tr>
+        <tr><td>L</td><td>跨前後端、驗收條件多、要改 schema 或多個模組</td><td>Sonnet・high</td></tr>
+        <tr><td>XL</td><td>架構決策、金流、權限、資料遷移、並行；或同一項目失敗兩次</td><td>Opus・high</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul class="plain prose">
+    <li><strong>分級從哪來</strong>：PM 或 Tech lead 建立項目時標複雜度，程式再依關鍵字（migration、payment、auth、concurrency…）、驗收條件數量、牽涉的檔案數往上調。</li>
+    <li><strong>升級</strong>：同一項目測試失敗兩次或 code review 被退回，自動升一級。<strong>降級</strong>：連續幾個同類項目一次通過，下一個同類項目降一級。</li>
+    <li><strong>什麼時候換</strong>：中途換模型會讓 prompt cache 失效，所以只在角色接新項目或輪替時換模型；同一項目進行中只調 effort（是否影響快取列為 S8 實測）。</li>
+    <li><strong>大腦覆寫</strong>：大腦可以用工具指定某個角色或項目的模型，寫成一條決定；token 提醒也會列出各級別的用量，讓大腦調整分級規則。</li>
+    <li><strong>角色下限</strong>：Tech lead 不低於 Sonnet high，全端不低於 Sonnet medium。</li>
+  </ul>
+
+  <figure>
+    <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  PRD["PRD"] --&gt; PM1["PM：拆功能與驗收條件"]
+  PM1 --&gt; UX1["UI/UX：畫面與狀態"]
+  PM1 --&gt; QA1["QA：test case"]
+  UX1 --&gt; G2{"G2 畫面覆蓋"}
+  G2 --&gt;|"有缺口"| PM1
+  QA1 --&gt; G4{"G4 test case 覆蓋"}
+  G4 --&gt;|"有缺口"| PM1
+  G2 --&gt;|"PM 和你確認 UX"| TL1["Tech lead：架構與 task"]
+  TL1 --&gt; FS1["全端：TDD 實作"]
+  FS1 --&gt; TL2["Tech lead：code review"]
+  TL2 --&gt;|"要修"| FS1
+  TL2 --&gt; QA2["QA：執行測試"]
+  G4 --&gt; QA2
+  QA2 --&gt;|"bug"| FS1
+  QA2 --&gt; PM2["PM：驗收"]
+</pre>
+    </div>
+    <figcaption>和你 CLAUDE.md 的產品流程一致：UIX 先行，你確認之後才實作。</figcaption>
+  </figure>
+
+  <h3>關卡全部由程式計算</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>關卡</th><th>檢查什麼</th><th>誰補、誰確認</th></tr></thead>
+      <tbody>
+        <tr><td>G1</td><td>每個功能都有驗收條件</td><td>PM</td></tr>
+        <tr><td>G2</td><td>每個有介面的功能都有畫面和各種狀態</td><td>UI/UX 補，PM 確認，再給你確認 UX</td></tr>
+        <tr><td>G3</td><td>每個功能都拆好 task</td><td>Tech lead</td></tr>
+        <tr><td>G4</td><td>每條驗收條件都有 test case</td><td>QA 補，PM 確認缺口</td></tr>
+        <tr><td>G5</td><td>每個完成的 task 都通過 code review</td><td>Tech lead</td></tr>
+        <tr><td>G6</td><td>test case 全部執行通過、附證據</td><td>QA 執行，PM 驗收</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">覆蓋率用程式比對 <code>prd-tracker.json</code> 算出來，不花 token。只把缺口清單送給該確認的角色，例如「AC-07、AC-09 沒有 test case」，對方不必讀整份清單。</p>
+  <p class="prose">看板直接沿用你 progress-dashboard 技能的 <code>prd-tracker.json</code>（prd_items、acceptance_criteria、test_cases、tasks、gaps、decisions、layers），你現有的產品地圖可以直接讀。設計項目、review 意見這類格式裡沒有的欄位，放在擴充欄位或 <code>.crew/</code>，第 0 階段確認 schema 能不能接受。</p>
+</section>
+
+<section id="talk">
+  <h2>溝通規則</h2>
+  <ol class="plain prose">
+    <li>每則訊息都要掛項目編號（例如 AC-07、TASK-12），自動歸到那個項目的討論串。</li>
+    <li>訊息 400 字以內。更長的全文存到 <code>.crew/notes/</code>，收件人只收到第一段和檔案路徑。</li>
+    <li>角色之間不廣播，只有大腦能發全員通知。</li>
+    <li>例行狀態更新不送給大腦，由 mod 合併成摘要。</li>
+    <li>兩個角色在同一項目上來回超過 6 次、狀態都沒變，就交給大腦處理。</li>
+    <li>你可以用 <code>/crew ask qa …</code> 直接找某個角色，或在面板「待你決定」裡回覆。</li>
+  </ol>
+</section>
+
+<section id="ui">
+  <h2>介面設計稿</h2>
+  <p class="prose">介面有兩部分：輸入框上方一行摘要，以及 <code>/crew</code> 打開的面板（五個分頁）。以下全部是示意資料。第 1 階段會把這些畫面做成 <code>/crew demo</code>，讓你在終端機裡實際點看、確認。</p>
+
+  <figure>
+    <span class="mock-label">設計稿・示意資料・輸入框上方</span>
+    <div class="term"><div class="band"><span class="acc">crew</span> ▸ PM 待命 · UI/UX 畫 SCR-04 · 全端 做 TASK-12 · <span class="warn">QA 2 個缺口待 PM</span> · TL 待命 <span class="dim">│ 今日 412K tok │ 待你決定 1 │ /crew</span></div></div>
+  </figure>
+
+  <figure>
+    <span class="mock-label">設計稿・示意資料・總覽</span>
+    <div class="term">
+      <div class="term-bar"><span>Crew · PRD-001 會員訂閱 v1</span><span class="dim">進度 62%　今日 412K tok</span></div>
+      <div class="term-tabs"><span class="on">總覽</span><span>看板</span><span>討論</span><span>記憶</span><span>Token</span></div>
+      <div class="tgrid roles">
+        <span class="h">角色</span><span class="h">狀態</span><span class="h">正在做</span><span class="h">context／門檻</span><span class="h num">今日 tok</span>
+        <span>PM</span><span class="dim">待命</span><span class="dim">—</span><span class="bar"><i><b style="width:30%"></b></i><span>18K/60K</span></span><span class="num">42K</span>
+        <span>UI/UX</span><span class="acc">進行中</span><span>SCR-04 結帳頁三種狀態</span><span class="bar"><i><b style="width:68%"></b></i><span>41K/60K</span></span><span class="num">96K</span>
+        <span>全端</span><span class="acc">進行中</span><span>TASK-12 訂閱 API</span><span class="bar"><i><b class="hi" style="width:77%"></b></i><span>77K/100K</span></span><span class="num">188K</span>
+        <span>QA</span><span class="warn">等 PM</span><span>AC-07、AC-09 缺 test case</span><span class="bar"><i><b style="width:38%"></b></i><span>23K/60K</span></span><span class="num">51K</span>
+        <span>Tech lead</span><span class="dim">待命</span><span class="dim">—</span><span class="bar"><i><b style="width:20%"></b></i><span>12K/60K</span></span><span class="num">35K</span>
+      </div>
+      <div class="term-block">
+        <div><span class="dim">關卡</span>　<span class="ok">G1 ✓</span>　<span class="ok">G2 ✓</span>　<span class="acc">G3 進行中</span>　<span class="warn">G4 2 個缺口</span>　<span class="dim">G5 —　G6 —</span></div>
+        <div><span class="warn">待你決定</span>　Q-03 年繳方案要不要第一版就做？<span class="dim">（PM 提問，12 分鐘前）　[回覆]</span></div>
+      </div>
+    </div>
+  </figure>
+
+  <figure>
+    <span class="mock-label">設計稿・示意資料・討論（項目討論串）</span>
+    <div class="term">
+      <div class="term-tabs"><span>總覽</span><span>看板</span><span class="on">討論</span><span>記憶</span><span>Token</span></div>
+      <div class="term-bar"><span>AC-07 取消訂閱後仍可使用到期末</span><span class="dim">PRD-001 › 訂閱管理</span></div>
+      <div class="thread">
+        <div class="msg"><span class="acc">QA → PM</span><span>AC-07、AC-09 還沒有 test case。AC-09 是不是已經移出 v1？</span></div>
+        <div class="msg"><span class="acc">PM → QA</span><span>AC-09 移出 v1（DEC-14）。AC-07 請補邊界情況：到期當天取消。</span></div>
+        <div class="msg"><span class="acc">QA</span><span>新增 TC-31、TC-32 → <span class="ok">G4 覆蓋 100%</span></span></div>
+        <div class="msg"><span class="dim">記憶</span><span class="dim">DEC-14 已寫入 · 來源 PM · 引用 AC-09、PRD-001</span></div>
+      </div>
+    </div>
+  </figure>
+
+  <figure>
+    <span class="mock-label">設計稿・示意資料・記憶</span>
+    <div class="term">
+      <div class="term-tabs"><span>總覽</span><span>看板</span><span>討論</span><span class="on">記憶</span><span>Token</span></div>
+      <div class="term-bar"><span>搜尋：年繳</span><span class="dim">QA 目前帶著：DEC-14、MEM-22（640 tok）</span></div>
+      <div class="tgrid mem">
+        <span class="h">編號</span><span class="h">類型</span><span class="h">內容</span><span class="h">來源</span><span class="h">引用</span>
+        <span class="acc">DEC-14</span><span>決定</span><span>年繳方案移出 v1，v1.1 再做</span><span>PM</span><span class="dim">AC-09、PRD-001</span>
+        <span class="acc">MEM-22</span><span>事實</span><span>金流用 Stripe Billing，webhook 要驗簽</span><span>Tech lead</span><span class="dim">ADR-02</span>
+        <span class="acc">LES-05</span><span>教訓</span><span>測試帳號用 seed 檔產生，不手寫</span><span>QA</span><span class="dim">TC-12</span>
+        <span class="dim">DEC-09</span><span class="dim">決定</span><span class="dim">v1 包含年繳（已被 DEC-14 取代）</span><span class="dim">PM</span><span class="dim">AC-09</span>
+      </div>
+    </div>
+  </figure>
+
+  <figure>
+    <span class="mock-label">設計稿・示意資料・Token</span>
+    <div class="term">
+      <div class="term-tabs"><span>總覽</span><span>看板</span><span>討論</span><span>記憶</span><span class="on">Token</span></div>
+      <div class="tgrid tok">
+        <span class="h">角色</span><span class="h num">輸入</span><span class="h num">輸出</span><span class="h num">快取讀</span><span class="h num">快取寫</span><span class="h num">命中率</span><span class="h num">輪替</span>
+        <span>PM</span><span class="num">6K</span><span class="num">4K</span><span class="num">27K</span><span class="num">5K</span><span class="num">82%</span><span class="num">0</span>
+        <span>UI/UX</span><span class="num">11K</span><span class="num">13K</span><span class="num">61K</span><span class="num">11K</span><span class="num">79%</span><span class="num">1</span>
+        <span>全端</span><span class="num">31K</span><span class="num">22K</span><span class="num">85K</span><span class="num">50K</span><span class="num warn">52%</span><span class="num">2</span>
+        <span>QA</span><span class="num">7K</span><span class="num">6K</span><span class="num">32K</span><span class="num">6K</span><span class="num">80%</span><span class="num">0</span>
+        <span>Tech lead</span><span class="num">5K</span><span class="num">4K</span><span class="num">22K</span><span class="num">4K</span><span class="num">81%</span><span class="num">0</span>
+      </div>
+      <div class="term-block">
+        <div><span class="dim">大腦協調佔今日 9%　每次喚醒附上的記憶平均 610 tok</span></div>
+        <div><span class="warn">提醒已送大腦</span>　全端今日佔 46%，快取命中率 52%（兩次喚醒間隔超過快取時效）</div>
+        <div><span class="acc">大腦處置 DEC-15</span>　TASK-12 拆成 12a／12b，全端門檻 100K → 80K</div>
+      </div>
+    </div>
+  </figure>
+</section>
+
+<section id="tokens">
+  <h2>Token：只顯示，大腦自己優化</h2>
+  <p class="prose">照你的決定，不設任何上限，只把用量攤開來看。用量異常時，mod 會用程式判斷並提醒大腦，由大腦決定怎麼調整。</p>
+  <div class="cols">
+    <div class="card">
+      <h3>顯示什麼</h3>
+      <p>每個角色的輸入、輸出、快取讀、快取寫、快取命中率、目前 context、喚醒次數、輪替次數；大腦的協調佔比；每次喚醒附上多少記憶。</p>
+    </div>
+    <div class="card">
+      <h3>什麼時候提醒大腦</h3>
+      <p>某角色佔今日總量超過 40%；快取命中率低於 60%；喚醒時 context 已超過門檻；兩個角色在同一項目上來回超過 6 次；單次工具輸出超過 10K token。同一個條件一小時最多提醒一次。</p>
+    </div>
+    <div class="card">
+      <h3>大腦怎麼調</h3>
+      <p>依序考慮：輪替該角色、降低 effort 或換模型、精簡工具清單、把 task 拆小、調整訊息規則或門檻。每次處置都寫成一條決定，面板會顯示處置前後的對照。</p>
+    </div>
+  </div>
+  <p class="prose">底線：不能為了省 token 跳過關卡、測試或 code review。</p>
+</section>
+
+<section id="files">
+  <h2>repo 裡的檔案</h2>
+  <div class="term" style="border-style:solid;border-color:var(--term-line)"><pre style="margin:0;font-family:inherit;white-space:pre">prd-tracker.json          <span class="dim"># 沿用現有格式：PRD、驗收條件、test case、task、決定</span>
+.crew/
+  crew.json               <span class="dim"># 角色、模型、effort、context 門檻、心跳間隔</span>
+  roles/pm.md …           <span class="dim"># 角色卡，可以直接改</span>
+  threads/AC-07.jsonl     <span class="dim"># 每個項目的討論串</span>
+  memory/memories.jsonl   <span class="dim"># 長期記憶，一行一條</span>
+  handoffs/               <span class="dim"># 輪替時的交接摘要</span>
+  notes/                  <span class="dim"># 超過長度的訊息全文</span>
+  log/2026-10-15.jsonl    <span class="dim"># 流水帳（建議不進 git）</span>
+  usage/2026-10-15.jsonl  <span class="dim"># token 用量（建議不進 git）</span></pre></div>
+  <p class="prose">寫入記憶和流水帳前，先遮罩看起來像金鑰、token、密碼的字串，符合你 CLAUDE.md 的秘密規則。所有寫入都經過 mod 的工具，由同一個程序依序處理，不會有兩個角色同時寫壞同一個檔案。</p>
+</section>
+
+<section id="spike">
+  <h2>第 0 階段實測結果（2026-10-15）</h2>
+  <p class="prose">在 Claude Code 2.1.300 用 headless session 實際跑了 4 輪（主對話與測試角色都用 Haiku），每個事件都記錄成 log。下表的數字都來自那些 log。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>項目</th><th>結果</th><th>對設計的影響</th></tr></thead>
+      <tbody>
+        <tr><td>S1 角色定義與常駐</td><td><span class="tag ok">通過</span> plugin 定義的角色照自己的模型和 effort 執行（Haiku・low，主對話是 medium）。具名 agent 做完會閒置，收到訊息就帶著原本的對話醒來。它是具名的背景 agent，不是 agent team 的 teammate。</td><td>crew 不需要依賴實驗中的 agent team 功能，比較穩定。</td></tr>
+        <tr><td>S2 角色呼叫 mod 的工具</td><td><span class="tag ok">通過</span> 每次呼叫都帶 agentId，看得出是哪個角色。</td><td>看板與記憶工具照原設計。</td></tr>
+        <tr><td>S3 量 context</td><td><span class="tag ok">通過</span> 每次請求都拿得到該角色的輸入、快取讀、快取寫。</td><td>輪替判斷和 token 面板照原設計。</td></tr>
+        <tr><td>S4 輪替</td><td><span class="tag ok">通過（換做法）</span> 用同名重開就會產生新的 agent，舊的自動退役、名字轉給新的。閒置的 agent 不算執行中，TaskStop 會回錯誤，也不需要。</td><td>輪替＝同名重開＋記憶包。</td></tr>
+        <tr><td>S5 訊息附上記憶</td><td><span class="tag spike">原路不通，備案通過</span> mod 送給角色的訊息不會經過 session.receive。但訊息本來就是 mod 送的，記憶直接組進訊息內容即可。</td><td>角色之間不直接用 SendMessage，一律透過 crew 的討論串工具，由 mod 轉送並附上相關記憶。</td></tr>
+        <tr><td>S6 壓縮換成記憶包</td><td><span class="tag spike">部分</span> <code>autoCompactWindow</code> 可設定，但最小值是 100K。替換壓縮內容的 hook 要等 context 真的到 100K 才觸發，這次沒測到。</td><td>全端的 100K 交給引擎；60K 的角色用 S4 的輪替。壓縮 hook 留到第 3 階段實測。</td></tr>
+        <tr><td>S7 角色固定成本</td><td><span class="tag ok">已量測</span> 只有 crew 工具：1.5K；加上讀寫檔與 Bash：4.2K；全部預設工具＋CLAUDE.md：9.7K–13.6K。</td><td>工作角色的固定成本約 6–7K（含角色卡），60K 門檻下約有 53K 可用。</td></tr>
+        <tr><td>S8 動態換模型和 effort</td><td><span class="tag ok">通過</span> 每次請求都能改 effort，沒有額外的快取損失。改模型也會生效，但快取歸零（那次請求的快取讀是 0）。</td><td>確認原設計：只在接新項目或輪替時換模型，進行中只調 effort。</td></tr>
+        <tr><td>新發現：喚醒的快取成本</td><td><span class="tag spike">要處理</span> 叫醒閒置的 agent 時，只有 system prompt（約 0.9K）讀得到快取，其餘對話整份重新寫入快取。也就是每次喚醒的成本約等於 1.25 倍的 context。</td><td>新增「喚醒或重開」策略：context 大、又閒置的角色，改用記憶包重開（便宜）而不是叫醒。角色記得的事情靠記憶系統，不靠長對話。</td></tr>
+        <tr><td>新發現：大腦被通知叫醒</td><td><span class="tag ok">已解決</span> 每個 agent 做完一輪都會通知主對話。沒攔的那輪大腦被叫醒 5 次，每次重讀約 24K；在 prompt.submit 攔下後，被叫醒的次數是 0。</td><td>例行完成通知一律攔下，由 mod 整理成摘要，有需要判斷的事才送給大腦。</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">測試工具的限制：headless 模式下，主對話閒置、背景 agent 也剛好都結束時，執行就會直接結束，所以多步驟的自動化測試要讓主對話保持忙碌。互動模式下 session 一直開著，不受影響。</p>
+</section>
+
+<section id="phases">
+  <h2>開發階段</h2>
+  <p class="prose">先驗證風險最高的 API，再做設計稿給你確認，然後一次完成一條端到端流程。</p>
+  <div class="phases">
+    <div class="phase"><span class="pn">0</span><div class="body"><h3>Spike：實測 8 項 API <span class="tag ok">完成</span></h3><p class="meta">S1 plugin 定義的角色能開成 teammate，模型和 effort 生效 · S2 角色能呼叫 mod 的工具，看得出是誰 · S3 量得到每次請求的 context · S4 能結束角色並同名重開 · S5 送給角色的訊息能附上記憶 · S6 角色壓縮時能換成記憶包 · S7 每個角色的固定成本，以及精簡工具後剩多少 · S8 每次請求改模型或 effort 是否生效、會不會讓 prompt cache 失效</p><p class="meta">交付：spike 報告，每項寫「通過」或「備案」。在隔離的設定目錄裡實際跑。</p></div></div>
+    <div class="phase"><span class="pn">1</span><div class="body"><h3>UIX 設計稿</h3><p class="meta"><code>/crew demo</code> 用示意資料畫出輸入框上方那一行和面板五個分頁的所有狀態，每個畫面都標明「設計稿」。</p><p class="meta">驗證：你在終端機實際操作後確認。</p></div></div>
+    <div class="phase"><span class="pn">2</span><div class="body"><h3>切片 A：PM＋QA</h3><p class="meta">看板工具、讀寫 prd-tracker.json、G1／G4、討論串、token 顯示。用一份小 PRD 跑通「QA 列 test case → 程式算缺口 → PM 確認」。</p><p class="meta">驗證：單元測試，加上真實 session 走一遍。</p></div></div>
+    <div class="phase"><span class="pn">3</span><div class="body"><h3>切片 B：記憶與輪替</h3><p class="meta">記憶分層、檢索、輪替、壓縮 hook、大腦摘要。</p><p class="meta">驗證：記憶抽考、長時間 context 上限測試、開與不開記憶的 token 比較。</p></div></div>
+    <div class="phase"><span class="pn">4</span><div class="body"><h3>切片 C：UI/UX、Tech lead、全端</h3><p class="meta">G2、G3、G5、G6，以及 code review 流程。用一個小功能從 PRD 走到驗收。</p><p class="meta">驗證：端到端實跑，附證據。</p></div></div>
+    <div class="phase"><span class="pn">5</span><div class="body"><h3>常駐與優化</h3><p class="meta">心跳、重開接續、token 提醒和大腦的處置流程。</p><p class="meta">驗證：關掉再開 Claude Code 後接續工作；製造用量異常，確認提醒和處置都有出現。</p></div></div>
+    <div class="phase"><span class="pn">6</span><div class="body"><h3>上架</h3><p class="meta">請沒有參與實作的 agent 做獨立的安全、品質、測試 review，critical 和 important 清零後，收進 marketplace 的自製 mod。</p></div></div>
+    <div class="phase opt"><span class="pn">之後</span><div class="body"><h3>選用</h3><p class="meta">向量檢索（抽考不達標才做）、雲端排程、Notion 同步（會連網，審查等級變 L3）。</p></div></div>
+  </div>
+</section>
+
+<section id="verify">
+  <h2>驗證方式</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>項目</th><th>方法</th><th>標準</th></tr></thead>
+      <tbody>
+        <tr><td>context 上限</td><td>模擬 50 次喚醒的長流程，記錄每次請求的 context</td><td>每個角色都不超過門檻再加一輪的量</td></tr>
+        <tr><td>記憶抽考</td><td>輪替後問 20 題先前的決定</td><td>答對 ≥ 18 題，且引用正確編號</td></tr>
+        <tr><td>記憶注入量</td><td>統計每次喚醒附上的記憶</td><td>≤ 800 token</td></tr>
+        <tr><td>省多少</td><td>同一份小 PRD，開記憶與輪替 vs 不開</td><td>比較總 token 和完成度</td></tr>
+        <tr><td>核心邏輯</td><td>看板、關卡、檢索、遮罩、輪替判斷、用量彙總的單元測試</td><td>覆蓋率 &gt; 95%，含錯誤情況與邊界</td></tr>
+        <tr><td>真實流程</td><td>在真的 Claude Code session 走完每個切片</td><td>附畫面截圖和 log</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="risks">
+  <h2>風險與限制</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>風險</th><th>處理方式</th></tr></thead>
+      <tbody>
+        <tr><td>agent team 還是實驗功能，升級後 API 可能改變</td><td>README 標明支援的版本；升級前重跑 spike 測試</td></tr>
+        <tr><td>電腦關機或 Claude Code 關閉時團隊會停</td><td>狀態全在 repo，重開就接續；需要 24 小時再評估雲端排程</td></tr>
+        <tr><td>輪替時遺失細節</td><td>輪替前補存、抽考把關、角色可以用 memory_search 補拉</td></tr>
+        <tr><td>關鍵字檢索漏找</td><td>用抽考量化，不達標再加向量檢索</td></tr>
+        <tr><td>五個角色同時工作時 token 暴增</td><td>照你的決定只顯示、不設上限，由大腦依提醒調整</td></tr>
+        <tr><td>記憶被不可信的內容污染（例如 repo 裡別人的文件寫了指令）</td><td>每條記憶都標來源；外部來源的內容不會自動變成規則；角色卡寫明記憶是資料不是指令</td></tr>
+        <tr><td>秘密寫進記憶或 log</td><td>寫入前遮罩；流水帳和用量檔建議不進 git</td></tr>
+        <tr><td>這個 mod 本身權限很高（寫檔、開 agent、代你送訊息）</td><td>上架前做獨立的安全審查</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="decide">
+  <div class="decide">
+    <h2>已確認的決定（2026-10-15）</h2>
+    <ol>
+      <li>名稱：<code>crew</code>。</li>
+      <li>模型：不寫死，依任務複雜度動態決定（見「模型與 effort 依任務動態分配」）。</li>
+      <li>context 門檻：一般角色 60K、全端 100K，第 0 階段實測後微調。</li>
+      <li>git：流水帳和用量檔不進 git，其他都進。</li>
+      <li>開發順序：spike → 設計稿 → PM＋QA → 記憶 → 其他角色。</li>
+    </ol>
+  </div>
+</section>
+
+<footer>依據：Claude Code 2.1.299 的 mod 型別定義（<code>$.agent</code>、<code>$.session</code>、<code>turn.step</code>、<code>session.compact</code>）、你的 <code>~/.claude/CLAUDE.md</code> 與 progress-dashboard 技能的 <code>prd-tracker.json</code> 格式。標「待實測」的項目在第 0 階段驗證。</footer>
+
+</div>
