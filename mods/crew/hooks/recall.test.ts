@@ -200,7 +200,7 @@ const PROBES: [string, string[]][] = [
 describe('recall probe', () => {
   test('finds the right memory in the top three for every question', () => {
     const misses = PROBES.filter(([question, expected]) => {
-      const top = searchMemories(MEMORIES, { text: question, limit: 3 }).map(h => h.entry.id)
+      const top = searchMemories(MEMORIES, { text: question, limit: 3 }).filter(h => h.why !== 'pref').map(h => h.entry.id)
       return !expected.some(id => top.includes(id))
     }).map(([question]) => question)
     // 20/20 on 2026-10-15; a miss here is a retrieval regression.

@@ -24,6 +24,9 @@ export type FlowState = {
 
 export const INITIAL: FlowState = { stage: 'idle', round: 0, retries: 0 }
 
+/** The stages in which a role is at work on the PRD: a new start waits, a restart resumes. */
+export const RUNNING: readonly FlowStage[] = ['splitting', 'writing_tests', 'confirming', 'adding_tests']
+
 export type FlowEvent =
   | { type: 'start'; prd: { path: string; size: number; text?: string } }
   /** `inbox`: items whose threads hold messages to that role it has not been woken for yet. */
@@ -233,7 +236,7 @@ export const step = (state: FlowState, event: FlowEvent): StepResult => {
   if (event.type === 'answered') return answered(state, event)
   if (event.type === 'resume') return resume(state, event)
   if (event.type === 'start') {
-    if (state.stage !== 'idle' && state.stage !== 'done' && state.stage !== 'escalated') {
+    if (RUNNING.includes(state.stage)) {
       return { state, actions: [{ type: 'status', text: 'PM＋QA 正在進行，等這一輪完成再開始新的。' }] }
     }
     const tier = tierFor({ kind: 'split_prd', size: event.prd.size, ...(event.prd.text === undefined ? {} : { text: event.prd.text }) })

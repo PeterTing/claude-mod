@@ -148,7 +148,6 @@ describe('/crew demo', () => {
       expect(text).toMatch(/TASK-15/)
       expect(text).toMatch(/XL/)
       expect(text).toMatch(/Opus・xhigh/)
-      expect(text).toMatch(/最高 Opus・max/)
       expect(text).toMatch(/升級/)
       await ui.unmount()
     }

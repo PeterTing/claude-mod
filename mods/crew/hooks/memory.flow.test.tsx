@@ -68,7 +68,7 @@ describe('crew memory', () => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
-    await save($, 'a-qa-9', { type: 'MEM', text: '測試帳號 password=hunter2' })
+    await $.tool.call({ tool: 'mcp__crew__memory_save', tool_use_id: 'm-main', type: 'MEM', text: '測試帳號 password=hunter2' } as never)
     expect(w.disk.get(MEMORIES)).not.toMatch(/hunter2/)
     expect(w.disk.get(LOG)).toMatch(/memory/)
     expect(w.disk.get(LOG)).not.toMatch(/hunter2/)

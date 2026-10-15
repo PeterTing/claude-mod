@@ -31,13 +31,13 @@ export const MAX_TEXT = 300
 /** A memory that references everything would be attached to every message. */
 export const MAX_REFS = 8
 
-const ID = /\b[A-Z][A-Z0-9]{0,7}-\d+\b/g
+const ID = /\b[A-Z][A-Z0-9_]{0,15}-\d+\b/g
 
 /** The board, test case, question and memory ids a text mentions, in order, once each. */
 export const idsIn = (text: string): string[] => [...new Set(text.match(ID) ?? [])]
 
 const CJK = '\\u3040-\\u30FA\\u30FC-\\u30FF\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF\\uAC00-\\uD7AF'
-const TOKEN = new RegExp(`\\b([A-Z][A-Z0-9]{0,7}-\\d+)\\b|([A-Za-z0-9]+)|([${CJK}]+)`, 'g')
+const TOKEN = new RegExp(`\\b([A-Z][A-Z0-9_]{0,15}-\\d+)\\b|([A-Za-z0-9]+)|([${CJK}]+)`, 'g')
 
 /** Words to match on: ids whole, English lower-cased, Chinese as overlapping pairs of characters. */
 export const tokensOf = (text: string): string[] => {
@@ -56,10 +56,13 @@ export const tokensOf = (text: string): string[] => {
 
 const MASK = '[已遮罩]'
 
+/** Whole values that are secrets whatever surrounds them. */
 const SECRETS: readonly RegExp[] = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+  // To the end line, or to the end of the text when the key was cut short.
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
   /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g,
   /\bsk-[A-Za-z0-9_-]{16,}/g,
+  /\bsk_(?:live|test)_[A-Za-z0-9]{10,}/g,
   /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
   /\bxox[abprs]-[A-Za-z0-9-]{10,}/g,
@@ -67,11 +70,26 @@ const SECRETS: readonly RegExp[] = [
   /\bAIza[0-9A-Za-z_-]{30,}/g,
 ]
 
-const ASSIGNED = /((?<![A-Za-z])(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret)|密碼|金鑰|密鑰|權杖)(\s*[:=：＝]\s*)([^\s，。、；,;]+)/gi
+/** Secrets inside a known shape: the shape stays, the secret goes. */
+const SHAPED: readonly [RegExp, string][] = [
+  [/("(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key)"\s*:\s*")(?:[^"\\]|\\.)+(")/gi, `$1${MASK}$2`],
+  [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@/]+(@)/gi, `$1${MASK}$2`],
+  [/(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}/g, `$1${MASK}`],
+  [/(https:\/\/hooks\.slack\.com\/services\/)[A-Za-z0-9/]+/g, `$1${MASK}`],
+]
+
+/** `password: x`, `密碼是 x`: x is masked when it looks like a secret, not a word in a rule ("密碼：至少 8 個字元"). */
+const ASSIGNED =
+  /((?<![A-Za-z])(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret)|密碼|金鑰|密鑰|權杖)(\s*(?:[:=：＝]|是|為)\s*["']?)([\x21\x23-\x26\x28-\x2B\x2D-\x3A\x3D\x3F-\x7E]+)/gi
+
+const looksSecret = (value: string): boolean => value.length >= 6 && /[\d!@#$%^&*_+=-]/.test(value)
 
 /** The text with anything that looks like a key, token or password masked. */
 export const redact = (text: string): string =>
-  SECRETS.reduce((s, re) => s.replace(re, MASK), text).replace(ASSIGNED, (_, key: string, sep: string) => `${key}${sep}${MASK}`)
+  SHAPED.reduce((s, [re, to]) => s.replace(re, to), SECRETS.reduce((s, re) => s.replace(re, MASK), text)).replace(
+    ASSIGNED,
+    (all: string, key: string, sep: string, value: string) => (looksSecret(value) ? `${key}${sep}${MASK}` : all),
+  )
 
 /** The next id of a type after the highest of that type in use. */
 export const nextMemoryId = (type: MemoryType, taken: readonly string[]): string => {
@@ -150,8 +168,8 @@ const RELATED = 5
 /**
  * The memories that bear on a text, best first: those referencing an id it
  * mentions (or that id's feature), then those sharing at least two of its
- * words or one long English term, then the person's preferences. Superseded
- * ones never come back.
+ * words or one long English term, up to the limit; then the person's
+ * preferences, always. Superseded ones never come back.
  */
 export const searchMemories = (list: readonly MemoryEntry[], query: SearchQuery): Hit[] => {
   const docs = list.filter(
@@ -191,13 +209,22 @@ export const searchMemories = (list: readonly MemoryEntry[], query: SearchQuery)
     if (link > 0) return { entry: m, score: link + match, why: 'link' }
     // One shared Chinese pair is too weak to call related; one long English term is specific enough.
     if (shared >= 2 || specific) return { entry: m, score: match, why: 'match' }
-    return { entry: m, score: m.type === 'PREF' ? 0.01 : 0, why: 'pref' }
+    return { entry: m, score: 0, why: 'pref' }
   })
-  return hits
+  const related = hits
     .filter(h => h.score > 0)
     .sort((a, b) => b.score - a.score || b.entry.t - a.entry.t)
     .slice(0, query.limit ?? 8)
+  // The person's preferences go with every search, outside the limit: they apply to all work.
+  const prefs = hits
+    .filter(h => h.entry.type === 'PREF' && !related.some(r => r.entry.id === h.entry.id))
+    .sort((a, b) => b.entry.t - a.entry.t)
+    .slice(0, MAX_PREFS)
+    .map(h => ({ ...h, score: 0, why: 'pref' as const }))
+  return [...related, ...prefs]
 }
+
+const MAX_PREFS = 5
 
 const WIDE = /[⺀-鿿가-힯豈-﫿︰-﹏＀-￯]/gu
 
@@ -208,18 +235,26 @@ export const estimateTokens = (text: string): number => {
   return Math.max(0, Math.ceil((wide * 6) / 5 + (other * 2) / 7 - 1e-9))
 }
 
-/** One line per memory, best first, as many as fit the budget. */
+const lineOf = (h: Hit): string => `- ${h.entry.id}（${TYPE_NAMES[h.entry.type]}・${h.entry.source}）：${h.entry.text}`
+
+/**
+ * One line per memory, as many as fit the budget: the person's preferences
+ * are placed first and listed last, the related memories fill what is left.
+ */
 export const packMemories = (hits: readonly Hit[], budget = 800): { text: string; ids: string[]; tokens: number } => {
-  const lines: string[] = []
-  const ids: string[] = []
-  for (const h of hits) {
-    const line = `- ${h.entry.id}（${TYPE_NAMES[h.entry.type]}・${h.entry.source}）：${h.entry.text}`
-    if (estimateTokens([...lines, line].join('\n')) > budget) break
-    lines.push(line)
-    ids.push(h.entry.id)
+  const prefs: Hit[] = []
+  for (const h of hits.filter(x => x.why === 'pref')) {
+    if (estimateTokens([...prefs, h].map(lineOf).join('\n')) > budget) break
+    prefs.push(h)
   }
-  const text = lines.join('\n')
-  return { text, ids, tokens: estimateTokens(text) }
+  const others: Hit[] = []
+  for (const h of hits.filter(x => x.why !== 'pref')) {
+    if (estimateTokens([...others, h, ...prefs].map(lineOf).join('\n')) > budget) break
+    others.push(h)
+  }
+  const chosen = [...others, ...prefs]
+  const text = chosen.map(lineOf).join('\n')
+  return { text, ids: chosen.map(h => h.entry.id), tokens: estimateTokens(text) }
 }
 
 const isEntry = (v: unknown): v is MemoryEntry => {

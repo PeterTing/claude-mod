@@ -78,6 +78,10 @@ export type CrewLive = {
   asked: number
   /** Memories attached to starts and wakes: how many times, how many tokens in all. */
   injected: { count: number; tokens: number }
+  /** Agents a reset let go: their notices are still crew's to take, their writes are refused. */
+  retired: string[]
+  /** The day `usage` and `tiers` count. */
+  usageDay: string
 }
 
 declare module 'claude-code' {

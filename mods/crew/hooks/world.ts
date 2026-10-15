@@ -18,7 +18,19 @@ export type Spawn = { subagentType: string; name?: string; description: string; 
 
 export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
   const clock = mock.clock(on, { now: NOW })
+  /** crew's own store, which outlives sessions and is not in the repo. */
+  const store = new Map<string, unknown>()
+  on('store.get', (_$, e) => ({ value: store.get((e as { key: string }).key) }))
+  on('store.set', (_$, e) => {
+    const { key, value } = e as { key: string; value: unknown }
+    store.set(key, JSON.parse(JSON.stringify(value)))
+    return { value: undefined }
+  })
   const disk = new Map<string, string>([[`${ROOT}/docs/PRD.md`, PRD]])
+  /** Paths that are symbolic links, and where they lead. */
+  const links = new Map<string, string>()
+  /** Every prompt that reached the bottom, as the hooks left it. */
+  const submitted: { text: string; context?: readonly string[]; kind: string }[] = []
   const spawned: Spawn[] = []
   const sent: { to: string; text: string }[] = []
   const toasts: string[] = []
@@ -33,6 +45,12 @@ export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
   on('fs.write', (_$, e) => {
     disk.set(e.path, e.text)
     return { value: undefined }
+  })
+  on('fs.stat', (_$, e) => {
+    const isDir = [...disk.keys()].some(p => p.startsWith(`${e.path}/`))
+    if (!disk.has(e.path) && !isDir && !links.has(e.path)) return { deny: `ENOENT ${e.path}` }
+    const real = links.get(e.path) ?? e.path
+    return { value: { kind: isDir ? ('dir' as const) : ('file' as const), size: 0, mtimeMs: 0, isLink: links.has(e.path), ...(e.resolve ? { realPath: real } : {}) } }
   })
   on('fs.list', (_$, e) => {
     const dir = e.path.endsWith('/') ? e.path : `${e.path}/`
@@ -94,12 +112,13 @@ export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
   on('agent.offer', () => ({ isOffered: true }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('prompt.submit', (_$, e) => {
+    submitted.push({ text: e.text, kind: e.origin.kind, ...(e.context === undefined ? {} : { context: e.context }) })
     if (e.origin.kind === 'plugin') prompts.push(e.text)
     return { text: e.text }
   })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   const board = () => JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? 'null') as Tracker | null
-  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, clock }
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, clock, links, submitted, store }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)

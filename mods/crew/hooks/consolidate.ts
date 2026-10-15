@@ -10,6 +10,8 @@ const NAMES: Record<MemoryType, string> = { DEC: '決定', MEM: '事實', LES: '
 
 const LOG_BUDGET = 24_000
 
+const MAX_SAVED = 150
+
 export const CONSOLIDATION_SYSTEM = '你負責整理一個產品團隊的長期記憶。只輸出 JSON 陣列，不要其他文字。'
 
 export const consolidationPrompt = ({ day, log, memories }: { day: string; log: readonly string[]; memories: readonly MemoryEntry[] }): string => {
@@ -20,7 +22,11 @@ export const consolidationPrompt = ({ day, log, memories }: { day: string; log: 
     kept.unshift(line)
     size += line.length + 1
   }
-  const saved = memories.filter(m => m.supersededBy === undefined).map(m => `- ${m.id}（${NAMES[m.type]}）：${m.text}`)
+  // The latest ones: enough to avoid repeats without the prompt growing with the repo.
+  const saved = memories
+    .filter(m => m.supersededBy === undefined)
+    .slice(-MAX_SAVED)
+    .map(m => `- ${m.id}（${NAMES[m.type]}）：${m.text}`)
   return [
     `下面是 crew 團隊 ${day} 的流水帳，以及目前存著的記憶。找出流水帳裡之後的工作還會用到、但記憶裡還沒有的事：事實或限制（MEM）、教訓（LES）。`,
     [

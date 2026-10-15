@@ -55,7 +55,7 @@ export const AGENT_SPECS: Record<CrewRole, { name: string; description: string; 
     name: 'qa',
     description: 'crew 的 QA：為每條驗收條件寫 test case。只由 crew 啟動。',
     prompt: QA_CARD,
-    tools: ['Read', TOOLS.read, TOOLS.write, TOOLS.post, TOOLS.thread, TOOLS.save, TOOLS.search],
+    tools: ['Read', TOOLS.read, TOOLS.write, TOOLS.post, TOOLS.thread, TOOLS.ask, TOOLS.save, TOOLS.search],
     model: 'sonnet',
     effort: 'medium',
     omitClaudeMd: true,
@@ -145,11 +145,11 @@ export const TOOL_SPECS = [
   {
     name: 'crew',
     description:
-      '指揮 crew 產品團隊（PM、QA），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM 或 QA；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context。角色的回覆和要使用者決定的事會再通知你。',
+      '指揮 crew 產品團隊（PM、QA），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM 或 QA；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作。角色的回覆和要使用者決定的事會再通知你。',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { enum: ['start', 'ask', 'answer', 'status', 'remember', 'recall', 'rotate'] },
+        action: { enum: ['start', 'ask', 'answer', 'status', 'remember', 'recall', 'rotate', 'resume'] },
         path: { type: 'string', description: 'PRD 檔案路徑（start）' },
         role: { enum: ['pm', 'qa'], description: 'ask、rotate 的對象' },
         question: { type: 'string', description: '要回答的問題編號，例如 Q-01（answer）' },

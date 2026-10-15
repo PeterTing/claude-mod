@@ -31,6 +31,10 @@ describe('idsIn', () => {
   test('finds each id once and ignores words that only look close', () => {
     expect(idsIn('AC-7 與 AC-7、utf-8 和 covid-19')).toEqual(['AC-7'])
   })
+
+  test('takes the prefixes a schema may define, with underscores', () => {
+    expect(idsIn('見 SB_PRD-012 和 SMK-3')).toEqual(['SB_PRD-012', 'SMK-3'])
+  })
 })
 
 describe('tokensOf', () => {
@@ -56,18 +60,38 @@ describe('redact', () => {
     expect(redact('用 sk-ant-api03-abcdefghijklmnopqrstuvwxyz 呼叫')).toBe('用 [已遮罩] 呼叫')
     expect(redact('ghp_abcdefghijklmnopqrstuvwxyz0123456789 推')).toBe('[已遮罩] 推')
     expect(redact('AKIAABCDEFGHIJKLMNOP')).toBe('[已遮罩]')
+    expect(redact('sk_live_abcdef1234567890 收款')).toBe('[已遮罩] 收款')
     expect(redact('password: hunter2 之後')).toBe('password: [已遮罩] 之後')
     expect(redact('密碼＝abc123')).toBe('密碼＝[已遮罩]')
-    expect(redact('API_KEY=xyz')).toBe('API_KEY=[已遮罩]')
+    expect(redact('密碼是 hunter2xyz')).toBe('密碼是 [已遮罩]')
+    expect(redact('API_KEY=xyz123abc')).toBe('API_KEY=[已遮罩]')
+    expect(redact('token="s3cr3t-value"')).toBe('token="[已遮罩]"')
   })
 
-  test('masks private keys and JWTs', () => {
+  test('masks secrets in JSON, URLs and headers', () => {
+    expect(redact('{"password": "hunter2xyz", "user": "amy"}')).toBe('{"password": "[已遮罩]", "user": "amy"}')
+    expect(redact('postgres://admin:S3cretPass@db:5432/app')).toBe('postgres://admin:[已遮罩]@db:5432/app')
+    expect(redact('Authorization: Bearer abc.def-ghi_123456')).toBe('Authorization: Bearer [已遮罩]')
+    expect(redact('https://hooks.slack.com/services/T000/B000/XXXXXXXX')).toBe('https://hooks.slack.com/services/[已遮罩]')
+  })
+
+  test('masks private keys and JWTs, even a key cut before its end line', () => {
     expect(redact('-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----')).toBe('[已遮罩]')
+    expect(redact('前 -----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\nabc')).toBe('前 [已遮罩]')
     expect(redact('token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc')).toBe('token [已遮罩]')
   })
 
-  test('leaves ordinary text alone', () => {
+  test('leaves ordinary text alone, including rules about passwords', () => {
     expect(redact('登入用 Google OAuth，token 有效期 1 小時')).toBe('登入用 Google OAuth，token 有效期 1 小時')
+    expect(redact('密碼：至少 8 個字元')).toBe('密碼：至少 8 個字元')
+    expect(redact('token: JWT 格式')).toBe('token: JWT 格式')
+    expect(redact('金鑰：放在 Secret Manager')).toBe('金鑰：放在 Secret Manager')
+    expect(redact('password: required')).toBe('password: required')
+  })
+
+  test('keeps a JSON line valid', () => {
+    const line = redact(JSON.stringify({ t: 1, text: 'password=hunter2x', from: 'pm' }))
+    expect((JSON.parse(line) as { from: string }).from).toBe('pm')
   })
 })
 
@@ -106,7 +130,7 @@ describe('addMemory', () => {
   })
 
   test('masks secrets before saving', () => {
-    const r = addMemory([], { type: 'MEM', text: '測試帳號 password=abc', source: 'qa' }, ctx)
+    const r = addMemory([], { type: 'MEM', text: '測試帳號 password=abc123', source: 'qa' }, ctx)
     expect(r.ok && r.entry.text).toBe('測試帳號 password=[已遮罩]')
   })
 
@@ -233,6 +257,25 @@ describe('searchMemories', () => {
 
   test('returns nothing for an empty store', () => {
     expect(searchMemories([], { text: 'AC-001' })).toEqual([])
+  })
+})
+
+describe('preferences', () => {
+  test('come with every search, beyond the limit of related memories', () => {
+    const many = Array.from({ length: 9 }, (_, i) => entry({ id: `MEM-${String(i + 1).padStart(3, '0')}`, text: `驗收條件第 ${i} 條要寫清楚` }))
+    const pref = entry({ id: 'PREF-001', type: 'PREF', text: '回覆用繁體中文', source: 'person', t: 0 })
+    const hits = searchMemories([...many, pref], { text: '為每一條驗收條件寫清楚 test case', limit: 8 })
+    expect(hits.filter(h => h.why === 'match')).toHaveLength(8)
+    expect(hits.at(-1)).toMatchObject({ entry: { id: 'PREF-001' }, why: 'pref' })
+  })
+
+  test('are packed first when the budget is tight', () => {
+    const hits = [
+      { entry: entry({ id: 'MEM-001', text: '字'.repeat(60) }), score: 9, why: 'match' as const },
+      { entry: entry({ id: 'PREF-001', type: 'PREF', text: '用新台幣', source: 'person' }), score: 0, why: 'pref' as const },
+    ]
+    expect(packMemories(hits, 40).ids).toEqual(['PREF-001'])
+    expect(packMemories(hits, 400).ids).toEqual(['MEM-001', 'PREF-001'])
   })
 })
 

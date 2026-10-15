@@ -331,7 +331,7 @@ function Board({ el, snap }: { el: Elements; snap: Snapshot }) {
           </Box>
         )
       })}
-      <Text dimColor>模型和 context 門檻依項目複雜度決定：S Sonnet・medium 60K · M Sonnet・high 100K · L Opus・high 160K · XL Opus・xhigh 256K；失敗兩次升一級，最高 Opus・max</Text>
+      <Text dimColor>模型和 context 門檻依項目複雜度決定：S Sonnet・medium 60K · M Sonnet・high 100K · L Opus・high 160K · XL Opus・xhigh 256K</Text>
     </Box>
   )
 }
