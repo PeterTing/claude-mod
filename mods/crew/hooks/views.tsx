@@ -291,7 +291,7 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
                 {d.id} {d.question}
               </Text>
               <Text dimColor>
-                {d.from === 'crew' ? 'crew' : ROLE_NAMES[d.from]} 提問 · {d.age}
+                {d.from === 'crew' ? 'crew' : d.from === 'brain' ? '大腦' : ROLE_NAMES[d.from]} 提問 · {d.age}
               </Text>
               <Button key={`reply-${d.id}`} label="回覆" onPress={() => act.reply(d.id)} />
             </Box>

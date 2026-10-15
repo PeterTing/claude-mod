@@ -549,3 +549,36 @@ describe('two roles finishing at once', () => {
     expect((await $.command.run(command('status'))).text).toMatch(/confirming/)
   })
 })
+
+describe('the brain’s own questions', () => {
+  test('answering one never takes a waiting flow on', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e' }])
+    for (let i = 0; i < 3; i++) {
+      await done($, 'a-qa-2')
+      await done($, 'a-pm-1')
+    }
+    await done($, 'a-qa-2')
+    expect((await $.command.run(command('status'))).text).toMatch(/escalated[\s\S]*待你決定 1/)
+    await call($, 'ask_person', { question: '要不要順便加深色模式？' })
+    const sent = w.sent.length
+    await $.command.run(command('answer Q-02 不用'))
+    expect((await $.command.run(command('status'))).text).toMatch(/escalated[\s\S]*待你決定 1/)
+    expect(w.sent).toHaveLength(sent)
+  })
+
+  test('a flow the person leads that stops does not wake the brain', async ($, on) => {
+    const w = world($, on, { denySpawn: '不允許', denySpawnOf: 'crew:qa' })
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    expect((await notice($, 'a-pm-1')).drop).toBeDefined()
+    await w.clock.advance(61_000)
+    expect(w.prompts).toEqual([])
+  })
+})

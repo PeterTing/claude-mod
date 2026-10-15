@@ -39,7 +39,8 @@ export type CrewQuestion = {
   id: string
   question: string
   item?: string
-  from: 'pm' | 'qa' | 'crew'
+  /** Who asked: a role, the flow itself (`crew`), or the main conversation (`brain`). */
+  from: 'pm' | 'qa' | 'crew' | 'brain'
   status: 'open' | 'answered'
   answer?: string
   t: number

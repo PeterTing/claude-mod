@@ -82,7 +82,7 @@ export type Gate = {
 }
 
 /** A question waiting for the person, from a role or from crew itself. */
-export type Decision = { id: string; question: string; from: RoleId | 'crew'; age: string }
+export type Decision = { id: string; question: string; from: RoleId | 'crew' | 'brain'; age: string }
 
 export type Message = { from: string; text: string; kind?: 'message' | 'memory' | 'route' }
 
