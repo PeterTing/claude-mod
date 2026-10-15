@@ -15,6 +15,12 @@ const askPerson = ($: Engine, agentId: string, question: string, item?: string) 
 
 const STATE = `${ROOT}/.crew/state.json`
 
+/** The engine's notice that a role's run ended, as it reaches the main conversation; what it becomes. */
+const notice = async ($: Engine, agentId: string) => {
+  const r = await $.prompt.submit({ text: `<task-notification><task-id>${agentId}</task-id></task-notification>`, wait: false, origin: { kind: 'task-notification' }, isMeta: true } as never)
+  return r as { text?: string; drop?: string }
+}
+
 describe('the brain runs crew', () => {
   test('gives the main conversation a crew tool', async ($, on) => {
     const w = world($, on)
@@ -30,28 +36,30 @@ describe('the brain runs crew', () => {
     expect(w.spawned[0]?.subagentType).toBe('crew:pm')
 
     await askPerson($, 'a-pm-1', '年繳要不要做？', 'PRD-001')
-    // Sent when the PM's run ends: a prompt cannot be submitted from inside a tool call.
-    expect(w.prompts).toEqual([])
     await done($, 'a-pm-1')
+    // It rides on the engine's notice that the PM's run ended, instead of a prompt of crew's own.
+    expect(w.prompts).toEqual([])
+    const relayed = await notice($, 'a-pm-1')
+    expect(relayed.drop).toBeUndefined()
+    expect(relayed.text).toMatch(/^\[crew\] PM 有一件事要使用者決定（Q-01）：年繳要不要做？/)
+    expect(relayed.text).toMatch(/answer/)
     expect(w.logs).toEqual([])
-    expect(w.prompts.at(-1)).toMatch(/^\[crew\] PM 有一件事要使用者決定（Q-01）：年繳要不要做？/)
-    expect(w.prompts.at(-1)).toMatch(/answer/)
 
     const a = await crew($, { action: 'answer', question: 'Q-01', text: '這一版不做' })
     expect(String(a.result)).toMatch(/轉給 PM/)
     expect(w.sent.at(-1)?.to).toBe('a-pm-1')
   })
 
-  test('sends what is waiting for the brain when its own turn ends, too', async ($, on) => {
+  test('leaves the notes for the role’s notice even when the brain’s own turn ends first', async ($, on) => {
+    // A prompt of crew's own queued behind a notice crew then drops is shown but never answered.
     const w = world($, on)
     await start($)
     await crew($, { action: 'start', path: 'docs/PRD.md' })
     await askPerson($, 'a-pm-1', '年繳要不要做？')
-    await $.turn.complete({ answer: '好', durationMs: 5, isAborted: false, turnId: 'turn-main', reason: 'answer' } as never)
-    expect(w.prompts).toHaveLength(1)
-    expect(w.prompts[0]).toMatch(/Q-01/)
     await done($, 'a-pm-1')
-    expect(w.prompts).toHaveLength(1)
+    await $.turn.complete({ answer: '好', durationMs: 5, isAborted: false, turnId: 'turn-main', reason: 'answer' } as never)
+    expect(w.prompts).toEqual([])
+    expect((await notice($, 'a-pm-1')).text).toMatch(/Q-01/)
   })
 
   test('tells the brain when the work it started is done', async ($, on) => {
@@ -62,7 +70,10 @@ describe('the brain runs crew', () => {
     await done($, 'a-pm-1')
     await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: '全部', steps: ['s'], expected: 'e' }])
     await done($, 'a-qa-2')
-    expect(w.prompts.at(-1)).toMatch(/^\[crew\] PM＋QA 完成/)
+    const r = await notice($, 'a-qa-2')
+    expect(r.text).toMatch(/^\[crew\] PM＋QA 完成/)
+    // Brief, and decisions go where the roles will see them.
+    expect(r.text).toMatch(/一兩句話[\s\S]*記進團隊記憶/)
   })
 
   test('passes a role’s reply to the brain that asked', async ($, on) => {
@@ -74,7 +85,12 @@ describe('the brain runs crew', () => {
     const r = await crew($, { action: 'ask', role: 'pm', text: '為什麼拆成兩個功能？' })
     expect(String(r.result)).toMatch(/ASK-01/)
     await done($, 'a-pm-1', '因為是兩件使用者感受得到的事')
+    // No notice came (a teammate reports through its mailbox): crew sends its own prompt a minute later.
+    expect(w.prompts).toEqual([])
+    await w.clock.advance(61_000)
     expect(w.prompts.at(-1)).toMatch(/^\[crew\] PM 回覆了 ASK-01：因為是兩件使用者感受得到的事/)
+    expect((await notice($, 'a-pm-1')).drop).toBeDefined()
+    expect(w.prompts).toHaveLength(1)
   })
 
   test('keeps work the person started with /crew to toasts, without waking the brain', async ($, on) => {

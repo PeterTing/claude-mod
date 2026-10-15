@@ -17,7 +17,7 @@ export const PRD = '# 會員訂閱\n\n使用者可以選月繳方案，可以隨
 export type Spawn = { subagentType: string; name?: string; description: string; model?: string; prompt: string }
 
 export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
-  mock.clock(on, { now: NOW })
+  const clock = mock.clock(on, { now: NOW })
   const disk = new Map<string, string>([[`${ROOT}/docs/PRD.md`, PRD]])
   const spawned: Spawn[] = []
   const sent: { to: string; text: string }[] = []
@@ -99,7 +99,7 @@ export const world = (engine: Engine, on: On, { deliver = true } = {}) => {
   })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   const board = () => JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? 'null') as Tracker | null
-  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs }
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, clock }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)

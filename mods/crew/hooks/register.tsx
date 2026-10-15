@@ -444,21 +444,43 @@ async function saveState($: any) {
   await $.fs.write(`${files.crew}/state.json`, `${JSON.stringify({ prdPath: l.prdPath, flow: l.flow, questions: l.questions, lead: l.lead }, null, 2)}\n`)
 }
 
-/** Notes for the main conversation about work it started, sent together when a turn ends. */
-const brainQueue: string[] = []
+/** How the brain should take a note: pass it on briefly, and put decisions where the roles will see them. */
+const BRAIN_NOTE =
+  '（crew 的通知：用一兩句話轉告使用者就好，不用另外查證；要細節時再用 board_read、thread_read。你或使用者做了決定，用 crew 工具的 answer 或 remember 記進團隊記憶，角色才會知道。）'
+
+/**
+ * Notes for the main conversation about work it started. They ride on the
+ * engine's notice that a role's run ended, which crew would otherwise drop;
+ * with no notice they go out as crew's own prompt after `BRAIN_TICKS` ticks.
+ *
+ * Measured: when the engine runs queued prompts together and the first one is
+ * dropped, the ones after it are shown but never answered. So crew never puts
+ * a prompt of its own behind a role's notice it is about to drop.
+ */
+const brain = { queue: [] as string[], ticks: 0 }
+
+/** Ticks of `BRAIN_TICK_MS` a note waits for a role's notice before crew sends it itself. */
+const BRAIN_TICK_MS = 15_000
+const BRAIN_TICKS = 4
 
 function tellBrain(text: string) {
-  brainQueue.push(text)
+  brain.queue.push(text)
+}
+
+/** The queued notes as one message, emptying the queue; undefined with nothing queued. */
+function takeBrainNotes(): string | undefined {
+  if (brain.queue.length === 0) return undefined
+  brain.ticks = 0
+  return `[crew] ${brain.queue.splice(0).join('\n\n')}\n\n${BRAIN_NOTE}`
 }
 
 /**
- * Sends the queued notes as one prompt, which runs once the conversation is
- * idle. Only from a turn's end: a prompt submitted from a tool call would wait
- * on the turn that call holds.
+ * Sends the queued notes as crew's own prompt, which runs once the conversation
+ * is idle. Never from a tool call: the prompt would wait on the turn the call holds.
  */
 function flushBrain($: any) {
-  if (brainQueue.length === 0) return
-  const text = `[crew] ${brainQueue.splice(0).join('\n\n')}`
+  const text = takeBrainNotes()
+  if (text === undefined) return
   void Promise.resolve($.prompt.submit({ text })).catch((err: unknown) => $.ui.log(`crew: could not tell the brain: ${String(err)}`))
 }
 
@@ -481,6 +503,7 @@ async function resumeOnStart($: any) {
     }
   }
   if (open > 0) $.ui.toast(`crew：有 ${open} 件事等你決定（/crew status）`)
+  flushBrain($)
 }
 
 async function saveUsage($: any) {
@@ -649,6 +672,13 @@ export const register: Register = on => {
       booted()
     }
     await resumeOnStart($)
+    // Notes no role notice came for go out on their own after a minute.
+    brain.ticks = 0
+    $.clock.every(BRAIN_TICK_MS, () => {
+      if (brain.queue.length === 0) return
+      brain.ticks += 1
+      if (brain.ticks >= BRAIN_TICKS) flushBrain($)
+    })
     return next(e)
   })
 
@@ -808,7 +838,11 @@ export const register: Register = on => {
     const kind = e.origin.kind
     if (kind === 'task-notification' || kind === 'peer' || kind === 'peer-send-message' || kind === 'coordinator') {
       const ids = Object.keys((await read($, live)).agents)
-      if (ids.some(id => e.text.includes(id)) || CREW_MENTION.test(e.text)) return { drop: 'crew 自己處理角色的回報' }
+      if (ids.some(id => e.text.includes(id)) || CREW_MENTION.test(e.text)) {
+        // A role's notice the brain has news waiting for carries that news instead.
+        const notes = takeBrainNotes()
+        return notes === undefined ? { drop: 'crew 自己處理角色的回報' } : next({ ...e, text: notes })
+      }
     }
     return next(e)
   })
@@ -860,11 +894,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const before = await read($, live)
     const role = e.agentId === undefined ? undefined : before.agents[e.agentId]
-    if (role === undefined) {
-      // The brain's own turn: anything its crew tool calls left for it goes out now.
-      if (e.agentId === undefined) flushBrain($)
-      return next(e)
-    }
+    if (role === undefined) return next(e)
     // An agent crew has since replaced finishing late changes nothing about the role.
     if (before.roles[role].agentId !== e.agentId) return next(e)
     const asking = before.asks[role]
@@ -887,7 +917,7 @@ export const register: Register = on => {
     const board = await loadBoard($, true)
     if (board !== null) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l) })
     await consolidateDue($)
-    flushBrain($)
+    // Notes for the brain wait for the engine's notice of this run, which follows.
     return done
   })
 

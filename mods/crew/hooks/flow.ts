@@ -84,6 +84,9 @@ const gapsToPm = (gaps: readonly GateGap[]): string =>
 const gapsToQa = (gaps: readonly GateGap[]): string =>
   [`PM 確認以下 ${gaps.length} 條驗收條件要做，請補上 test case（PM 的說明在各自的討論串，用 thread_read 看）：`, list(gaps)].join('\n')
 
+const resumeToQa = (gaps: readonly GateGap[]): string =>
+  [`Claude Code 重開過，test case 寫到一半：以下 ${gaps.length} 條驗收條件還沒有 test case，請補上（先用 board_read 看已經寫好的，不要重複）：`, list(gaps)].join('\n')
+
 const threadNotice = (from: string, items: readonly string[]): string =>
   `${from} 在這些項目的討論串留言給你：${items.join('、')}。請先用 thread_read 看完再處理：要回覆就用 thread_post，要調整看板就用 board_write。做完用一句話回報。`
 
@@ -212,7 +215,7 @@ const resume = (state: FlowState, event: Extract<FlowEvent, { type: 'resume' }>)
       if (g4.gaps.length === 0) return afterTests(state, event.board)
       return {
         state,
-        actions: [{ type: 'message', role: 'qa', item: g4.gaps[0]?.id, text: gapsToQa(g4.gaps), route: routeFor('qa', tierFor({ kind: 'add_tests', size: g4.gaps.length })) }],
+        actions: [{ type: 'message', role: 'qa', item: g4.gaps[0]?.id, text: resumeToQa(g4.gaps), route: routeFor('qa', tierFor({ kind: 'add_tests', size: g4.gaps.length })) }],
       }
     case 'confirming':
       if (g4.gaps.length === 0) return afterConfirm(state, event.board)

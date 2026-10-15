@@ -239,8 +239,8 @@ describe('resume', () => {
     const r = resume(at('writing_tests'), board(SPLIT, [tc(['AC-001'])]))
     expect(r.state.stage).toBe('writing_tests')
     expect(r.actions[0]).toMatchObject({ type: 'message', role: 'qa', item: 'AC-002' })
-    expect((r.actions[0] as { text: string }).text).toMatch(/AC-002 可以看到價格/)
-    expect((r.actions[0] as { text: string }).text).not.toMatch(/AC-001/)
+    expect((r.actions[0] as { text: string }).text).toMatch(/重開過[\s\S]*AC-002 可以看到價格/)
+    expect((r.actions[0] as { text: string }).text).not.toMatch(/AC-001|PM 確認/)
   })
 
   test('finishes a test round QA had completed', () => {
