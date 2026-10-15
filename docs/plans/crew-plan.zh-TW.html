@@ -165,7 +165,7 @@ footer { font-size: var(--step--1); color: var(--muted); border-top: 1px solid v
   <h1>Crew：常駐的產品開發 agent 團隊</h1>
   <p class="lede">PM、UI/UX 設計師、全端工程師、QA 工程師、Tech lead 五個角色常駐在你的 Claude Code 裡，把 PRD 拆成各自的工作項目，彼此討論、互相確認。你的主對話是協調所有角色的大腦。每個角色的 context 都有上限，靠存在 repo 的記憶接續先前的事。</p>
   <div class="chips">
-    <span class="chip wait">第 2 階段完成・下一步：記憶與輪替</span>
+    <span class="chip wait">第 3 階段完成・等你試用記憶與輪替</span>
     <span class="chip">2026-10-15</span>
     <span class="chip">Claude Code 2.1.299</span>
     <span class="chip">名稱 crew</span>
@@ -186,6 +186,7 @@ footer { font-size: var(--step--1); color: var(--muted); border-top: 1px solid v
     <li><a href="#files">repo 檔案</a></li>
     <li><a href="#spike">實測結果</a></li>
     <li><a href="#phase2">第 2 階段結果</a></li>
+    <li><a href="#phase3">第 3 階段結果</a></li>
     <li><a href="#phases">開發階段</a></li>
     <li><a href="#verify">驗證</a></li>
     <li><a href="#risks">風險</a></li>
@@ -267,7 +268,7 @@ flowchart LR
         <tr><td>量每個角色目前的 context 大小</td><td><code>turn.step</code> 每次請求結束時的 usage，帶 <code>agentId</code></td><td><span class="tag ok">S3 通過</span></td></tr>
         <tr><td>結束角色再用同名重開</td><td>同名再 <code>$.agent.spawn</code>，舊的自動退役</td><td><span class="tag ok">S4 通過</span></td></tr>
         <tr><td>訊息附上記憶、攔下例行通知</td><td>mod 用 <code>$.session.send</code> 轉送時組進記憶；<code>prompt.submit</code> 攔下完成通知</td><td><span class="tag ok">S5 備案通過</span></td></tr>
-        <tr><td>引擎自動壓縮角色時，改用記憶包</td><td><code>session.compact</code> hook，帶 <code>agentId</code>，可換掉 messages</td><td><span class="tag spike">S6 部分，第 3 階段再測</span></td></tr>
+        <tr><td>引擎自動壓縮角色時，改用記憶包</td><td><code>session.compact</code> hook，帶 <code>agentId</code>，可換掉 messages</td><td><span class="tag spike">第 3 階段改成指示摘要保留重點，見第 3 階段結果</span></td></tr>
         <tr><td>便宜的摘要與記憶整理</td><td><code>$.model.complete</code>，可指定 haiku 與 prompt 快取</td><td><span class="tag ok">型別已確認</span></td></tr>
         <tr><td>定時檢查</td><td><code>$.clock.every</code></td><td><span class="tag ok">文件已確認</span></td></tr>
         <tr><td>面板、輸入框上方一行</td><td><code>$.ui.open</code>、<code>AbovePrompt</code></td><td><span class="tag ok">文件已確認</span></td></tr>
@@ -339,7 +340,8 @@ flowchart TB
       <tbody>
         <tr><td>當下存：做了決定、發現限制、你表達偏好時，呼叫 <code>memory_save</code></td><td>角色</td><td>一次工具呼叫</td></tr>
         <tr><td>自動記錄：訊息、狀態變化、用量寫進流水帳</td><td>mod 程式</td><td>0</td></tr>
-        <tr><td>輪替前補存：請角色把還沒存的補上，最多 5 條</td><td>角色</td><td>一小輪</td></tr>
+        <tr><td>隨時補存：角色卡要求做了決定、發現限制就存，看板和討論串看得到的不用存（第 3 階段取代「輪替前補存」，見第 3 階段結果）</td><td>角色</td><td>0（不多叫醒一次）</td></tr>
+        <tr><td>自動存：你的回答、PM 移出範圍的決定、你用 /crew remember 說的偏好</td><td>mod 程式</td><td>0</td></tr>
         <tr><td>每日整理：讀流水帳補漏、合併重複、標記被取代的記憶</td><td>Haiku</td><td>少量</td></tr>
       </tbody>
     </table>
@@ -374,7 +376,7 @@ sequenceDiagram
     <figcaption>輪替前後，QA 的名字和收件地址不變，其他角色照常找得到它。</figcaption>
   </figure>
   <p class="prose"><strong>保底</strong>：如果角色在輪替前就碰到引擎的自動壓縮，mod 的 <code>session.compact</code> hook 會改用同一份記憶包取代，不再另外呼叫模型寫摘要，也比較省（S6 實測）。</p>
-  <p class="prose"><strong>大腦自己的 context</strong>：角色的例行回報不直接送給大腦，mod 每 30 分鐘合併成一則摘要；需要大腦判斷時才立刻送。大腦壓縮時也換成記憶包，並且可以用 <code>memory_search</code>。</p>
+  <p class="prose"><strong>大腦自己的 context</strong>（摘要移到第 5 階段，跟心跳一起做）：角色的例行回報不直接送給大腦，mod 每 30 分鐘合併成一則摘要；需要大腦判斷時才立刻送。大腦壓縮時也換成記憶包，並且可以用 <code>memory_search</code>。</p>
 </section>
 
 <section id="team">
@@ -634,6 +636,49 @@ flowchart LR
   </ul>
 </section>
 
+<section id="phase3">
+  <h2>第 3 階段：記憶、檢索與輪替（2026-10-15）</h2>
+  <p class="prose">同一份「待辦清單 App」PRD，在真的 Claude Code session 裡跑完，再刻意輪替角色、重開 Claude Code，問它們只有記憶裡才有的事。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>項目</th><th>結果</th></tr></thead>
+      <tbody>
+        <tr><td>PM＋QA 跑完一份 PRD</td><td><span class="tag ok">通過</span> 3 個功能、12 條驗收條件、30 個 test case，G1、G4 全過。PM 和 QA 合計約 83K token，大腦 0。</td></tr>
+        <tr><td>自動存成記憶</td><td><span class="tag ok">通過</span> PM 拆掉一條驗收條件的決定自動存成 DEC-001，看板和記憶共用 DEC 編號；你的偏好用 /crew remember 存成 PREF-001；PM 用 memory_save 存了 DEC-002。</td></tr>
+        <tr><td>叫醒時附上沒看過的記憶</td><td><span class="tag ok">通過</span> 問 PM 時附上 PREF-001，問 QA 時附上 DEC-002 和 PREF-001；每次平均 134 token（上限 800）。同一條不會附第二次。</td></tr>
+        <tr><td>輪替後抽考</td><td><span class="tag ok">通過</span> /crew rotate pm 之後，新的 PM 帶著 1,057 token 的交接包（看板狀況、3 條記憶、上一輪的回報）上線，不查看板就答對 AC-009 為什麼移出、篩選檢視存哪裡、emoji 算幾個字；QA 被叫醒時也答對。現場 4/4。</td></tr>
+        <tr><td>重開 Claude Code 後抽考</td><td><span class="tag ok">通過</span> 全新的 process，session 狀態是空的；新的 PM 從 repo 讀回 6 條記憶（1,362 token），三題全對。ASK 編號接著用，不會蓋掉舊的討論串。</td></tr>
+        <tr><td>離線檢索抽考</td><td><span class="tag ok">通過</span> 用這次實跑留下的 12 條記憶出 20 題，正確記憶都排在前 3 名（20/20，標準 18/20），所以暫時不需要向量檢索。這組題目留在測試裡防止退步。</td></tr>
+        <tr><td>每日整理</td><td><span class="tag ok">通過</span> /crew consolidate 用 Haiku 讀當天流水帳，補了 4 條事實，一次約 7K token。</td></tr>
+        <tr><td>測試</td><td>181 個單元與整合測試、validator、型別檢查全過。</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>跟原設計不同的地方</h3>
+  <ul class="plain prose">
+    <li><strong>輪替前補存 → 隨時補存。</strong>實測叫醒一個角色要重送整段對話，為了補存而多叫醒一次，比輪替省下的還多。改成角色卡要求當下就存，交接包再附上一輪的回報。</li>
+    <li><strong>輪替條件。</strong>除了達到上限，context 超過上限一半時下次叫醒就直接帶記憶重開（叫醒要重送整段對話，重開比較省）；換模型時、你用 /crew rotate 要求時也會重開。</li>
+    <li><strong>壓縮 hook。</strong>不整段換成記憶包，改成指示摘要保留編號、決定和還沒做完的事。輪替門檻（最多 256K）一定比引擎壓縮早到，壓縮只會在單一輪特別長時發生，這時保留手上的進度比較安全。</li>
+    <li><strong>每日整理只補事實和教訓。</strong>實跑時 Haiku 把 PM 對 PRD 的解讀寫成「決定」並寫進看板，這不對；現在它提的決定一律降成事實，也不能取代決定或你的偏好。角色同樣不能改掉你說過的話。</li>
+    <li><strong>新增你直接問角色的指令：</strong>/crew ask、thread、recall、remember、rotate、consolidate。</li>
+    <li><strong>大腦摘要移到第 5 階段</strong>，跟心跳一起做。現在角色的回報一律由 crew 處理，大腦完全不會被叫醒。</li>
+  </ul>
+  <h3>實跑才抓到的問題（都已修正）</h3>
+  <ul class="plain prose">
+    <li>工具變成 7 個後，重開 Claude Code 馬上下指令，會在角色註冊完成前就啟動角色而失敗。改成先註冊角色，指令等啟動完成再執行。</li>
+    <li>重開後討論串和當天用量從零開始，新的 ASK-01 會蓋掉舊的。現在會從 repo 讀回來。</li>
+    <li>一條記憶列了 17 個編號，幾乎每次檢索都會被附上；現在每條最多 8 個。</li>
+    <li>單一英文技術詞（例如 localStorage）找不到記憶；現在一個 5 個字母以上的英文詞就夠。</li>
+  </ul>
+  <h3>還沒實測的部分</h3>
+  <ul class="plain prose">
+    <li>context 超過上限一半時自動輪替：要讓角色真的跑到 50K 以上，這次的小 PRD 只到約 18K。有單元測試。</li>
+    <li>引擎自動壓縮角色：只在單一輪超過引擎的壓縮門檻時才會發生。有整合測試。</li>
+    <li>每天自動整理前一天的流水帳：要跨日才會觸發。有整合測試；手動 /crew consolidate 已實跑。</li>
+    <li>50 次喚醒的長時間 context 測試，以及開與不開記憶的 token 比較：留到第 4 階段，用較大的 PRD 一起做。</li>
+  </ul>
+</section>
+
 <section id="phases">
   <h2>開發階段</h2>
   <p class="prose">先驗證風險最高的 API，再做設計稿給你確認，然後一次完成一條端到端流程。</p>
@@ -641,7 +686,7 @@ flowchart LR
     <div class="phase"><span class="pn">0</span><div class="body"><h3>Spike：實測 8 項 API <span class="tag ok">完成</span></h3><p class="meta">S1 plugin 定義的角色能開成 teammate，模型和 effort 生效 · S2 角色能呼叫 mod 的工具，看得出是誰 · S3 量得到每次請求的 context · S4 能結束角色並同名重開 · S5 送給角色的訊息能附上記憶 · S6 角色壓縮時能換成記憶包 · S7 每個角色的固定成本，以及精簡工具後剩多少 · S8 每次請求改模型或 effort 是否生效、會不會讓 prompt cache 失效</p><p class="meta">交付：spike 報告，每項寫「通過」或「備案」。在隔離的設定目錄裡實際跑。</p></div></div>
     <div class="phase"><span class="pn">1</span><div class="body"><h3>UIX 設計稿 <span class="tag ok">完成</span></h3><p class="meta"><code>/crew demo</code> 用示意資料畫出輸入框上方那一行和面板五個分頁的所有狀態，每個畫面都標明「設計稿」。</p><p class="meta">驗證：你在終端機實際操作後確認。</p></div></div>
     <div class="phase"><span class="pn">2</span><div class="body"><h3>切片 A：PM＋QA <span class="tag ok">完成</span></h3><p class="meta">看板工具、讀寫 prd-tracker.json、G1／G4、討論串、token 顯示。用一份小 PRD 跑通「QA 列 test case → 程式算缺口 → PM 確認」。</p><p class="meta">驗證：單元測試，加上真實 session 走一遍。</p></div></div>
-    <div class="phase"><span class="pn">3</span><div class="body"><h3>切片 B：記憶與輪替</h3><p class="meta">記憶分層、檢索、輪替、壓縮 hook、大腦摘要。</p><p class="meta">驗證：記憶抽考、長時間 context 上限測試、開與不開記憶的 token 比較。</p></div></div>
+    <div class="phase"><span class="pn">3</span><div class="body"><h3>切片 B：記憶與輪替 <span class="tag ok">完成</span></h3><p class="meta">記憶分層、檢索、輪替、壓縮 hook、每日整理、你直接問角色的指令。大腦摘要移到第 5 階段。</p><p class="meta">驗證：記憶抽考、長時間 context 上限測試、開與不開記憶的 token 比較。</p></div></div>
     <div class="phase"><span class="pn">4</span><div class="body"><h3>切片 C：UI/UX、Tech lead、全端</h3><p class="meta">G2、G3、G5、G6，以及 code review 流程。用一個小功能從 PRD 走到驗收。</p><p class="meta">驗證：端到端實跑，附證據。</p></div></div>
     <div class="phase"><span class="pn">5</span><div class="body"><h3>常駐與優化</h3><p class="meta">心跳、重開接續、token 提醒和大腦的處置流程。</p><p class="meta">驗證：關掉再開 Claude Code 後接續工作；製造用量異常，確認提醒和處置都有出現。</p></div></div>
     <div class="phase"><span class="pn">6</span><div class="body"><h3>上架</h3><p class="meta">請沒有參與實作的 agent 做獨立的安全、品質、測試 review，critical 和 important 清零後，收進 marketplace 的自製 mod。</p></div></div>
@@ -674,7 +719,7 @@ flowchart LR
       <tbody>
         <tr><td>agent team 還是實驗功能，升級後 API 可能改變</td><td>README 標明支援的版本；升級前重跑 spike 測試</td></tr>
         <tr><td>電腦關機或 Claude Code 關閉時團隊會停</td><td>狀態全在 repo，重開就接續；需要 24 小時再評估雲端排程</td></tr>
-        <tr><td>輪替時遺失細節</td><td>輪替前補存、抽考把關、角色可以用 memory_search 補拉</td></tr>
+        <tr><td>輪替時遺失細節</td><td>隨時補存、交接附上一輪的回報、抽考把關、角色可以用 memory_search 補拉</td></tr>
         <tr><td>關鍵字檢索漏找</td><td>用抽考量化，不達標再加向量檢索</td></tr>
         <tr><td>五個角色同時工作時 token 暴增</td><td>照你的決定只顯示、不設上限，由大腦依提醒調整</td></tr>
         <tr><td>記憶被不可信的內容污染（例如 repo 裡別人的文件寫了指令）</td><td>每條記憶都標來源；外部來源的內容不會自動變成規則；角色卡寫明記憶是資料不是指令</td></tr>
