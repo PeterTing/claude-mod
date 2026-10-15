@@ -40,20 +40,29 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '' }
   /** What crew submitted to the main conversation. */
   const prompts: string[] = []
   const replies: string[] = []
-  on('fs.exists', (_$, e) => ({ value: disk.has(e.path) || [...disk.keys()].some(p => p.startsWith(`${e.path}/`)) }))
-  on('fs.read', (_$, e) => (disk.has(e.path) ? { value: disk.get(e.path) ?? '' } : { deny: `ENOENT ${e.path}` }))
+  /** A path with every link on the way followed, as the file system resolves it. */
+  const resolve = (path: string): string => {
+    for (const [link, target] of [...links].sort((a, b) => b[0].length - a[0].length)) {
+      if (path === link) return target
+      if (path.startsWith(`${link}/`)) return `${target}${path.slice(link.length)}`
+    }
+    return path
+  }
+  const isDir = (path: string) => [...disk.keys()].some(p => p.startsWith(`${path}/`))
+  on('fs.exists', (_$, e) => ({ value: disk.has(resolve(e.path)) || isDir(resolve(e.path)) }))
+  on('fs.read', (_$, e) => (disk.has(resolve(e.path)) ? { value: disk.get(resolve(e.path)) ?? '' } : { deny: `ENOENT ${e.path}` }))
   on('fs.write', (_$, e) => {
-    disk.set(e.path, e.text)
+    // Writes follow links, as a real file system's do.
+    disk.set(resolve(e.path), e.text)
     return { value: undefined }
   })
   on('fs.stat', (_$, e) => {
-    const isDir = [...disk.keys()].some(p => p.startsWith(`${e.path}/`))
-    if (!disk.has(e.path) && !isDir && !links.has(e.path)) return { deny: `ENOENT ${e.path}` }
-    const real = links.get(e.path) ?? e.path
+    const real = resolve(e.path)
+    if (!disk.has(real) && !isDir(real)) return { deny: `ENOENT ${e.path}` }
     // A file's version follows its content, as a modified time follows a write.
-    const text = disk.get(e.path) ?? ''
+    const text = disk.get(real) ?? ''
     const mtimeMs = [...text].reduce((h, c) => (h * 31 + (c.codePointAt(0) ?? 0)) % 1_000_000_007, text.length)
-    return { value: { kind: isDir ? ('dir' as const) : ('file' as const), size: text.length, mtimeMs, isLink: links.has(e.path), ...(e.resolve ? { realPath: real } : {}) } }
+    return { value: { kind: isDir(real) ? ('dir' as const) : ('file' as const), size: text.length, mtimeMs, isLink: links.has(e.path), ...(e.resolve ? { realPath: real } : {}) } }
   })
   on('fs.list', (_$, e) => {
     const dir = e.path.endsWith('/') ? e.path : `${e.path}/`
