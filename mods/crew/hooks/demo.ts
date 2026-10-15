@@ -2,20 +2,51 @@ import type { Route, Snapshot } from './model'
 
 /** Sample data for the design preview. None of it is real. */
 
-const S: Route = { tier: 'S', model: 'Haiku', effort: 'low' }
-const M: Route = { tier: 'M', model: 'Sonnet', effort: 'medium' }
-const L: Route = { tier: 'L', model: 'Sonnet', effort: 'high' }
-const XL: Route = { tier: 'XL', model: 'Opus', effort: 'high' }
+const S: Route = { tier: 'S', model: 'Sonnet', effort: 'medium' }
+const M: Route = { tier: 'M', model: 'Sonnet', effort: 'high' }
+const L: Route = { tier: 'L', model: 'Opus', effort: 'high' }
+const XL: Route = { tier: 'XL', model: 'Opus', effort: 'xhigh' }
 
 const NORMAL: Snapshot = {
   prd: { id: 'PRD-001', title: '會員訂閱 v1', progress: 62 },
+  progress: {
+    done: 31,
+    total: 50,
+    stages: [
+      { label: '拆解', done: 12, total: 12, state: 'done' },
+      { label: '設計', done: 9, total: 9, state: 'done' },
+      { label: '架構', done: 4, total: 5, state: 'active' },
+      { label: '實作', done: 5, total: 14, state: 'active' },
+      { label: '測試', done: 1, total: 8, state: 'active' },
+      { label: '驗收', done: 0, total: 2, state: 'pending' },
+    ],
+    features: [
+      { id: 'F-01', title: '方案選擇', percent: 100, layers: { design: 'done', frontend: 'done', backend: 'done', test: 'done' } },
+      { id: 'F-02', title: '結帳與付款', percent: 55, layers: { design: 'done', frontend: 'doing', backend: 'doing', test: 'todo' } },
+      { id: 'F-03', title: '取消訂閱', percent: 40, layers: { design: 'done', frontend: 'todo', backend: 'doing', test: 'doing' } },
+      { id: 'F-05', title: '帳單與發票', percent: 10, layers: { design: 'doing', frontend: 'todo', backend: 'todo', test: 'todo' } },
+      { id: 'F-04', title: '年繳方案', percent: 0, layers: { design: 'todo', frontend: 'todo', backend: 'todo', test: 'todo' }, dropped: '移出 v1（DEC-14），v1.1 再做' },
+    ],
+    daily: [
+      { day: '10/11', done: 3 },
+      { day: '10/12', done: 5 },
+      { day: '10/13', done: 4 },
+      { day: '10/14', done: 5 },
+      { day: '10/15', done: 7 },
+    ],
+    recent: [
+      { id: 'TC-31', title: '到期當天取消', role: 'qa', age: '3 分鐘前' },
+      { id: 'SCR-01', title: '方案選擇頁', role: 'uiux', age: '20 分鐘前' },
+      { id: 'AC-01', title: '可以選月繳方案', role: 'pm', age: '1 小時前' },
+    ],
+  },
   today: 412_000,
   roles: [
     { id: 'pm', state: 'idle', doing: '—', context: 18_000, limit: 60_000, today: 42_000 },
-    { id: 'uiux', state: 'working', doing: 'SCR-04 結帳頁三種狀態', route: M, context: 41_000, limit: 60_000, today: 96_000 },
-    { id: 'fullstack', state: 'working', doing: 'TASK-12 訂閱 API', route: L, context: 77_000, limit: 100_000, today: 188_000 },
+    { id: 'uiux', state: 'working', doing: 'SCR-04 結帳頁三種狀態', route: M, context: 41_000, limit: 100_000, today: 96_000 },
+    { id: 'fullstack', state: 'working', doing: 'TASK-12 訂閱 API', route: L, context: 77_000, limit: 160_000, today: 188_000 },
     { id: 'qa', state: 'waiting', doing: '等 PM 確認 AC-07、AC-09', route: S, context: 23_000, limit: 60_000, today: 51_000 },
-    { id: 'techlead', state: 'rotating', doing: '存記憶、寫交接摘要', route: XL, context: 58_000, limit: 60_000, today: 35_000 },
+    { id: 'techlead', state: 'rotating', doing: '閒置後換新對話，帶記憶重開', route: XL, context: 58_000, limit: 256_000, today: 35_000 },
   ],
   gates: [
     { id: 'G1', state: 'pass' },
@@ -59,7 +90,7 @@ const NORMAL: Snapshot = {
     {
       item: 'TASK-15',
       title: '金流 webhook 驗簽',
-      messages: [{ from: 'crew', text: '項目碰到金流，複雜度從 L 升到 XL，改用 Opus・high', kind: 'route' }],
+      messages: [{ from: 'crew', text: '項目碰到金流，複雜度從 L 升到 XL，改用 Opus・xhigh', kind: 'route' }],
     },
   ],
   memories: [
@@ -95,20 +126,21 @@ const ATTENTION: Snapshot = {
   ...NORMAL,
   roles: NORMAL.roles.map(r =>
     r.id === 'fullstack'
-      ? { ...r, state: 'blocked', doing: 'TASK-15 測試失敗 2 次，已升級', route: XL, context: 96_000 }
+      ? { ...r, state: 'blocked', doing: 'TASK-15 測試失敗 2 次，已升級', route: XL, context: 96_000, limit: 256_000 }
       : r,
   ),
   items: NORMAL.items.map(i =>
-    i.id === 'TASK-15' ? { ...i, status: 'blocked', note: '測試失敗 2 次：從 L 升級到 XL，等 Tech lead 看 ADR-02' } : i,
+    i.id === 'TASK-15' ? { ...i, status: 'blocked', note: '測試失敗 2 次：從 L 升級到 XL（Opus・xhigh），等 Tech lead 看 ADR-02' } : i,
   ),
   alerts: [
     '全端今日佔 46%，快取命中率 52%（喚醒間隔太長，對話整份重寫快取）',
-    '全端 context 96K，接近 100K 門檻',
+    'TASK-15 升到 XL 後改用 Opus・xhigh，這個項目已用 64K tok',
   ],
 }
 
 const EMPTY: Snapshot = {
   prd: null,
+  progress: null,
   today: 0,
   roles: NORMAL.roles.map(r => ({ ...r, state: 'idle', doing: '—', route: undefined, context: 0, today: 0 })),
   gates: [],

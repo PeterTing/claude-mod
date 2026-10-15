@@ -64,6 +64,39 @@ describe('/crew demo', () => {
     }
   })
 
+  test('opens on the overall progress: how much there is, how much is done, and where the team is', async ($, on) => {
+    stage(on)
+    await demoOn($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount(pane(surface))
+      const text = await shown(ui)
+      expect(text).toMatch(/整體進度/)
+      expect(text).toMatch(/31\/50 項/)
+      expect(text).toMatch(/62%/)
+      expect(text).toMatch(/目前在/)
+      expect(text).toMatch(/今天完成 7 項/)
+      expect(text).toMatch(/最近完成/)
+      await ui.unmount()
+    }
+  })
+
+  test('breaks progress down by feature and by day on the progress tab', async ($, on) => {
+    stage(on)
+    await demoOn($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount(pane(surface))
+      await ui.press({ key: 'tab-progress' })
+      const text = await shown(ui)
+      expect(text).toMatch(/F-01 方案選擇/)
+      expect(text).toMatch(/100%/)
+      expect(text).toMatch(/F-04 年繳方案/)
+      expect(text).toMatch(/移出 v1/)
+      expect(text).toMatch(/每天完成/)
+      await ui.press({ key: 'tab-overview' })
+      await ui.unmount()
+    }
+  })
+
   test('shows the board with each item’s complexity and model', async ($, on) => {
     stage(on)
     await demoOn($)
@@ -73,7 +106,8 @@ describe('/crew demo', () => {
       const text = await shown(ui)
       expect(text).toMatch(/TASK-15/)
       expect(text).toMatch(/XL/)
-      expect(text).toMatch(/Opus・high/)
+      expect(text).toMatch(/Opus・xhigh/)
+      expect(text).toMatch(/最高 Opus・max/)
       expect(text).toMatch(/升級/)
       await ui.unmount()
     }
@@ -150,6 +184,7 @@ describe('/crew demo', () => {
         ['tab-threads', /還沒有討論/],
         ['tab-memory', /還沒有記憶/],
         ['tab-tokens', /今天還沒有用量/],
+        ['tab-progress', /還沒有項目/],
       ] as const) {
         await ui.press({ key: tab })
         expect(await shown(ui)).toMatch(phrase)
@@ -180,6 +215,7 @@ describe('/crew demo', () => {
       expect(text).toMatch(/crew/)
       expect(text).toMatch(/設計稿/)
       expect(text).toMatch(/待你決定 1/)
+      expect(text).toMatch(/進度 62%/)
       await ui.unmount()
     }
     const off = await $.command.run(command('demo off'))

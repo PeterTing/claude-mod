@@ -96,9 +96,37 @@ export type UsageRow = {
   rotations: number
 }
 
+export type StageState = 'done' | 'active' | 'pending'
+
+/** One step of the product flow, counted in board items. */
+export type Stage = { label: string; done: number; total: number; state: StageState }
+
+export type LayerState = 'done' | 'doing' | 'todo'
+
+/** One feature of the PRD (a prd_items entry) and how far each layer of it is. */
+export type Feature = {
+  id: string
+  title: string
+  percent: number
+  layers: Readonly<Record<'design' | 'frontend' | 'backend' | 'test', LayerState>>
+  /** Why it left the plan, when it did. */
+  dropped?: string
+}
+
+export type Progress = {
+  done: number
+  total: number
+  stages: readonly Stage[]
+  features: readonly Feature[]
+  /** Items finished per day, oldest first; the last one is today. */
+  daily: readonly { day: string; done: number }[]
+  recent: readonly { id: string; title: string; role: RoleId; age: string }[]
+}
+
 /** Everything the panes draw, at one moment. */
 export type Snapshot = {
   prd: { id: string; title: string; progress: number } | null
+  progress: Progress | null
   today: number
   roles: readonly RoleRow[]
   gates: readonly Gate[]

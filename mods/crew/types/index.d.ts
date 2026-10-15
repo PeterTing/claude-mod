@@ -1,5 +1,5 @@
 /** The pane's tabs. */
-export type CrewTab = 'overview' | 'board' | 'threads' | 'memory' | 'tokens'
+export type CrewTab = 'overview' | 'progress' | 'board' | 'threads' | 'memory' | 'tokens'
 
 /** The sample situation the design preview shows. */
 export type CrewScenario = 'normal' | 'empty' | 'attention'

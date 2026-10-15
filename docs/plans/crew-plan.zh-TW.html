@@ -165,7 +165,7 @@ footer { font-size: var(--step--1); color: var(--muted); border-top: 1px solid v
   <h1>Crew：常駐的產品開發 agent 團隊</h1>
   <p class="lede">PM、UI/UX 設計師、全端工程師、QA 工程師、Tech lead 五個角色常駐在你的 Claude Code 裡，把 PRD 拆成各自的工作項目，彼此討論、互相確認。你的主對話是協調所有角色的大腦。每個角色的 context 都有上限，靠存在 repo 的記憶接續先前的事。</p>
   <div class="chips">
-    <span class="chip wait">第 1 階段：介面設計稿</span>
+    <span class="chip wait">第 1 階段：設計稿待確認</span>
     <span class="chip">2026-10-15</span>
     <span class="chip">Claude Code 2.1.299</span>
     <span class="chip">名稱 crew</span>
@@ -383,26 +383,26 @@ sequenceDiagram
       <thead><tr><th>角色</th><th>負責</th><th>寫進看板的產出</th><th>模型・effort 範圍</th><th>context 門檻</th></tr></thead>
       <tbody>
         <tr><td class="nw">大腦</td><td>你的主對話。分派工作、解決衝突、處理需要判斷的轉送、跟你對話；產品決策交給你</td><td>決定（DEC）</td><td>維持你現在的設定</td><td>摘要減量＋壓縮</td></tr>
-        <tr><td class="nw">PM</td><td>把 PRD 拆成功能和驗收條件、排優先順序、確認覆蓋缺口、最後驗收</td><td>prd_items、acceptance_criteria、decisions</td><td class="nw">Haiku – Opus</td><td>60K</td></tr>
-        <tr><td class="nw">UI/UX 設計師</td><td>每個功能的流程、頁面和各種狀態，用 Figma 或 HTML 做設計稿，標好產品地圖節點</td><td>設計項目（SCR）</td><td class="nw">Haiku – Opus</td><td>60K</td></tr>
-        <tr><td class="nw">全端工程師</td><td>依 task 用 TDD 實作前後端，連結 commit</td><td>tasks 狀態、commit、layers</td><td class="nw">Sonnet – Opus</td><td>100K</td></tr>
-        <tr><td class="nw">QA 工程師</td><td>每條驗收條件寫 test case、執行測試、附證據、回報 bug</td><td>test_cases、evidence、bug</td><td class="nw">Haiku – Opus</td><td>60K</td></tr>
-        <tr><td class="nw">Tech lead</td><td>架構設計與 ADR、拆 task、code review</td><td>ADR、tasks、review 意見</td><td class="nw">Sonnet high – Opus</td><td>60K</td></tr>
+        <tr><td class="nw">PM</td><td>把 PRD 拆成功能和驗收條件、排優先順序、確認覆蓋缺口、最後驗收</td><td>prd_items、acceptance_criteria、decisions</td><td class="nw">Sonnet・high – Opus・xhigh</td><td>依複雜度</td></tr>
+        <tr><td class="nw">UI/UX 設計師</td><td>每個功能的流程、頁面和各種狀態，用 Figma 或 HTML 做設計稿，標好產品地圖節點</td><td>設計項目（SCR）</td><td class="nw">Sonnet・medium – Opus・xhigh</td><td>依複雜度</td></tr>
+        <tr><td class="nw">全端工程師</td><td>依 task 用 TDD 實作前後端，連結 commit</td><td>tasks 狀態、commit、layers</td><td class="nw">Sonnet・high – Opus・max</td><td>依複雜度</td></tr>
+        <tr><td class="nw">QA 工程師</td><td>每條驗收條件寫 test case、執行測試、附證據、回報 bug</td><td>test_cases、evidence、bug</td><td class="nw">Sonnet・medium – Opus・xhigh</td><td>依複雜度</td></tr>
+        <tr><td class="nw">Tech lead</td><td>架構設計與 ADR、拆 task、code review</td><td>ADR、tasks、review 意見</td><td class="nw">Opus・high – Opus・max</td><td>依複雜度</td></tr>
         <tr><td class="nw">記憶整理</td><td>每日整理流水帳、合併重複的記憶</td><td>memories</td><td class="nw">Haiku・low</td><td>不常駐</td></tr>
       </tbody>
     </table>
   </div>
-  <p class="prose">模型不寫死，依任務複雜度動態決定，表中是各角色允許的範圍。context 門檻是你確認的值，第 0 階段量到固定成本後再微調。全域的 xhigh 只保留給大腦，角色一律由路由決定 effort，不沿用全域設定。</p>
+  <p class="prose">模型、effort 和 context 門檻都不寫死，依任務複雜度動態決定，表中是各角色允許的範圍，effort 可以用到 xhigh，失敗升級時可到 max。Haiku 只用在記憶整理、摘要這類雜務。</p>
 
   <h3>模型與 effort 依任務動態分配</h3>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>複雜度</th><th>判斷依據（程式計算，不花 token）</th><th>模型・effort</th></tr></thead>
+      <thead><tr><th>複雜度</th><th>判斷依據（程式計算，不花 token）</th><th>模型・effort</th><th>context 門檻</th></tr></thead>
       <tbody>
-        <tr><td>S</td><td>列清單、改文案、補單一 test case、格式整理</td><td>Haiku・low</td></tr>
-        <tr><td>M</td><td>一般功能、單一頁面或 API、驗收條件 3 條以內</td><td>Sonnet・medium</td></tr>
-        <tr><td>L</td><td>跨前後端、驗收條件多、要改 schema 或多個模組</td><td>Sonnet・high</td></tr>
-        <tr><td>XL</td><td>架構決策、金流、權限、資料遷移、並行；或同一項目失敗兩次</td><td>Opus・high</td></tr>
+        <tr><td>S</td><td>列清單、改文案、補單一 test case、格式整理</td><td>Sonnet・medium</td><td>60K</td></tr>
+        <tr><td>M</td><td>一般功能、單一頁面或 API、驗收條件 3 條以內</td><td>Sonnet・high</td><td>100K</td></tr>
+        <tr><td>L</td><td>跨前後端、驗收條件多、要改 schema 或多個模組</td><td>Opus・high</td><td>160K</td></tr>
+        <tr><td>XL</td><td>架構決策、金流、權限、資料遷移、並行；或同一項目失敗兩次</td><td>Opus・xhigh</td><td>256K</td></tr>
       </tbody>
     </table>
   </div>
@@ -411,7 +411,8 @@ sequenceDiagram
     <li><strong>升級</strong>：同一項目測試失敗兩次或 code review 被退回，自動升一級。<strong>降級</strong>：連續幾個同類項目一次通過，下一個同類項目降一級。</li>
     <li><strong>什麼時候換</strong>：中途換模型會讓 prompt cache 失效，所以只在角色接新項目或輪替時換模型；同一項目進行中只調 effort（是否影響快取列為 S8 實測）。</li>
     <li><strong>大腦覆寫</strong>：大腦可以用工具指定某個角色或項目的模型，寫成一條決定；token 提醒也會列出各級別的用量，讓大腦調整分級規則。</li>
-    <li><strong>角色下限</strong>：Tech lead 不低於 Sonnet high，全端不低於 Sonnet medium。</li>
+    <li><strong>角色下限</strong>：Tech lead 不低於 Opus・high（架構和 code review 的漏判代價最高）；全端、PM 不低於 Sonnet・high；UI/UX、QA 不低於 Sonnet・medium。XL 失敗後再升一級用 Opus・max，並通知大腦。</li>
+    <li><strong>門檻與喚醒</strong>：門檻是「連續做同一項目時」的上限。角色閒置後要換做別的項目，或 context 已經很大，就帶記憶包重開，不叫醒長對話（實測：叫醒的成本約 1.25 倍 context）。</li>
   </ul>
 
   <figure>
@@ -658,11 +659,12 @@ flowchart LR
 
 <section id="decide">
   <div class="decide">
-    <h2>已確認的決定（2026-10-15）</h2>
+    <h2>已確認的決定（2026-10-15，第二輪更新）</h2>
     <ol>
       <li>名稱：<code>crew</code>。</li>
-      <li>模型：不寫死，依任務複雜度動態決定（見「模型與 effort 依任務動態分配」）。</li>
-      <li>context 門檻：一般角色 60K、全端 100K，第 0 階段實測後微調。</li>
+      <li>模型：不寫死，依任務複雜度動態決定；effort 可用到 xhigh，升級時可到 max；Tech lead 下限 Opus・high。</li>
+      <li>context 門檻：依複雜度動態決定，S 60K、M 100K、L 160K、XL 256K（三個模型的 context 視窗都是 1M）。</li>
+      <li>介面：總覽最上方顯示整體進度（完成數／總數、階段、目前在哪、今天完成多少），另有「進度」分頁看各功能與每天完成數。</li>
       <li>git：流水帳和用量檔不進 git，其他都進。</li>
       <li>開發順序：spike → 設計稿 → PM＋QA → 記憶 → 其他角色。</li>
     </ol>

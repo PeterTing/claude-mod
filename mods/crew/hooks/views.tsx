@@ -7,7 +7,7 @@ import {
   ROLE_STATE_NAMES,
   tokens,
 } from './model'
-import type { Gate, Item, ItemStatus, RoleRow, Route, Snapshot } from './model'
+import type { Feature, Gate, Item, ItemStatus, LayerState, Progress, RoleRow, Route, Snapshot } from './model'
 
 /** The elements a surface draws with, as `$.ui.resolve(e)` hands them over. */
 export type Elements = { Box: any; Text: any; Button: any }
@@ -24,6 +24,7 @@ export type View = { tab: CrewTab; scenario: CrewScenario; thread: string | null
 
 const TABS: readonly [CrewTab, string][] = [
   ['overview', '總覽'],
+  ['progress', '進度'],
   ['board', '看板'],
   ['threads', '討論'],
   ['memory', '記憶'],
@@ -49,6 +50,93 @@ const GATE_TEXT = (g: Gate): [string, string] => {
   if (g.state === 'gap') return [`${g.id} ${g.detail ?? '有缺口'}`, 'warning']
   if (g.state === 'active') return [`${g.id} 進行中`, 'suggestion']
   return [`${g.id} —`, 'subtle']
+}
+
+/** A bar of `width` cells, filled to `percent`. */
+export const bar = (percent: number, width = 20): string => {
+  const filled = Math.round((Math.max(0, Math.min(100, percent)) / 100) * width)
+  return `${'█'.repeat(filled)}${'░'.repeat(width - filled)}`
+}
+
+const percentOf = (p: Progress): number => (p.total === 0 ? 0 : Math.round((p.done / p.total) * 100))
+
+const STAGE_COLORS = { done: 'success', active: 'suggestion', pending: 'subtle' } as const
+
+const LAYER_MARKS: Record<LayerState, string> = { done: '✓', doing: '…', todo: '·' }
+
+const layers = (f: Feature): string =>
+  `設計${LAYER_MARKS[f.layers.design]} 前端${LAYER_MARKS[f.layers.frontend]} 後端${LAYER_MARKS[f.layers.backend]} 測試${LAYER_MARKS[f.layers.test]}`
+
+/** How much there is, how much is done, where the team is and what moved lately. */
+function ProgressSummary({ el, p }: { el: Elements; p: Progress }) {
+  const { Box, Text } = el
+  const pct = percentOf(p)
+  const today = p.daily.at(-1)?.done ?? 0
+  const yesterday = p.daily.at(-2)?.done ?? 0
+  const latest = p.recent[0]
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row" gap={1}>
+        <Text bold>整體進度</Text>
+        <Text color="success">{bar(pct)}</Text>
+        <Text bold>{pct}%</Text>
+        <Text dimColor>
+          {p.done}/{p.total} 項
+        </Text>
+      </Box>
+      <Box flexDirection="row" gap={1}>
+        {p.stages.map((st, i) => (
+          <Text color={STAGE_COLORS[st.state]}>
+            {i > 0 ? '→ ' : ''}
+            {st.label} {st.state === 'done' ? '✓' : `${st.done}/${st.total}`}
+          </Text>
+        ))}
+      </Box>
+      <Text>
+        目前在：{p.stages.filter(st => st.state === 'active').map(st => st.label).join('、') || '—'}
+      </Text>
+      <Text dimColor>
+        今天完成 {today} 項（昨天 {yesterday} 項）
+        {latest === undefined ? '' : ` · 最近完成：${latest.id} ${latest.title}（${ROLE_NAMES[latest.role]}，${latest.age}）`}
+      </Text>
+    </Box>
+  )
+}
+
+function ProgressTab({ el, snap }: { el: Elements; snap: Snapshot }) {
+  const { Box, Text } = el
+  const p = snap.progress
+  if (p === null) return <Text dimColor>還沒有項目。PM 拆完 PRD 後，這裡會顯示每個功能做到哪裡。</Text>
+  const most = Math.max(1, ...p.daily.map(d => d.done))
+  return (
+    <Box flexDirection="column" gap={1}>
+      {ProgressSummary({ el, p })}
+      <Box flexDirection="column">
+        <Text bold>各功能</Text>
+        {p.features.map(f =>
+          f.dropped !== undefined
+            ? Row({ el, cells: [['26%', `${f.id} ${f.title}`, { dimColor: true, strikethrough: true }], ['74%', f.dropped, { dimColor: true }]] })
+            : Row({
+                el,
+                cells: [
+                  ['26%', `${f.id} ${f.title}`],
+                  ['26%', bar(f.percent, 16), { color: f.percent === 100 ? 'success' : 'suggestion' }],
+                  ['8%', `${f.percent}%`],
+                  ['40%', layers(f), { dimColor: true }],
+                ],
+              }),
+        )}
+      </Box>
+      <Box flexDirection="column">
+        <Text bold>每天完成</Text>
+        {p.daily.map(d => Row({ el, cells: [['10%', d.day, { dimColor: true }], ['50%', bar((d.done / most) * 100, 14)], ['40%', `${d.done} 項`]] }))}
+      </Box>
+      <Box flexDirection="column">
+        <Text bold>最近完成</Text>
+        {p.recent.map(r => Row({ el, cells: [['14%', r.id], ['46%', r.title], ['20%', ROLE_NAMES[r.role], { dimColor: true }], ['20%', r.age, { dimColor: true }]] }))}
+      </Box>
+    </Box>
+  )
 }
 
 const route = (r: Route | undefined): string => (r === undefined ? '—' : `${r.tier} ${r.model}・${r.effort}`)
@@ -98,6 +186,7 @@ function Overview({ el, snap, act }: { el: Elements; snap: Snapshot; act: Action
   const { Box, Text, Button } = el
   return (
     <Box flexDirection="column" gap={1}>
+      {snap.progress !== null && ProgressSummary({ el, p: snap.progress })}
       {snap.prd === null && (
         <Box flexDirection="column">
           <Text>還沒有 PRD。把 PRD 放進 repo 後，用 /crew prd &lt;檔案&gt; 匯入（規劃中），PM 會把它拆成功能和驗收條件。</Text>
@@ -181,7 +270,7 @@ function Board({ el, snap }: { el: Elements; snap: Snapshot }) {
           </Box>
         )
       })}
-      <Text dimColor>模型依項目複雜度決定：S Haiku・low · M Sonnet・medium · L Sonnet・high · XL Opus・high</Text>
+      <Text dimColor>模型和 context 門檻依項目複雜度決定：S Sonnet・medium 60K · M Sonnet・high 100K · L Opus・high 160K · XL Opus・xhigh 256K；失敗兩次升一級，最高 Opus・max</Text>
     </Box>
   )
 }
@@ -306,6 +395,7 @@ export function CrewPane({ el, snap, view, act }: { el: Elements; snap: Snapshot
     <Box flexDirection="column" gap={1}>
       {Header({ el, snap, view, act })}
       {view.tab === 'overview' && Overview({ el, snap, act })}
+      {view.tab === 'progress' && ProgressTab({ el, snap })}
       {view.tab === 'board' && Board({ el, snap })}
       {view.tab === 'threads' && Threads({ el, snap, view, act })}
       {view.tab === 'memory' && MemoryList({ el, snap })}
@@ -321,6 +411,7 @@ export function bandText(snap: Snapshot): string {
     .join(' · ')
   const parts = [
     'crew（設計稿）',
+    ...(snap.progress !== null ? [`進度 ${percentOf(snap.progress)}%（${snap.progress.done}/${snap.progress.total}）`] : []),
     `待你決定 ${snap.decisions.length}`,
     ...(snap.alerts.length > 0 ? [`⚠ ${snap.alerts.length} 則提醒`] : []),
     `今日 ${tokens(snap.today)} tok`,
