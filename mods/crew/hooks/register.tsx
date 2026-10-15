@@ -1001,7 +1001,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     // An answer the brain relays is recorded as the brain's, so it can be traced.
     const decided = by === 'brain' ? `使用者決定（經大腦轉達）：${answer}` : `使用者決定：${answer}`
     await remember($, { type: 'DEC', text: `${decided}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `${by} ${q.id}` }, q.from === 'qa' ? 'qa' : 'pm')
-    await feed($, { type: 'answered', question: q.question, answer, role: q.from === 'qa' ? 'qa' : 'pm' })
+    await feed($, { type: 'answered', question: q.question, answer, role: q.from === 'qa' ? 'qa' : 'pm', escalation: q.from === 'crew' })
     return `已把 ${id} 的回答轉給 ${q.from === 'qa' ? 'QA' : 'PM'}。`
   }
   if (verb === 'ask') {
@@ -1406,6 +1406,13 @@ export const register: Register = on => {
     if (waiting.length > 0) {
       await update($, live, s => ({ ...s, pending: Object.fromEntries(Object.entries(s.pending).filter(([r]) => r !== role)) }))
       await handOver($, role, waiting)
+    }
+    // A running flow with nobody at work and nothing waiting would stay stopped unseen: say so.
+    const now = await read($, live)
+    if (RUNNING.includes(now.flow.stage) && !CREW_ROLES.some(r => now.roles[r].state === 'working') && Object.values(now.pending).every(p => p.length === 0)) {
+      const text = `流程停住了（${now.flow.stage}）：沒有角色在工作。用 /crew resume 接續。`
+      $.ui.toast(`crew：${text}`)
+      if (now.lead === 'brain') tellBrain(text)
     }
     await consolidateDue($)
     // Notes for the brain wait for the engine's notice of this run, which follows.

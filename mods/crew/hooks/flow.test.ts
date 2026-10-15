@@ -128,7 +128,7 @@ describe('step', () => {
     r = run([{ type: 'role_done', role: 'qa', board: gaps }], r.state)
     expect(r.state.stage).toBe('escalated')
 
-    const answered = run([{ type: 'answered', question: 'AC-002 要怎麼辦？', answer: '價格頁下一版再做，移出範圍' }], r.state)
+    const answered = run([{ type: 'answered', question: 'AC-002 要怎麼辦？', answer: '價格頁下一版再做，移出範圍', escalation: true }], r.state)
     expect(answered.state).toMatchObject({ stage: 'confirming', round: 0 })
     expect(answered.actions.at(-1)).toMatchObject({ type: 'message', role: 'pm' })
     expect((answered.actions.at(-1) as { text: string }).text).toMatch(/價格頁下一版再做/)
@@ -138,7 +138,7 @@ describe('step', () => {
     const empty = newTracker('shop')
     const r = run([START, { type: 'role_done', role: 'pm', board: empty }, { type: 'role_done', role: 'pm', board: empty }])
     expect(r.state.stage).toBe('escalated')
-    const answered = run([{ type: 'answered', question: '拆 PRD 卡住', answer: 'PRD 在 docs/PRD-v2.md' }], r.state)
+    const answered = run([{ type: 'answered', question: '拆 PRD 卡住', answer: 'PRD 在 docs/PRD-v2.md', escalation: true }], r.state)
     expect(answered.state).toMatchObject({ stage: 'splitting', retries: 0 })
   })
 
@@ -239,7 +239,7 @@ describe('edges', () => {
   })
 
   test('takes an answer back to the gaps when the flow did not say where it stopped', () => {
-    const r = step({ stage: 'escalated', round: 3, retries: 0 }, { type: 'answered', question: 'q', answer: 'a' })
+    const r = step({ stage: 'escalated', round: 3, retries: 0 }, { type: 'answered', question: 'q', answer: 'a', escalation: true })
     expect(r.state).toEqual({ stage: 'confirming', round: 0, retries: 0 })
   })
 
@@ -251,6 +251,23 @@ describe('edges', () => {
   test('a restart in confirming with no gaps left finishes', () => {
     const r = step({ stage: 'confirming', round: 1, retries: 0 }, { type: 'resume', board: board(SPLIT, [tc(['AC-001', 'AC-002'])]), prd: { path: 'p', size: 1 } })
     expect(r.state.stage).toBe('done')
+  })
+})
+
+describe('answers while the flow waits for the person', () => {
+  const waiting: FlowState = { stage: 'escalated', round: 3, retries: 0, resumeAt: 'confirming' }
+
+  test('a role’s own question answered meanwhile goes to that role, and the flow keeps waiting', () => {
+    const r = step(waiting, { type: 'answered', question: 'AC-002 怎麼測？', answer: '看 UTC', role: 'qa' })
+    expect(r.state).toEqual(waiting)
+    expect(r.actions[0]).toMatchObject({ type: 'message', role: 'qa', person: true })
+  })
+
+  test('the answer to the flow’s own question takes the flow on, with the PM', () => {
+    const r = step(waiting, { type: 'answered', question: '要移出範圍嗎？', answer: '要做', role: 'pm', escalation: true })
+    expect(r.state.stage).toBe('confirming')
+    expect(r.actions[0]).toMatchObject({ type: 'message', role: 'pm' })
+    expect((r.actions[0] as { person?: true }).person).toBeUndefined()
   })
 })
 

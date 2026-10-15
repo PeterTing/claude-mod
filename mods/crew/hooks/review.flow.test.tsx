@@ -492,3 +492,41 @@ describe('an agent crew replaced', () => {
     expect(String(r.result)).toMatch(/只給 crew 的角色和主對話/)
   })
 })
+
+describe('fifth-round review items', () => {
+  test('answering a role’s question while the flow waits for the person keeps it waiting; the flow’s own answer takes it on', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await call($, 'ask_person', { question: 'AC-002 怎麼測？', item: 'AC-002' }, 'a-qa-2')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e' }])
+    // Three rounds go by with AC-002 still a gap: the flow asks the person (Q-02).
+    for (let i = 0; i < 3; i++) {
+      await done($, 'a-qa-2')
+      await done($, 'a-pm-1')
+    }
+    await done($, 'a-qa-2')
+    expect((await $.command.run(command('status'))).text).toMatch(/escalated[\s\S]*待你決定 2/)
+    await $.command.run(command('answer Q-01 看 UTC'))
+    expect((await $.command.run(command('status'))).text).toMatch(/escalated/)
+    expect(w.sent.at(-1)?.to).toBe('a-qa-2')
+    await done($, 'a-qa-2', '知道了')
+    await $.command.run(command('answer Q-02 要做，QA 補上'))
+    expect((await $.command.run(command('status'))).text).toMatch(/confirming/)
+    expect(w.sent.at(-1)?.to).toBe('a-pm-1')
+    await call($, 'thread_post', { item: 'AC-002', to: 'qa', text: '照 UTC 測' }, 'a-pm-1')
+    await done($, 'a-pm-1')
+    expect((await $.command.run(command('status'))).text).toMatch(/adding_tests/)
+  })
+
+  test('says so when a running flow has nobody at work', async ($, on) => {
+    const w = world($, on, { denySpawn: '不允許', denySpawnOf: 'crew:qa' })
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    expect(w.toasts.some(t => /流程停住了[\s\S]*\/crew resume/.test(t))).toBe(true)
+  })
+})

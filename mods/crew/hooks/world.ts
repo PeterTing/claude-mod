@@ -16,7 +16,7 @@ export const PRD = '# 會員訂閱\n\n使用者可以選月繳方案，可以隨
 
 export type Spawn = { subagentType: string; name?: string; description: string; model?: string; prompt: string }
 
-export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', stopped = [] as string[] } = {}) => {
+export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', denySpawnOf = '', stopped = [] as string[] } = {}) => {
   const clock = mock.clock(on, { now: NOW })
   /** crew's own store, which outlives sessions and is not in the repo. */
   const store = new Map<string, unknown>()
@@ -102,8 +102,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   // The kit hands a plugin's spawn down as the Agent tool's input, and keeps the agent id to the engine:
   // the plugin finds its agent in the list instead, as it would behind a hook that kept the id back.
   on('agent.spawn', (_$, e) => {
-    if (denySpawn !== '') return { deny: denySpawn }
     const input = e as unknown as { subagent_type?: string; subagentType?: string; name?: string; description: string; model?: string; prompt: string }
+    if (denySpawn !== '' && (denySpawnOf === '' || (input.subagentType ?? input.subagent_type) === denySpawnOf)) return { deny: denySpawn }
     order.push(`spawn:${input.subagentType ?? input.subagent_type ?? ''}`)
     spawned.push({
       subagentType: input.subagentType ?? input.subagent_type ?? '',

@@ -31,8 +31,8 @@ export type FlowEvent =
   | { type: 'start'; prd: { path: string; size: number; text?: string } }
   /** `inbox`: items whose threads hold messages to that role it has not been woken for yet. */
   | { type: 'role_done'; role: 'pm' | 'qa'; board: Tracker; inbox?: Inbox }
-  /** The person answered a question: the flow's own, or one a role asked with ask_person. */
-  | { type: 'answered'; question: string; answer: string; role?: 'pm' | 'qa' }
+  /** The person answered a question: the flow's own (`escalation`), or one a role asked with ask_person. */
+  | { type: 'answered'; question: string; answer: string; role?: 'pm' | 'qa'; escalation?: boolean }
   /** Claude Code started again on a flow the last session left running: its roles are gone. */
   | { type: 'resume'; board: Tracker; prd: { path: string; size: number; text?: string } }
 
@@ -185,13 +185,15 @@ const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered'
     text: answerText(event.question, event.answer),
     route: routeFor(role, tierFor({ kind: 'confirm_gaps', size: 1 })),
   }
-  // Mid-flow the answer is the person's, for the role to take in; an escalated flow goes on with it.
-  if (state.stage !== 'escalated') return { state, actions: [{ ...message, person: true }] }
+  // A role's own question is the person's answer for that role to take in, even while the flow waits;
+  // only the answer to the flow's own question takes a waiting flow on, with the PM, who resumes both stages.
+  if (state.stage !== 'escalated' || event.escalation !== true) return { state, actions: [{ ...message, person: true }] }
+  const resumed: FlowAction = { ...message, role: 'pm', route: routeFor('pm', tierFor({ kind: 'confirm_gaps', size: 1 })) }
   const resumeAt = state.resumeAt ?? 'confirming'
   const { resumeAt: _, ...rest } = state
   return {
     state: { ...rest, stage: resumeAt, round: resumeAt === 'confirming' ? 0 : rest.round, retries: resumeAt === 'splitting' ? 0 : rest.retries },
-    actions: [message],
+    actions: [resumed],
   }
 }
 
