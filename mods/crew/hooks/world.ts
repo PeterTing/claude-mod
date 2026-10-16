@@ -109,8 +109,11 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.close', () => ({ value: undefined }))
   const logs: string[] = []
+  /** Log rows that went to the person's transcript, not the debug log alone. */
+  const shown: string[] = []
   on('ui.log', (_$, e) => {
     logs.push(String((e as { text?: unknown }).text ?? JSON.stringify(e)))
+    if ((e as { to?: unknown }).to !== 'debug') shown.push(String((e as { text?: unknown }).text ?? ''))
     return { value: undefined }
   })
   on('ui.toast', (_$, e) => {
@@ -154,7 +157,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   const board = () => JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? 'null') as Tracker | null
-  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, clock, links, submitted, store, slow, reads }
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)

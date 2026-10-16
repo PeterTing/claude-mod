@@ -867,4 +867,33 @@ describe('the board held to the PRD', () => {
     await w.clock.advance(10_000)
     expect(await paneText($, 'progress')).not.toMatch(/測試 ✓/)
   })
+
+  test('says a PRD it cannot read once, in a toast, and keeps the person’s transcript clear', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    w.disk.delete(PRD_PATH)
+    for (let i = 0; i < 3; i++) {
+      await w.clock.advance(10_000)
+      await paneText($)
+      await $.command.run(command('status'))
+    }
+    expect(w.toasts.filter(t => /讀不到 PRD/.test(t))).toHaveLength(1)
+    expect(w.shown.filter(t => /讀不到 PRD/.test(t))).toEqual([])
+    expect(w.logs.some(t => /讀不到 PRD/.test(t))).toBe(true)
+  })
+
+  test('starts a PRD in a repo whose own path goes through a link, as /tmp does on macOS', async ($, on) => {
+    const w = world($, on)
+    for (const [k, v] of [...w.disk.entries()]) {
+      if (k.startsWith(`${ROOT}/`)) {
+        w.disk.delete(k)
+        w.disk.set(`/real${k}`, v)
+      }
+    }
+    w.links.set(ROOT, `/real${ROOT}`)
+    await start($)
+    expect((await $.command.run(command('start docs/PRD.md'))).text).toMatch(/PM 正在拆/)
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm'])
+  })
 })

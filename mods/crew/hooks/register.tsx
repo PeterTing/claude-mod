@@ -203,7 +203,7 @@ async function staysIn($: any, path: string): Promise<boolean> {
 const outside = (path: string): string => `crew 不讀寫 repo 外的檔案：${path.startsWith(`${files.root}/`) ? path.slice(files.root.length + 1) : path} 是連結，或指到 repo 外。`
 
 function refuse($: any, path: string) {
-  $.ui.log(`crew: ${outside(path)}`)
+  $.ui.log(`crew: ${outside(path)}`, { to: 'debug' })
   if (!warned.has(path)) {
     warned.add(path)
     $.ui.toast(`crew：${outside(path)}`)
@@ -331,7 +331,7 @@ const relativeOf = (path: string): string => {
 }
 
 /** Folders and files no PRD lives in: their text would go on the board, which is in git. */
-const PRIVATE = /^(?:\.git|\.crew|\.ssh|\.aws|\.gnupg|\.env.*)$/i
+const PRIVATE = /^(?:\.git|\.crew|\.ssh|\.aws|\.gnupg|\.secrets?|\.private|\.credentials?|\.vault|\.config|\.env(?:\..*)?)$/i
 
 /** A file crew may take for a PRD by its name: a document, outside private folders such as .git. Its text goes on the board. */
 const prdName = (full: string, root: string = files.root): boolean =>
@@ -1033,9 +1033,9 @@ async function readPrd($: any, path: string): Promise<PrdView> {
   return { requirements }
 }
 
-/** Says a problem once in a toast, whatever counts it carries; the log has it every time. */
+/** Says a problem once in a toast, whatever counts it carries; the debug log has it every time, the transcript never. */
 function warnOnce($: any, text: string) {
-  $.ui.log(`crew: ${text}`)
+  $.ui.log(`crew: ${text}`, { to: 'debug' })
   const kind = text.replace(/\d+/g, '#')
   if (warned.has(kind)) return
   warned.add(kind)
@@ -1085,7 +1085,7 @@ async function watch($: any) {
         await look($)
       } while (watching.again)
     } catch (err) {
-      $.ui.log(`crew: could not check the PRD: ${String(err)}`)
+      $.ui.log(`crew: could not check the PRD: ${String(err)}`, { to: 'debug' })
     } finally {
       watching.busy = false
     }
