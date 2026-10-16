@@ -201,7 +201,8 @@ const tlRoute = (size: number): Route => routeFor('techlead', tierFor({ kind: 'p
 
 /** The tech lead breaks the criteria without tasks into tasks: the whole board the first time, what is new after. */
 const plan = (state: FlowState, g3: ReturnType<typeof gateG3>): StepResult => {
-  const next: FlowState = { ...state, stage: 'planning', retries: 0 }
+  // A plan starts its own rounds with the PM and its own retries: the test phase's are spent.
+  const next: FlowState = { ...state, stage: 'planning', retries: 0, round: 0 }
   if (g3.covered === 0) return { state: next, actions: [{ type: 'spawn', role: 'techlead', route: tlRoute(g3.total), prompt: planPrompt(g3.total) }] }
   return { state: next, actions: [{ type: 'message', role: 'techlead', item: g3.gaps[0]?.id, text: planGaps(g3.gaps), route: tlRoute(g3.gaps.length) }] }
 }

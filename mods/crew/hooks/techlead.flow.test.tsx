@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
-import { command, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { command, done, paneText, PLAN, ROOT, SPLIT, start, world, write } from './world'
 
 /** The tech lead breaks the tested criteria into tasks; G3 holds every criterion to one. */
 
@@ -89,5 +89,39 @@ describe('the tech lead', () => {
     await start($)
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:techlead'])
     expect(w.spawned[0]?.prompt).toMatch(/重開過[\s\S]*AC-002/)
+  })
+
+  test('takes a message to it that was handled before a restart as read', async ($, on) => {
+    const w = world($, on)
+    const tracker = applyOps(newTracker('repo'), SPLIT as unknown as Op[], { by: 'pm', today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
+    if (!tracker.ok) throw new Error(tracker.errors.join())
+    const withTests = applyOps(tracker.tracker, [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }], { by: 'qa', today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
+    if (!withTests.ok) throw new Error(withTests.errors.join())
+    const plannedBoard = applyOps(withTests.tracker, PLAN as unknown as Op[], { by: 'techlead', today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
+    if (!plannedBoard.ok) throw new Error(plannedBoard.errors.join())
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(plannedBoard.tracker))
+    w.disk.set(`${ROOT}/.crew/threads/AC-001.jsonl`, `${JSON.stringify({ t: 1, n: 1, item: 'AC-001', from: 'pm', to: 'techlead', text: '用台灣時間' })}\n`)
+    w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'done', round: 0, retries: 0 }, questions: [], lead: 'person' })
+    await start($)
+    await $.command.run(command('ask pm 月繳價格多少？'))
+    await done($, 'a-pm-1', '一百元')
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm'])
+  })
+
+  test('says an answer to the tech lead’s own question went to the tech lead', async ($, on) => {
+    world($, on)
+    await start($)
+    await tested($)
+    await call($, 'ask_person', { question: '要用哪個資料庫？', item: 'AC-001' }, 'a-techlead-3')
+    expect((await $.command.run(command('answer Q-01 SQLite'))).text).toMatch(/轉給 Tech lead/)
+  })
+
+  test('shows the tasks it plans among what was done today', async ($, on) => {
+    world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-techlead-3', PLAN)
+    // Two features with criteria, two criteria with test cases, and the tech lead's two tasks.
+    expect(await paneText($)).toMatch(/今天完成 6 項/)
   })
 })

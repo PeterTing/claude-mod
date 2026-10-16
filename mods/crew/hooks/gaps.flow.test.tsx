@@ -360,10 +360,10 @@ describe('inputs crew does not take', () => {
 })
 
 describe('the roles', () => {
-  test('are hidden from the main model, both of them', async ($, on) => {
+  test('are hidden from the main model, every one of them', async ($, on) => {
     world($, on)
     await start($)
-    for (const agent of ['crew:pm', 'crew:qa']) {
+    for (const agent of ['crew:pm', 'crew:qa', 'crew:techlead']) {
       const offer = await $.agent.offer({ agent, description: agent, source: 'plugin', provider: { plugin: 'crew', tier: 'user' } } as never)
       expect((offer as { isOffered: boolean }).isOffered).toBe(false)
     }

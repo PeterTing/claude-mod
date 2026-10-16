@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { CrewLive, CrewMessage, CrewScenario, CrewTab, CrewWork } from '../types'
-import { applyOps, criteriaOf, gateG1, gateG4, newTracker, parseOps, prefixesFrom, renderBoard } from './board'
+import { applyOps, criteriaOf, gateG1, gateG4, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf } from './board'
 import type { Tracker } from './board'
 import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './consolidate'
 import { DEMO } from './demo'
@@ -156,7 +156,7 @@ const ZERO = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, wakes: 0, rotat
 
 /** What a role's summary keeps when the engine compacts it before crew rotates it. */
 const COMPACT_NOTE =
-  '保留：這次的工作還剩哪些、提到的編號（PRD-、AC-、TC-、DEC-、Q-、ASK- 等）、做過的決定和原因。看板、討論串和記憶都存在 repo，之後用 board_read、thread_read、memory_search 再讀，不用抄進摘要。'
+  '保留：這次的工作還剩哪些、提到的編號（PRD-、AC-、TC-、TASK-、DEC-、Q-、ASK- 等）、做過的決定和原因。看板、討論串和記憶都存在 repo，之後用 board_read、thread_read、memory_search 再讀，不用抄進摘要。'
 
 const decisionIdsOf = (board: Tracker | null): string[] =>
   (board?.decisions ?? []).map(d => (d as { id?: unknown }).id).filter((id): id is string => typeof id === 'string')
@@ -496,7 +496,7 @@ async function restore($: any) {
     posted: Math.max(s.posted, posted),
     asked: Math.max(s.asked, asked),
     // Old messages are history to a role that starts fresh, not unread mail.
-    seen: { pm: posted, qa: posted },
+    seen: Object.fromEntries(CREW_ROLES.map(r => [r, posted])),
     usage: saved.usage ?? {},
     tiers: saved.tiers ?? {},
     usageDay: today,
@@ -1304,7 +1304,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     if (q.item !== undefined && ITEM.test(q.item)) await post($, { item: q.item, from: by, to: askedBy, text: `${q.question} → ${answer}` })
     await remember($, { type: 'DEC', text: `${decided}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `${by} ${q.id}` }, askedBy)
     await feed($, { type: 'answered', question: q.question, answer, ...(isCrewRole(q.from) ? { role: q.from } : {}), escalation: q.from === 'crew' })
-    return `已把 ${id} 的回答轉給 ${q.from === 'qa' ? 'QA' : 'PM'}。`
+    return `已把 ${id} 的回答轉給 ${crewName(askedBy)}。`
   }
   if (verb === 'ask') {
     const [role = '', ...words] = rest
@@ -1458,7 +1458,8 @@ export const register: Register = on => {
     ignored.checked = false
     // State kept from before a reload may predate fields added since: fill them in.
     try {
-      await update($, live, l => ({ ...emptyLive(), ...l }))
+      // A live state an earlier version kept (a hot reload) gains the roles added since.
+      await update($, live, l => ({ ...emptyLive(), ...l, roles: { ...emptyLive().roles, ...l.roles } }))
       try {
         await restore($)
       } catch (err) {
@@ -1498,8 +1499,8 @@ export const register: Register = on => {
 
   // The roles are crew's to start, not the main conversation's. While crew wakes a finished role
   // the engine asks again whether its type is offered, so the roles are offered for that moment.
-  on('agent.offer', { agent: 'crew:pm' }, ($, e, next) => (waking.count > 0 ? next(e) : { isOffered: false }))
-  on('agent.offer', { agent: 'crew:qa' }, ($, e, next) => (waking.count > 0 ? next(e) : { isOffered: false }))
+  // The roles are crew's to start: offered to the engine only while crew wakes one.
+  for (const role of CREW_ROLES) on('agent.offer', { agent: `crew:${role}` }, ($, e, next) => (waking.count > 0 ? next(e) : { isOffered: false }))
 
   on('command.run', { command: 'crew' }, async ($, e) => {
     // A command typed while the session is still starting waits for crew's roles and tools.
@@ -1544,9 +1545,9 @@ export const register: Register = on => {
     if (!r.ok) return { result: `board_write 沒有生效，看板沒有任何變更：\n- ${r.errors.join('\n- ')}` }
     // The board's decisions are memories too, under the same ids.
     const had = new Set(decisionIdsOf(board))
-    type Decided = { id?: unknown; decision?: unknown; criteria?: unknown; feature?: unknown; requirements?: unknown; status?: unknown }
+    type Decided = { id?: unknown; decision?: unknown; criteria?: unknown; feature?: unknown; task?: unknown; requirements?: unknown; status?: unknown }
     const refsOfDecision = (d: Decided): string[] =>
-      [d.criteria, d.feature, ...(Array.isArray(d.requirements) ? d.requirements : [])].filter((x): x is string => typeof x === 'string')
+      [d.criteria, d.feature, d.task, ...(Array.isArray(d.requirements) ? d.requirements : [])].filter((x): x is string => typeof x === 'string')
     for (const d of (r.tracker.decisions ?? []) as Decided[]) {
       if (typeof d.id !== 'string' || had.has(d.id) || typeof d.decision !== 'string') continue
       await remember($, { id: d.id, type: 'DEC', text: d.decision, refs: refsOfDecision(d), source: role }, isCrewRole(role) ? role : undefined)
@@ -1578,9 +1579,12 @@ export const register: Register = on => {
       for (const c of criteriaOf(item)) titles.set(c.id, c.text)
     }
     const moved = [...covered(r.tracker)].filter(id => !before.has(id))
+    // The tech lead's work shows as the tasks it planned.
+    const planned = r.results.filter(x => x.op === 'add_task' && x.id !== undefined).map(x => x.id as string)
+    for (const item of r.tracker.prd_items) for (const x of tasksOf(item)) titles.set(x.id, x.title)
     await update($, live, l => ({
       ...l,
-      activity: [...l.activity, ...moved.map(id => ({ t: now, day: dayOf(now), role, id, title: titles.get(id) ?? id }))].slice(-200),
+      activity: [...l.activity, ...[...moved, ...planned].map(id => ({ t: now, day: dayOf(now), role, id, title: titles.get(id) ?? id }))].slice(-200),
     }))
     const written = r.results.map(x => x.id).filter((x): x is string => x !== undefined)
     await note($, { kind: 'board', role, ops: ops.map(o => o.op), ids: written })

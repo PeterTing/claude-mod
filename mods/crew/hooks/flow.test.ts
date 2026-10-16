@@ -129,6 +129,14 @@ describe('step', () => {
     expect(step({ stage: 'planning', round: 3, retries: 1 }, { type: 'role_done', role: 'techlead', board: half, inbox: { pm: ['AC-002'] } }).state.stage).toBe('escalated')
   })
 
+  test('starts planning with fresh rounds, so the tech lead’s questions reach the PM after a long test phase', () => {
+    const covered = board(SPLIT, [tc(['AC-001', 'AC-002'])])
+    const planning = step({ stage: 'confirming', round: 3, retries: 0 }, { type: 'role_done', role: 'pm', board: covered })
+    expect(planning.state).toMatchObject({ stage: 'planning', round: 0 })
+    const half = planned(SPLIT, [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001'] }])
+    expect(step(planning.state, { type: 'role_done', role: 'techlead', board: half, inbox: { pm: ['AC-002'] } }).actions[0]).toMatchObject({ type: 'message', role: 'pm' })
+  })
+
   test('sends new criteria to QA first, then to the tech lead for what is new only', () => {
     const plannedBoard = planned([...SPLIT, { op: 'add_criterion', feature: 'PRD-001', text: '可以改方案' }], [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001', 'AC-002'] }])
     // The PM added AC-003 while the tech lead planned: QA tests it first.
