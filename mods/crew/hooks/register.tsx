@@ -202,9 +202,11 @@ async function staysIn($: any, path: string): Promise<boolean> {
 
 const outside = (path: string): string => `crew 不讀寫 repo 外的檔案：${path.startsWith(`${files.root}/`) ? path.slice(files.root.length + 1) : path} 是連結，或指到 repo 外。`
 
+/** Says once, in a toast and a lasting transcript row, that crew left a file alone; the debug log has every time. */
 function refuse($: any, path: string) {
-  $.ui.log(`crew: ${outside(path)}`, { to: 'debug' })
-  if (!warned.has(path)) {
+  const first = !warned.has(path)
+  $.ui.log(`crew: ${outside(path)}`, first ? undefined : { to: 'debug' })
+  if (first) {
     warned.add(path)
     $.ui.toast(`crew：${outside(path)}`)
   }
@@ -1085,7 +1087,8 @@ async function watch($: any) {
         await look($)
       } while (watching.again)
     } catch (err) {
-      $.ui.log(`crew: could not check the PRD: ${String(err)}`, { to: 'debug' })
+      // Said once in a toast; a check that keeps failing also shows in the pane's time of the last check falling behind.
+    warnOnce($, `檢查 PRD 時出錯：${cut(String(err), 200)}`)
     } finally {
       watching.busy = false
     }

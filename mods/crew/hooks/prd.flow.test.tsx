@@ -896,4 +896,15 @@ describe('the board held to the PRD', () => {
     expect((await $.command.run(command('start docs/PRD.md'))).text).toMatch(/PM 正在拆/)
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm'])
   })
+
+  test('says once, in the transcript too, that it leaves a file of its alone that leads out of the repo', async ($, on) => {
+    const w = world($, on)
+    w.disk.set('/elsewhere/memories.jsonl', '')
+    w.links.set(`${ROOT}/.crew/memory/memories.jsonl`, '/elsewhere/memories.jsonl')
+    await start($)
+    await $.command.run(command('recall 價格'))
+    await $.command.run(command('recall 價格'))
+    expect(w.shown.filter(t => /memories\.jsonl 是連結/.test(t))).toHaveLength(1)
+    expect(w.toasts.filter(t => /memories\.jsonl 是連結/.test(t))).toHaveLength(1)
+  })
 })
