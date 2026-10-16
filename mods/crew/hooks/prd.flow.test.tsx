@@ -109,6 +109,15 @@ describe('the board held to the PRD', () => {
     expect(w.prompts.at(-1)).toMatch(/PRD 改了/)
   })
 
+  test('lists each PRD requirement with how far its development is, on the progress tab', async ($, on) => {
+    world($, on)
+    await start($)
+    await finished($)
+    const text = await paneText($, 'progress')
+    expect(text).toMatch(new RegExp(`PRD 需求[\\s\\S]*${REQ}`))
+    expect(text).toMatch(/規格 ✓[\s\S]*測試 ✓ 2\/2/)
+  })
+
   test('shows how the board stands against the PRD, and when crew last looked', async ($, on) => {
     const w = world($, on)
     await start($)

@@ -7,7 +7,7 @@ import {
   ROLE_STATE_NAMES,
   tokens,
 } from './model'
-import type { Feature, Gate, Item, ItemStatus, LayerState, Progress, RoleRow, Route, Snapshot } from './model'
+import type { Feature, Gate, Item, ItemStatus, LayerState, Progress, RequirementRow, RoleRow, Route, Snapshot, StageCell } from './model'
 
 /** The elements a surface draws with, as `$.ui.resolve(e)` hands them over. */
 export type Elements = { Box: any; Text: any; Button: any }
@@ -107,6 +107,42 @@ function ProgressSummary({ el, p }: { el: Elements; p: Progress }) {
   )
 }
 
+const STAGE_MARK: Record<StageCell['state'], string> = { done: '✓', doing: '◐', todo: '○', stale: '⟳', later: '—' }
+
+const STAGE_NAMES: [keyof RequirementRow['layers'], string][] = [
+  ['spec', '規格'],
+  ['design', '設計'],
+  ['tasks', '任務'],
+  ['code', '實作'],
+  ['review', 'Review'],
+  ['tests', '測試'],
+]
+
+/** Each PRD requirement and how far each stage of its development is. */
+function RequirementList({ el, rows }: { el: Elements; rows: readonly RequirementRow[] }) {
+  const { Box, Text } = el
+  return (
+    <Box flexDirection="column">
+      <Text bold>PRD 需求（✓ 完成 ◐ 進行中 ○ 還沒開始 ⟳ 過期 — 之後的階段）</Text>
+      {rows.map(r =>
+        r.dropped !== undefined
+          ? Row({ el, cells: [['12%', r.id, { dimColor: true }], ['28%', r.text, { dimColor: true, strikethrough: true }], ['60%', `移出範圍：${r.dropped}`, { dimColor: true }]] })
+          : Row({
+              el,
+              cells: [
+                ['12%', r.id, { color: 'suggestion' }],
+                ['28%', r.text],
+                ...STAGE_NAMES.map(([key, name]): [string, string, Record<string, unknown>] => {
+                  const cell = r.layers[key]
+                  return ['10%', `${name} ${STAGE_MARK[cell.state]}${cell.note === undefined ? '' : ` ${cell.note}`}`, { color: cell.state === 'done' ? 'success' : cell.state === 'stale' ? 'warning' : undefined, dimColor: cell.state === 'later' || cell.state === 'todo' }]
+                }),
+              ],
+            }),
+      )}
+    </Box>
+  )
+}
+
 function ProgressTab({ el, snap }: { el: Elements; snap: Snapshot }) {
   const { Box, Text } = el
   const p = snap.progress
@@ -115,6 +151,7 @@ function ProgressTab({ el, snap }: { el: Elements; snap: Snapshot }) {
   return (
     <Box flexDirection="column" gap={1}>
       {ProgressSummary({ el, p })}
+      {snap.requirements !== undefined && snap.requirements.length > 0 && RequirementList({ el, rows: snap.requirements })}
       <Box flexDirection="column">
         <Text bold>各功能</Text>
         {p.features.map(f =>

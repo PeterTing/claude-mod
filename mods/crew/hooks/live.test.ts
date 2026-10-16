@@ -4,6 +4,7 @@ import type { CrewLive } from '../types'
 import { applyOps, newTracker } from './board'
 import type { Op, Tracker } from './board'
 import { emptyLive, snapshotOf } from './live'
+import { requirementsOf } from './prd'
 
 const NOW = Date.UTC(2026, 9, 15, 6, 0, 0)
 
@@ -135,5 +136,47 @@ describe('snapshotOf', () => {
     expect(s.progress).toBeNull()
     expect(s.gates).toEqual([])
     expect(s.today).toBe(0)
+  })
+})
+
+describe('development status by PRD requirement', () => {
+  const reqs = requirementsOf('## 訂閱\n- 可以選月繳方案\n- 可以取消訂閱\n- 可以暫停訂閱\n- 可以改成年繳')
+  const [r1, r2, r3, r4] = reqs.map(r => r.id)
+  const board = apply(
+    apply(
+      newTracker('shop'),
+      [
+        { op: 'add_feature', title: '方案選擇', summary: '', sources: [r1 ?? ''] },
+        { op: 'add_feature', title: '取消訂閱', summary: '', sources: [r2 ?? ''] },
+        { op: 'add_feature', title: '暫停', summary: '', sources: [r3 ?? ''] },
+        { op: 'add_criterion', feature: 'PRD-001', text: '可以選月繳' },
+        { op: 'add_criterion', feature: 'PRD-002', text: '取消後用到期末' },
+        { op: 'add_criterion', feature: 'PRD-002', text: '取消要確認' },
+        { op: 'drop_requirement', id: r4 ?? '', reason: '下一版' },
+      ],
+      'pm',
+    ),
+    [
+      { op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e' },
+      { op: 'add_test_case', criteria: ['AC-002'], title: 't', steps: ['s'], expected: 'e' },
+    ],
+    'qa',
+  )
+
+  test('says, for each requirement, how far its spec and tests are, from the board', () => {
+    const rows = snapshotOf({ board, live: emptyLive(), now: NOW, requirements: reqs }).requirements ?? []
+    expect(rows.map(r => [r.id, r.features, r.layers.spec.state, r.layers.tests.state, r.layers.tests.note])).toEqual([
+      [r1, ['PRD-001'], 'done', 'done', '1/1'],
+      [r2, ['PRD-002'], 'done', 'doing', '1/2'],
+      [r3, ['PRD-003'], 'todo', 'todo', '0/0'],
+      [r4, [], 'todo', 'todo', '0/0'],
+    ])
+    expect(rows[3]?.dropped).toBe('下一版')
+  })
+
+  test('marks the stages crew does not track yet as later, never as done', () => {
+    const rows = snapshotOf({ board, live: emptyLive(), now: NOW, requirements: reqs }).requirements ?? []
+    expect(rows).toHaveLength(4)
+    expect(rows.every(r => ['design', 'tasks', 'code', 'review'].every(k => r.layers[k as 'design'].state === 'later'))).toBe(true)
   })
 })

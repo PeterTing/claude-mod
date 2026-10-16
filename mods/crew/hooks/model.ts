@@ -125,6 +125,20 @@ export type Stage = { label: string; done: number; total: number; state: StageSt
 
 export type LayerState = 'done' | 'doing' | 'todo'
 
+/** One stage of a requirement's development: `stale`, done once but out of date (a review before newer commits); `later`, a stage crew does not track yet. */
+export type StageCell = { state: LayerState | 'stale' | 'later'; note?: string }
+
+/** A PRD requirement and how far each stage of its development is, from the board and the repo. */
+export type RequirementRow = {
+  id: string
+  text: string
+  /** The features in scope that answer it. */
+  features: readonly string[]
+  /** Why it was moved out of scope, when it was. */
+  dropped?: string
+  layers: Readonly<Record<'spec' | 'design' | 'tasks' | 'code' | 'review' | 'tests', StageCell>>
+}
+
 /** One feature of the PRD (a prd_items entry) and how far each layer of it is. */
 export type Feature = {
   id: string
@@ -165,6 +179,8 @@ export type Snapshot = {
   actions: readonly string[]
   /** Memories attached to starts and wakes: how many times, and their average size. */
   injected?: { count: number; average: number }
+  /** The PRD's requirements, each with how far its development is. */
+  requirements?: readonly RequirementRow[]
   /** How the board stands against the PRD as it is now, and when crew last looked. */
   alignment?: { covered: number; total: number; gaps: number; added: number; removed: number; prdChanged: string; checked: string }
   /** Tokens the small model spent tidying memory today. */

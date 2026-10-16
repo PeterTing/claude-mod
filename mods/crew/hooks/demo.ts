@@ -1,4 +1,4 @@
-import type { Route, Snapshot } from './model'
+import type { RequirementRow, Route, Snapshot, StageCell } from './model'
 
 /** Sample data for the design preview. None of it is real. */
 
@@ -6,6 +6,43 @@ const S: Route = { tier: 'S', model: 'Sonnet', effort: 'medium' }
 const M: Route = { tier: 'M', model: 'Sonnet', effort: 'high' }
 const L: Route = { tier: 'L', model: 'Opus', effort: 'high' }
 const XL: Route = { tier: 'XL', model: 'Opus', effort: 'xhigh' }
+
+const done: StageCell = { state: 'done' }
+const todo: StageCell = { state: 'todo' }
+
+const REQUIREMENTS: RequirementRow[] = [
+  {
+    id: 'R-5e01a7',
+    text: '方案頁列出月繳方案與價格',
+    features: ['F-01'],
+    layers: { spec: done, design: done, tasks: done, code: { state: 'done', note: '2/2' }, review: done, tests: { state: 'done', note: '4/4' } },
+  },
+  {
+    id: 'R-9b3c12',
+    text: '用信用卡結帳，失敗時說明原因',
+    features: ['F-02'],
+    layers: { spec: done, design: done, tasks: done, code: { state: 'doing', note: '3/5' }, review: todo, tests: { state: 'doing', note: '2/6' } },
+  },
+  {
+    id: 'R-07d4e9',
+    text: '可以隨時取消，到期前仍可使用',
+    features: ['F-03'],
+    layers: { spec: done, design: done, tasks: done, code: { state: 'doing', note: '1/3' }, review: { state: 'stale' }, tests: { state: 'doing', note: '3/5' } },
+  },
+  {
+    id: 'R-c84a10',
+    text: '每月寄出電子發票',
+    features: ['F-05'],
+    layers: { spec: done, design: { state: 'doing' }, tasks: todo, code: todo, review: todo, tests: { state: 'todo', note: '0/3' } },
+  },
+  {
+    id: 'R-2f6b55',
+    text: '提供年繳方案，打 85 折',
+    features: [],
+    dropped: '移出 v1（DEC-14），v1.1 再做',
+    layers: { spec: todo, design: todo, tasks: todo, code: todo, review: todo, tests: todo },
+  },
+]
 
 const NORMAL: Snapshot = {
   prd: { id: 'PRD-001', title: '會員訂閱 v1', progress: 62 },
@@ -171,6 +208,7 @@ const NORMAL: Snapshot = {
   brainShare: 0.09,
   alerts: [],
   actions: ['DEC-15 TASK-12 拆成 12a／12b，全端門檻 100K → 80K'],
+  requirements: REQUIREMENTS,
   alignment: { covered: 14, total: 14, gaps: 0, added: 0, removed: 0, prdChanged: '2 小時前', checked: '剛剛' },
 }
 
@@ -205,6 +243,15 @@ const ATTENTION: Snapshot = {
         }
       : g,
   ),
+  requirements: [
+    ...REQUIREMENTS,
+    {
+      id: 'R-3a90f2',
+      text: '可以暫停訂閱，暫停期間不扣款',
+      features: [],
+      layers: { spec: todo, design: todo, tasks: todo, code: todo, review: todo, tests: { state: 'todo', note: '0/0' } },
+    },
+  ],
   alignment: { covered: 14, total: 16, gaps: 2, added: 1, removed: 1, prdChanged: '2 分鐘前', checked: '剛剛' },
 }
 

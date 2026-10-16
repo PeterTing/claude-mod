@@ -65,6 +65,7 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 
   It also runs when Claude Code starts, so an edit made while it was closed is caught too.
 - **The pane says how current it is.** It shows how the board stands against the PRD, when the PRD last changed, and when crew last looked.
+- **Progress is counted per requirement.** The Progress tab lists each PRD requirement with how far each stage of its development is: spec, design, tasks, code, review, tests. The spec and tests columns come from the board; the other stages show `—` until the roles that do them are added. A requirement moved out of scope shows the reason instead.
 
 ## Where things live
 

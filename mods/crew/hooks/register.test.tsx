@@ -122,6 +122,21 @@ describe('/crew demo', () => {
     }
   })
 
+  test('lists each PRD requirement with how far each stage of its development is', async ($, on) => {
+    stage(on)
+    await demoOn($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount(pane(surface))
+      await ui.press({ key: 'tab-progress' })
+      const text = await shown(ui)
+      expect(text).toMatch(/PRD 需求/)
+      expect(text).toMatch(/R-9b3c12[\s\S]*實作 ◐ 3\/5[\s\S]*測試 ◐ 2\/6/)
+      expect(text).toMatch(/R-07d4e9[\s\S]*Review ⟳/)
+      expect(text).toMatch(/R-2f6b55[\s\S]*移出範圍：移出 v1/)
+      await ui.unmount()
+    }
+  })
+
   test('jumps from a gap to its thread', async ($, on) => {
     stage(on)
     await demoOn($)

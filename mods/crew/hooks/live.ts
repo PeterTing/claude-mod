@@ -6,7 +6,7 @@ import type { MemoryEntry } from './memory'
 import { gateG0 } from './prd'
 import type { Requirement } from './prd'
 import { ROLE_NAMES } from './model'
-import type { Feature, Gate, Item, RoleId, RoleRow, Snapshot, Stage, Tier, UsageRow } from './model'
+import type { Feature, Gate, Item, RequirementRow, RoleId, RoleRow, Snapshot, Stage, StageCell, Tier, UsageRow } from './model'
 
 /** A team that has not started. */
 export const emptyLive = (): CrewLive => ({
@@ -99,6 +99,44 @@ const pendingStage = (label: string): Stage => ({ label, done: 0, total: 0, stat
 const name = (who: string): string => (who === 'crew' ? 'crew' : (ROLE_NAMES[who as RoleId] ?? who))
 
 const MEMORY_ROWS = 40
+
+const NOT_YET: StageCell = { state: 'later' }
+
+/**
+ * Each PRD requirement with how far its development is: the spec (its features
+ * have criteria) and the tests written for them, from the board; the stages
+ * later phases add are marked later, never done.
+ */
+const requirementRows = (board: Tracker, requirements: readonly Requirement[]): RequirementRow[] => {
+  const features = board.prd_items.filter(i => i.crew_dropped === undefined)
+  const linked = new Set(board.prd_items.flatMap(i => i.test_cases.flatMap(c => c.acceptance_criteria ?? [])))
+  const dropped = new Map<string, string>()
+  for (const d of board.decisions ?? []) {
+    const v = d as { requirements?: unknown; reason?: unknown }
+    if (Array.isArray(v.requirements)) for (const r of v.requirements) if (typeof r === 'string') dropped.set(r, typeof v.reason === 'string' ? v.reason : '')
+  }
+  return requirements.map(r => {
+    const answering = features.filter(f => Array.isArray(f.source_refs) && (f.source_refs as unknown[]).includes(r.id))
+    const criteria = answering.flatMap(criteriaOf)
+    const specced = answering.filter(f => criteriaOf(f).length > 0).length
+    const tested = criteria.filter(c => linked.has(c.id)).length
+    const state = (done: number, all: number): StageCell['state'] => (all > 0 && done === all ? 'done' : done > 0 ? 'doing' : 'todo')
+    return {
+      id: r.id,
+      text: r.text,
+      features: answering.map(f => f.id),
+      ...(dropped.has(r.id) ? { dropped: dropped.get(r.id) ?? '' } : {}),
+      layers: {
+        spec: { state: state(specced, answering.length) },
+        design: NOT_YET,
+        tasks: NOT_YET,
+        code: NOT_YET,
+        review: NOT_YET,
+        tests: { state: state(tested, criteria.length), note: `${tested}/${criteria.length}` },
+      },
+    }
+  })
+}
 
 /** Everything the pane draws, from the board and memories on disk and the team this session runs. */
 export const snapshotOf = ({
@@ -254,9 +292,10 @@ export const snapshotOf = ({
     actions: [],
     injected: { count: live.injected.count, average: live.injected.count === 0 ? 0 : Math.round(live.injected.tokens / live.injected.count) },
     chores: total(live.usage.memory),
-    ...(g0 === undefined
+    ...(g0 === undefined || board === null || requirements === undefined
       ? {}
       : {
+          requirements: requirementRows(board, requirements),
           alignment: {
             covered: g0.covered,
             total: g0.total,
