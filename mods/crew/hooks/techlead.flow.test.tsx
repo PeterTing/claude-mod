@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
 import { requirementsOf } from './prd'
-import { command, done, paneText, PLAN, PRD, ROOT, SPLIT, start, world, write } from './world'
+import { build, command, done, paneText, PLAN, PRD, ROOT, SPLIT, start, world, write } from './world'
 
 /** The tech lead breaks the tested criteria into tasks; G3 holds every criterion to one. */
 
@@ -33,6 +33,7 @@ describe('the tech lead', () => {
     expect((await $.command.run(command('status'))).text).toMatch(/planning[\s\S]*TL/)
     expect(String((await write($, 'a-techlead-3', PLAN)).result)).toMatch(/TASK-001、TASK-002/)
     await done($, 'a-techlead-3')
+    await build($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
     expect(w.toasts.at(-1)).toMatch(/G3 2\/2/)
     expect(String((await call($, 'board_read', {}, 'a-pm-1')).result)).toMatch(/AC-001 可以選月繳方案 ← TC-001 · 任務 TASK-001/)
@@ -79,6 +80,7 @@ describe('the tech lead', () => {
     expect(w.sent.at(-1)?.text).toMatch(/PM 在這些項目的討論串留言給你：AC-002/)
     await write($, 'a-techlead-3', PLAN.slice(1))
     await done($, 'a-techlead-3')
+    await build($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
   })
 
@@ -105,6 +107,8 @@ describe('the tech lead', () => {
     if (!withTests.ok) throw new Error(withTests.errors.join())
     const plannedBoard = applyOps(withTests.tracker, PLAN as unknown as Op[], { by: 'techlead', today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
     if (!plannedBoard.ok) throw new Error(plannedBoard.errors.join())
+    w.commit('TASK-001: 方案頁', 'HEAD')
+    w.commit('TASK-002: 取消流程', 'HEAD')
     w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(plannedBoard.tracker))
     w.disk.set(`${ROOT}/.crew/threads/AC-001.jsonl`, `${JSON.stringify({ t: 1, n: 1, item: 'AC-001', from: 'pm', to: 'techlead', text: '用台灣時間' })}\n`)
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'done', round: 0, retries: 0 }, questions: [], lead: 'person' })
@@ -151,7 +155,8 @@ describe('the tech lead', () => {
     expect(w.sent.at(-1)?.text).toMatch(/AC-003/)
     await write($, 'a-techlead-3', [{ op: 'add_task', feature: 'PRD-001', criteria: ['AC-003'], title: '年繳', detail: '', size: 'S' }])
     await done($, 'a-techlead-3')
-    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:techlead'])
+    await build($, ['TASK-001', 'TASK-002', 'TASK-003'])
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:techlead', 'crew:fullstack'])
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
   })
 

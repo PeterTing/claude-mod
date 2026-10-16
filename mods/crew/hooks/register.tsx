@@ -13,6 +13,7 @@ import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, r
 import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { ROLE_NAMES } from './model'
 import { baselineFor, baselineOf, changeKey, cut, diffRequirements, earlierFor, gateG0, MAX_REQUIREMENTS, refsOf, requirementsOf } from './prd'
+import { branchOf, commitsByTask, withCommits, workdirOf } from './git'
 import type { Requirement } from './prd'
 import { composeStart, relatedOf, threadLines, wakePlan, withMemories, workingSet } from './pack'
 import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
@@ -25,8 +26,8 @@ import type { Actions } from './views'
 const PANE = 'crew'
 
 /** The names the roles get as teammates, and how a message names them. */
-const CREW_TEAMMATE = /^crew-(pm|qa|techlead)\b/i
-const CREW_MENTION = /@crew-(pm|qa|techlead)\b/i
+const CREW_TEAMMATE = /^crew-(pm|qa|techlead|fullstack)\b/i
+const CREW_MENTION = /@crew-(pm|qa|techlead|fullstack)\b/i
 
 /** One of the roles crew runs. */
 const isCrewRole = (v: unknown): v is CrewRole => typeof v === 'string' && (CREW_ROLES as readonly string[]).includes(v)
@@ -306,7 +307,7 @@ async function writeCrew($: any, path: string, text: string): Promise<boolean> {
     if (await staysIn($, ignore)) {
       const had = (await readCrew($, ignore)) ?? ''
       const lines = had.split('\n').filter((l: string) => l !== '')
-      const missing = ['usage/', 'log/'].filter(rule => !lines.includes(rule))
+      const missing = ['usage/', 'log/', 'work/'].filter(rule => !lines.includes(rule))
       if (missing.length > 0) await $.fs.write(ignore, `${[...lines, ...missing].join('\n')}\n`)
     }
   }
@@ -589,7 +590,9 @@ const withUnread = (l: CrewLive, role: CrewRole, text: string, item?: string): s
  * the work and its recent thread lines go first, the work last. With a reason,
  * it replaces the role's agent (a rotation) and carries its last report.
  */
-async function startRole($: any, role: CrewRole, route: Route, work: string, reason?: string, run: 'flow' | 'person' = 'flow') {
+async function startRole($: any, role: CrewRole, route: Route, given: string, reason?: string, run: 'flow' | 'person' = 'flow') {
+  const work = await withWorkdir($, role, given)
+  if (work === undefined) return
   const l = await read($, live)
   const was = l.roles[role]
   const task = withUnread(l, role, work)
@@ -660,7 +663,28 @@ async function startRole($: any, role: CrewRole, route: Route, work: string, rea
  * not been given yet, or starts a fresh one with the pack when a wake costs more
  * (see wakePlan) or the agent cannot be woken.
  */
-async function deliver($: any, role: CrewRole, route: Route, work: string, item?: string, run: 'flow' | 'person' = 'flow') {
+const WORKDIR = '工作目錄：'
+
+/**
+ * The full-stack works in crew's own worktree: made the first time, named in
+ * every piece of work it gets. Undefined when it cannot be made, and then the
+ * role is blocked and says why.
+ */
+async function withWorkdir($: any, role: CrewRole, work: string): Promise<string | undefined> {
+  if (role !== 'fullstack' || work.includes(WORKDIR)) return work
+  const wd = await ensureWorkdir($)
+  if ('error' in wd) {
+    await update($, live, l => ({ ...l, roles: { ...l.roles, fullstack: { ...l.roles.fullstack, state: 'blocked' as const, doing: cut(wd.error, 200) } } }))
+    $.ui.toast(`crew：全端沒有開始：${wd.error}`)
+    await note($, { kind: 'failed', role, reason: wd.error })
+    return undefined
+  }
+  return `${work}\n\n${WORKDIR}${wd.dir}（分支 ${wd.branch}）。所有修改和 git 指令都在這個目錄裡做，例如 git -C ${wd.dir} commit。`
+}
+
+async function deliver($: any, role: CrewRole, route: Route, given: string, item?: string, run: 'flow' | 'person' = 'flow') {
+  const work = await withWorkdir($, role, given)
+  if (work === undefined) return
   const l0 = await read($, live)
   const state = l0.roles[role]
   // A role at work is never replaced: the message waits in its inbox, and a rotation waits for it to be idle.
@@ -952,13 +976,14 @@ async function resumeFlow($: any): Promise<string> {
     }))
   }
   const prd = await prdFile($, l.prdPath)
+  await syncCommits($)
   const board = await loadBoard($)
   if (board === null) return `沒有接續：${boardProblem() ?? '找不到看板 prd-tracker.json。'}`
   // Only a split needs the PRD itself; tests and gaps go on from the board.
   if ('error' in prd && l.flow.stage === 'splitting') return `沒有接續：${prd.error}`
   const text: string = 'error' in prd ? '' : await $.fs.read(prd.full)
   // The roles' old conversations are gone or stuck: whoever the flow calls starts fresh.
-  await update($, live, s => ({ ...s, roles: { pm: { ...s.roles.pm, rotate: true }, qa: { ...s.roles.qa, rotate: true }, techlead: { ...s.roles.techlead, rotate: true } } }))
+  await update($, live, s => ({ ...s, roles: Object.fromEntries(CREW_ROLES.map(r => [r, { ...s.roles[r], rotate: true }])) as CrewLive['roles'] }))
   $.ui.toast(`crew：接續 ${l.prdPath}（${l.flow.stage}）`)
   await note($, { kind: 'resume', path: l.prdPath, stage: l.flow.stage })
   const requirements = (await prdView($))?.requirements
@@ -978,7 +1003,53 @@ const inboxOf = (l: CrewLive): Record<CrewRole, string[]> => {
     Object.entries(l.threads)
       .filter(([, messages]) => messages.some(m => m.to === role && m.from !== 'crew' && (m.n ?? 0) > (l.seen[role] ?? 0)))
       .map(([item]) => item)
-  return { pm: unread('pm'), qa: unread('qa'), techlead: unread('techlead') }
+  return { pm: unread('pm'), qa: unread('qa'), techlead: unread('techlead'), fullstack: unread('fullstack') }
+}
+
+/** A git command in the repo, by its argument vector: no shell, the repo's hooks off. */
+const git = ($: any, args: readonly string[]) =>
+  $.process.run(['git', '-C', files.root, ...args], { timeoutMs: 30_000 }) as Promise<{ exitCode: number; stdout: string; stderr: string }>
+
+/** The worktree and branch the full-stack builds this PRD in: made from the checkout's HEAD the first time. */
+async function ensureWorkdir($: any): Promise<{ dir: string; branch: string } | { error: string }> {
+  const l = await read($, live)
+  if (l.prdPath === null) return { error: '還沒有開始的 PRD。' }
+  const path = relativeOf(l.prdPath)
+  const dir = workdirOf(files.root, path)
+  const branch = branchOf(path)
+  try {
+    if (!(await staysIn($, dir))) return { error: `${dir} 是連結，或指到 repo 外。` }
+    const inside = await git($, ['rev-parse', '--is-inside-work-tree'])
+    if (inside.exitCode !== 0 || inside.stdout.trim() !== 'true') return { error: '這個資料夾不是 git repo：全端要在 crew 自己的分支上 commit。' }
+    if (await $.fs.exists(`${dir}/.git`)) return { dir, branch }
+    const has = await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
+    const made = has.exitCode === 0 ? await git($, ['worktree', 'add', dir, branch]) : await git($, ['worktree', 'add', '-b', branch, dir, 'HEAD'])
+    if (made.exitCode !== 0) return { error: `建立工作目錄失敗：${cut(squeeze(made.stderr), 200)}` }
+    await note($, { kind: 'workdir', dir, branch })
+    return { dir, branch }
+  } catch (err) {
+    return { error: `git 沒辦法執行：${cut(String(err), 200)}` }
+  }
+}
+
+/** Reads the commits that do tasks, on crew's branch and the checkout's history, and marks them on the board. */
+async function syncCommits($: any) {
+  const l = await read($, live)
+  if (l.prdPath === null) return
+  const branch = branchOf(relativeOf(l.prdPath))
+  try {
+    const has = await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
+    const log = await git($, ['log', '--format=%H%x09%s', '-n', '2000', ...(has.exitCode === 0 ? [branch] : []), 'HEAD', '--'])
+    if (log.exitCode !== 0) return
+    const commits = commitsByTask(log.stdout)
+    await changeBoard($, async board => {
+      if (board === null) return { value: undefined }
+      const marked = withCommits(board, commits)
+      return marked === null ? { value: undefined } : { board: marked, value: undefined }
+    })
+  } catch (err) {
+    if (!(err instanceof BoardRefused)) $.ui.log(`crew: could not read the commits: ${String(err)}`, { to: 'debug' })
+  }
 }
 
 /** Whitespace folded to single spaces: text from the board kept to one line. */
@@ -1116,6 +1187,8 @@ async function look($: any) {
   // Nothing moved: two stats, and the time crew looked kept fresh every half minute.
   if (version === s.prdVersion && boardAt === s.boardVersion && now - s.checkedAt < QUIET_MS) return
   const view = await prdView($)
+  // Commits land on crew's branch between looks: the board's marks follow them.
+  await syncCommits($)
   let board = await loadBoard($)
   // The PRD version this look takes as seen: a board crew cannot read, or a removal not yet confirmed, leaves it for the next look.
   let seen = board === null ? s.prdVersion : version
@@ -1300,7 +1373,8 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
       return `已記下 ${id} 的回答。`
     }
     // A role's own question goes back to that role; the flow's own question, to the role its stage waits on.
-    const askedBy: CrewRole = isCrewRole(q.from) ? q.from : (await read($, live)).flow.resumeAt === 'planning' ? 'techlead' : 'pm'
+    const waiting = (await read($, live)).flow.resumeAt
+    const askedBy: CrewRole = isCrewRole(q.from) ? q.from : waiting === 'planning' ? 'techlead' : waiting === 'building' ? 'fullstack' : 'pm'
     if (q.item !== undefined && ITEM.test(q.item)) await post($, { item: q.item, from: by, to: askedBy, text: `${q.question} → ${answer}` })
     await remember($, { type: 'DEC', text: `${decided}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `${by} ${q.id}` }, askedBy)
     await feed($, { type: 'answered', question: q.question, answer, ...(isCrewRole(q.from) ? { role: q.from } : {}), escalation: q.from === 'crew' })
@@ -1405,6 +1479,8 @@ async function roleEnded($: any, e: any, next: any, role: CrewRole, before: Crew
   await saveUsage($)
   // A turn that answered the person is not the flow's work: it moves a running flow on only once it is done or idle.
   const flowWork = before.roles[role].run !== 'person' || !RUNNING.includes(l.flow.stage)
+  // What the full-stack committed is the signal of what it built: read before the flow looks at the board.
+  await syncCommits($)
   const board = await loadBoard($)
   const requirements = (await prdView($))?.requirements
   // Whether QA has a run of the flow's under way now: a PM sync then waits for it rather than starting another.

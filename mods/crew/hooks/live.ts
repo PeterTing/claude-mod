@@ -16,6 +16,7 @@ export const emptyLive = (): CrewLive => ({
     pm: { state: 'idle', doing: '—', context: 0 },
     qa: { state: 'idle', doing: '—', context: 0 },
     techlead: { state: 'idle', doing: '—', context: 0 },
+    fullstack: { state: 'idle', doing: '—', context: 0 },
   },
   agents: {},
   usage: {},
@@ -129,6 +130,11 @@ const requirementRows = (board: Tracker, requirements: readonly Requirement[]): 
     const planned = new Set(answering.flatMap(f => tasksOf(f).filter(x => x.crew_dropped === undefined).flatMap(x => x.acceptance_criteria)))
     const withTask = criteria.filter(c => planned.has(c.id)).length
     const tasks = state(withTask, criteria.length)
+    // The tasks serving this requirement's criteria, and those with a commit that does them.
+    const ids = new Set(criteria.map(c => c.id))
+    const serving = answering.flatMap(f => tasksOf(f).filter(x => x.crew_dropped === undefined && x.acceptance_criteria.some(c => ids.has(c))))
+    const built = serving.filter(x => (x.crew_commits ?? []).length > 0).length
+    const code = state(built, serving.length)
     const out = answering.length === 0 ? dropped.get(r.id) : undefined
     return {
       id: r.id,
@@ -140,7 +146,7 @@ const requirementRows = (board: Tracker, requirements: readonly Requirement[]): 
         design: NOT_YET,
         cases: { state: cases === 'done' && spec !== 'done' ? 'doing' : cases, note: `${tested}/${criteria.length}` },
         tasks: { state: tasks === 'done' && spec !== 'done' ? 'doing' : tasks, note: `${withTask}/${criteria.length}` },
-        code: NOT_YET,
+        code: serving.length === 0 ? { state: 'todo', note: '0/0' } : { state: code === 'done' && (tasks !== 'done' || spec !== 'done') ? 'doing' : code, note: `${built}/${serving.length}` },
         review: NOT_YET,
         runs: NOT_YET,
       },
@@ -168,6 +174,13 @@ export const snapshotOf = ({
   const g1 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG1(board)
   const g4 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG4(board)
   const g3 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG3(board)
+  // The tasks in the plan, and those with a commit doing them.
+  const liveTasks = (board?.prd_items ?? []).filter(i => i.crew_dropped === undefined).flatMap(i => tasksOf(i).filter(x => x.crew_dropped === undefined))
+  const built: GateResult = {
+    covered: liveTasks.filter(x => (x.crew_commits ?? []).length > 0).length,
+    total: liveTasks.length,
+    gaps: liveTasks.filter(x => (x.crew_commits ?? []).length === 0).map(x => ({ id: x.id, title: x.title })),
+  }
   const stage = live.flow.stage
   const testing = TESTING.includes(stage)
 
@@ -192,14 +205,15 @@ export const snapshotOf = ({
     board === null
       ? null
       : {
-          done: (g0?.requirements.covered ?? 0) + g1.covered + g4.covered + g3.covered,
-          total: (g0?.requirements.total ?? 0) + g1.total + g4.total + g3.total,
+          done: (g0?.requirements.covered ?? 0) + g1.covered + g4.covered + g3.covered + built.covered,
+          total: (g0?.requirements.total ?? 0) + g1.total + g4.total + g3.total + built.total,
           stages: [
             stageOf('拆解', split, stage === 'splitting'),
             pendingStage('設計'),
             // The plan is done only once the split is, as testing is.
             { ...stageOf('架構', g3, stage === 'planning'), ...(split.gaps.length > 0 && g3.total > 0 && g3.gaps.length === 0 ? { state: stage === 'planning' ? ('active' as const) : ('pending' as const) } : {}) },
-            pendingStage('實作'),
+            // Code is done only once the plan is: a criterion still without a task has nothing built for it.
+            { ...stageOf('實作', built, stage === 'building'), ...((split.gaps.length > 0 || g3.gaps.length > 0) && built.total > 0 && built.gaps.length === 0 ? { state: stage === 'building' ? ('active' as const) : ('pending' as const) } : {}) },
             // Testing is done only once the split is: a requirement still without features has nothing tested yet.
             { ...stageOf('測試', g4, testing), ...(split.gaps.length > 0 && g4.total > 0 && g4.gaps.length === 0 ? { state: testing ? ('active' as const) : ('pending' as const) } : {}) },
             pendingStage('驗收'),
@@ -213,7 +227,7 @@ export const snapshotOf = ({
         }
 
   const roleRow = (id: RoleId): RoleRow => {
-    if (id !== 'pm' && id !== 'qa' && id !== 'techlead') return { id, state: 'idle', doing: LATER, context: 0, limit: 60_000, today: 0 }
+    if (id === 'uiux') return { id, state: 'idle', doing: LATER, context: 0, limit: 60_000, today: 0 }
     const r = live.roles[id]
     return {
       id,
@@ -242,19 +256,24 @@ export const snapshotOf = ({
         note: `${covered}/${criteria.length} 條驗收條件有 test case`,
       }
     })
-  // The tech lead's tasks: not started until the code that does them lands (phase 4c).
+  // The tasks: the tech lead's until the full-stack takes one on; under way once a commit does it,
+  // done only once review and test runs say so (later phases), never by a commit alone.
   const tl = live.roles.techlead
-  const taskItems: Item[] = (board?.prd_items ?? [])
-    .filter(i => i.crew_dropped === undefined)
-    .flatMap(item => tasksOf(item).filter(x => x.crew_dropped === undefined))
-    .map(x => ({
+  const fs = live.roles.fullstack
+  const taskItems: Item[] = liveTasks.map(x => {
+    const commits = x.crew_commits ?? []
+    const onIt = live.flow.stage === 'building' && live.flow.building === x.id
+    const taken = commits.length > 0 || onIt
+    const by = taken ? fs : tl
+    return {
       id: x.id,
       title: x.title,
-      owner: 'techlead',
-      status: 'todo',
-      route: { tier: tl.tier ?? 'M', model: tl.label ?? 'Opus', effort: tl.effort ?? 'high' },
-      note: `對應 ${x.acceptance_criteria.join('、')}${x.size === undefined ? '' : `・${x.size}`}`,
-    }))
+      owner: taken ? 'fullstack' : 'techlead',
+      status: taken ? 'doing' : 'todo',
+      route: { tier: by.tier ?? x.size ?? 'M', model: by.label ?? (taken ? 'Sonnet' : 'Opus'), effort: by.effort ?? 'high' },
+      note: [`對應 ${x.acceptance_criteria.join('、')}${x.size === undefined ? '' : `・${x.size}`}`, ...(commits.length > 0 ? [`commit ${commits.map(c => c.slice(0, 7)).join('、')}`] : []), ...(onIt ? ['全端正在做'] : [])].join(' · '),
+    }
+  })
 
   const titles = new Map<string, string>()
   for (const item of board?.prd_items ?? []) {
@@ -263,7 +282,7 @@ export const snapshotOf = ({
     for (const x of tasksOf(item)) titles.set(x.id, x.title)
   }
 
-  const crewRoles: RoleId[] = ['pm', 'qa', 'techlead']
+  const crewRoles: RoleId[] = ['pm', 'qa', 'techlead', 'fullstack']
   const usage: UsageRow[] = crewRoles
     .filter(r => live.usage[r] !== undefined)
     .map(r => {
@@ -310,7 +329,7 @@ export const snapshotOf = ({
       .map(m => ({ id: m.id, type: m.type, text: m.text, source: m.source, refs: m.refs, ...(m.supersededBy !== undefined ? { supersededBy: m.supersededBy } : {}) })),
     carrying: crewRoles
       .map(r => {
-        const ids = live.roles[r as 'pm' | 'qa' | 'techlead'].given ?? []
+        const ids = live.roles[r as 'pm' | 'qa' | 'techlead' | 'fullstack'].given ?? []
         const known = memories.filter(m => ids.includes(m.id))
         return { role: r, ids, tokens: known.reduce((n, m) => n + estimateTokens(m.text), 0) }
       })

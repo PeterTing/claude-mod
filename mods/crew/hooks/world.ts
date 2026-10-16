@@ -17,6 +17,9 @@ export const PRD = '# 會員訂閱\n\n使用者可以選月繳方案，可以隨
 
 export type Spawn = { subagentType: string; name?: string; description: string; model?: string; prompt: string }
 
+/** The world a test made last: what `build` commits into. */
+const current: { commit?: (subject: string, branch?: string) => string } = {}
+
 export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', denySpawnOf = '', stopped = [] as string[] } = {}) => {
   const clock = mock.clock(on, { now: NOW })
   /** crew's own store, which outlives sessions and is not in the repo. */
@@ -61,6 +64,43 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   }
   const isDir = (path: string) => [...disk.keys()].some(p => p.startsWith(`${path}/`))
   on('fs.exists', (_$, e) => ({ value: disk.has(resolve(e.path)) || isDir(resolve(e.path)) }))
+  /** A repo's git, as far as crew asks it: branches with their commits (newest first), and worktrees. */
+  const git = { repo: true, branches: new Map<string, { sha: string; subject: string }[]>([['HEAD', []]]), worktrees: new Map<string, string>(), commands: [] as string[][] }
+  let shas = 0
+  /** A commit the full-stack made on a branch (crew's, by default the PRD's). */
+  const commit = (subject: string, branch = 'crew/prd') => {
+    shas += 1
+    const sha = (0xabc0000 + shas).toString(16).padStart(7, '0')
+    git.branches.set(branch, [{ sha, subject }, ...(git.branches.get(branch) ?? [])])
+    return sha
+  }
+  on('process.run', (_$, e) => {
+    const argv = (e as { argv: string[] }).argv
+    git.commands.push([...argv])
+    const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    const fail = (stderr = '') => ({ value: { exitCode: 1, stdout: '', stderr, isStdoutTruncated: false, isStderrTruncated: false } })
+    if (argv[0] !== 'git' || argv[1] !== '-C') return fail('not git')
+    const args = argv.slice(3)
+    if (!git.repo) return fail('fatal: not a git repository')
+    if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree') return ok('true\n')
+    if (args[0] === 'rev-parse' && args[1] === '--verify') return git.branches.has((args[3] ?? '').replace('refs/heads/', '')) ? ok('x\n') : fail()
+    if (args[0] === 'worktree' && args[1] === 'add') {
+      const fresh = args[2] === '-b'
+      const branch = fresh ? (args[3] ?? '') : (args[3] ?? '')
+      const dir = fresh ? (args[4] ?? '') : (args[2] ?? '')
+      if (fresh) git.branches.set(branch, [...(git.branches.get('HEAD') ?? [])])
+      git.worktrees.set(dir, branch)
+      disk.set(`${dir}/.git`, `gitdir: ${ROOT}/.git/worktrees/x`)
+      return ok()
+    }
+    if (args[0] === 'log') {
+      const refs = args.slice(4, args.indexOf('--'))
+      const seen = new Set<string>()
+      const lines = refs.flatMap(r => git.branches.get(r) ?? []).filter(c => !seen.has(c.sha) && seen.add(c.sha) !== undefined)
+      return ok(lines.map(c => `${c.sha}\t${c.subject}`).join('\n'))
+    }
+    return fail(`unknown: ${args.join(' ')}`)
+  })
   /** A read of a Markdown file takes this long, by the test's clock, so two looks at the PRD can meet. */
   const slow = { ms: 0 }
   /** How many times each file was read. */
@@ -157,7 +197,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   const board = () => JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? 'null') as Tracker | null
-  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads }
+  current.commit = commit
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)
@@ -207,4 +248,12 @@ export const paneText = async ($: Engine, tab?: string) => {
   const text = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
   await ui.unmount()
   return text
+}
+
+/** The full-stack builds each task in turn: a commit that does it on crew's branch, then the end of its run. */
+export const build = async ($: Engine, ids: readonly string[] = ['TASK-001', 'TASK-002'], agentId = 'a-fullstack-4') => {
+  for (const id of ids) {
+    current.commit?.(`${id}: 完成 ${id}`)
+    await done($, agentId)
+  }
 }

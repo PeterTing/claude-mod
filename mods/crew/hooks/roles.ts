@@ -10,9 +10,9 @@ export const TOOLS = {
   search: 'mcp__crew__memory_search',
 } as const
 
-export type CrewRole = 'pm' | 'qa' | 'techlead'
+export type CrewRole = 'pm' | 'qa' | 'techlead' | 'fullstack'
 
-export const CREW_ROLES: readonly CrewRole[] = ['pm', 'qa', 'techlead']
+export const CREW_ROLES: readonly CrewRole[] = ['pm', 'qa', 'techlead', 'fullstack']
 
 const SHARED = [
   '你是 crew 產品團隊的一員，跟其他角色透過看板和討論串合作，不直接對話。',
@@ -48,6 +48,13 @@ const TL_CARD = [
   SHARED,
 ].join('\n\n')
 
+const FS_CARD = [
+  '你是全端工程師。',
+  '職責：一次實作一個 Tech lead 拆好的任務（TASK-…），讓它對應的驗收條件和 test case 成立。',
+  '原則：只在 crew 給你的工作目錄（crew 自己的 git worktree 和分支）裡改程式，不切換或改動其他分支，不 push。先寫會失敗的測試再實作，跑專案的測試確認通過。每個 commit 的訊息都以任務編號開頭（例如「TASK-003: 加上標題驗證」），crew 看 commit 判斷做到哪裡。需要技術取捨時用 thread_post 問 Tech lead；需要產品決定時用 ask_person。不要改驗收條件或任務。',
+  SHARED,
+].join('\n\n')
+
 /** Agent definitions for $.agent.register. The model and effort are set per task by the router. */
 export const AGENT_SPECS: Record<CrewRole, { name: string; description: string; prompt: string; tools: string[]; model: string; effort: string; omitClaudeMd: true }> = {
   pm: {
@@ -66,6 +73,15 @@ export const AGENT_SPECS: Record<CrewRole, { name: string; description: string; 
     tools: ['Read', TOOLS.read, TOOLS.write, TOOLS.post, TOOLS.thread, TOOLS.ask, TOOLS.save, TOOLS.search],
     model: 'sonnet',
     effort: 'medium',
+    omitClaudeMd: true,
+  },
+  fullstack: {
+    name: 'fullstack',
+    description: 'crew 的全端工程師：在 crew 的 worktree 實作 Tech lead 拆好的任務並 commit。只由 crew 啟動。',
+    prompt: FS_CARD,
+    tools: ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash', TOOLS.read, TOOLS.post, TOOLS.thread, TOOLS.ask, TOOLS.save, TOOLS.search],
+    model: 'sonnet',
+    effort: 'high',
     omitClaudeMd: true,
   },
   techlead: {
@@ -125,7 +141,7 @@ export const TOOL_SPECS = [
     description: '在某個項目的討論串留言給另一個角色。對方下次被叫醒時會看到。',
     inputSchema: {
       type: 'object',
-      properties: { item: { type: 'string', description: '項目編號，例如 AC-003' }, to: { enum: ['pm', 'qa', 'techlead'] }, text: { type: 'string' } },
+      properties: { item: { type: 'string', description: '項目編號，例如 AC-003' }, to: { enum: ['pm', 'qa', 'techlead', 'fullstack'] }, text: { type: 'string' } },
       required: ['item', 'to', 'text'],
     },
   },
@@ -152,7 +168,7 @@ export const TOOL_SPECS = [
         type: { enum: ['DEC', 'MEM', 'LES'] },
         text: { type: 'string', description: '300 字以內' },
         refs: { type: 'array', items: { type: 'string' }, description: '相關編號，例如 AC-003' },
-        roles: { type: 'array', items: { enum: ['pm', 'qa', 'techlead'] }, description: '只給這些角色看；省略則全部' },
+        roles: { type: 'array', items: { enum: ['pm', 'qa', 'techlead', 'fullstack'] }, description: '只給這些角色看；省略則全部' },
         supersedes: { type: 'string', description: '被這條取代的記憶編號' },
       },
       required: ['type', 'text'],
@@ -166,13 +182,13 @@ export const TOOL_SPECS = [
   {
     name: 'crew',
     description:
-      '指揮 crew 產品團隊（PM、QA、Tech lead），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM、QA 或 Tech lead；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作。角色的回覆和要使用者決定的事會再通知你。',
+      '指揮 crew 產品團隊（PM、QA、Tech lead、全端），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM、QA、Tech lead 或全端；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作。角色的回覆和要使用者決定的事會再通知你。',
     inputSchema: {
       type: 'object',
       properties: {
         action: { enum: ['start', 'ask', 'answer', 'status', 'remember', 'recall', 'rotate', 'resume'] },
         path: { type: 'string', description: 'PRD 檔案路徑（start）' },
-        role: { enum: ['pm', 'qa', 'techlead'], description: 'ask、rotate 的對象' },
+        role: { enum: ['pm', 'qa', 'techlead', 'fullstack'], description: 'ask、rotate 的對象' },
         question: { type: 'string', description: '要回答的問題編號，例如 Q-01（answer）' },
         text: { type: 'string', description: '問題、回答、偏好或關鍵字' },
       },

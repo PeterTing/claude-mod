@@ -6,11 +6,12 @@
 /plugin install crew --marketplace PeterTing/claude-mod
 ```
 
-Three roles run today:
+Four roles run today:
 
 - **PM** splits a PRD into features and acceptance criteria.
 - **QA** writes a test case for every criterion.
 - **Tech lead** breaks the criteria into tasks: what to build, for which criteria, and how big (S, M, L, XL). Gate **G3**, checked by code, needs a task for every criterion.
+- **Full-stack** builds the tasks, one at a time, in crew's own git worktree and branch. Each commit's message starts with its task's id (`TASK-003: …`), and crew reads the commits to see what is built. The task's size picks the model: S and M run on Sonnet at high effort, L on Opus at high, XL on Opus at xhigh.
 
 The team also handles:
 
@@ -19,7 +20,7 @@ The team also handles:
 - **Questions:** product questions come to you.
 - **Memory:** the team keeps it in the repo, so a role can start from a clean context without forgetting.
 
-UI/UX and full-stack come later in phase 4, and with them the code, review and test-run stages of each requirement. The plan is in [`docs/plans/crew-plan.zh-TW.html`](../../docs/plans/crew-plan.zh-TW.html).
+UI/UX comes later in phase 4, with review of the code and runs of the tests. The plan is in [`docs/plans/crew-plan.zh-TW.html`](../../docs/plans/crew-plan.zh-TW.html).
 
 ## Two ways to run it
 
@@ -37,13 +38,13 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 
 | Command | What it does |
 | --- | --- |
-| `/crew start <PRD file>` | The PM splits the PRD, QA writes test cases, then the tech lead breaks the criteria into tasks. The PRD must be a file inside the repo. |
+| `/crew start <PRD file>` | The PM splits the PRD, QA writes test cases, the tech lead breaks the criteria into tasks, then the full-stack builds them. The PRD must be a file inside the repo. |
 | `/crew answer <Q-nn> <answer>` | Answers a question a role asked you. The answer is saved as a decision. |
-| `/crew ask <pm\|qa\|techlead> <question>` | Asks a role directly. Its reply lands in thread `ASK-nn`, and a toast tells you when it is there. |
+| `/crew ask <pm\|qa\|techlead\|fullstack> <question>` | Asks a role directly. Its reply lands in thread `ASK-nn`, and a toast tells you when it is there. |
 | `/crew thread <id>` | Prints a thread, for example `ASK-01` or `AC-003`. |
 | `/crew remember <text>` | Saves one of your preferences (`PREF`). Every role gets your preferences with its work. |
 | `/crew recall <words or ids>` | Searches the team's memory. |
-| `/crew rotate <pm\|qa\|techlead>` | The next time that role is woken, it starts from a fresh context. It gets the board's state, the related memories and its last report. |
+| `/crew rotate <pm\|qa\|techlead\|fullstack>` | The next time that role is woken, it starts from a fresh context. It gets the board's state, the related memories and its last report. |
 | `/crew resume` | Starts the roles of an unfinished PRD again, for example after a role's run failed. |
 | `/crew consolidate [YYYY-MM-DD]` | Haiku reads a day's log and saves facts and lessons nobody saved. This also runs by itself once a day for the previous day. |
 | `/crew status` | One-line summary. |
@@ -81,10 +82,11 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 - **Starting a PRD the board already mostly answers checks it, without a new split.** The board is held to the PRD as it stands: the PM fills what is missing, and QA tests what has no test case. A PRD the board answers less than half of is split, and the PM is told which requirements already have features.
 - **A PRD change while QA is writing tests keeps that QA.** The PM syncs; when QA's run ends, QA is asked for the new criteria only.
 - **The pane says how current it is.** It shows how the board stands against the PRD, when the PRD last changed, and when crew last looked.
-- **Progress is counted per requirement.** The Progress tab lists each PRD requirement with how far each stage of its development is: spec, design, test cases, tasks, code, review, test results. Today crew fills in three stages from the board:
+- **Progress is counted per requirement.** The Progress tab lists each PRD requirement with how far each stage of its development is: spec, design, test cases, tasks, code, review, test results. Today crew fills in four stages, from the board and git:
   - spec: every feature that answers the requirement has criteria;
   - test cases: those criteria have test cases, counted done only once the spec is;
-  - tasks: those criteria have the tech lead's tasks, counted done only once the spec is.
+  - tasks: those criteria have the tech lead's tasks, counted done only once the spec is;
+  - code: those tasks each have a commit on crew's branch, counted done only once the tasks are. A commit alone never makes a task done: review and test runs come later.
 
   The other stages show `—` until the roles that do them are added, and never show as done before then. A requirement moved out of scope shows the reason instead.
 - **One board, several PRDs.** Starting another PRD keeps the earlier one's requirement numbers on the board, so its features stay its own and do not hold up the new PRD's split. A board from before crew numbered requirements is not reported as a PRD change: the PM is asked to link its features to the requirements.
@@ -99,17 +101,19 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 | `.crew/memory/consolidated.json` | yes | The days the log has been tidied. |
 | `.crew/log/*.jsonl` | no | The day's log, used for consolidation. |
 | `.crew/usage/*.json` | no | Token use per day. |
+| `.crew/work/<name>/` | no | The full-stack's git worktree for a PRD, on branch `crew/<name>`, named after the PRD file. |
 
 The flow, the open questions and who started the work are not in the repo. crew keeps them in its own store on this machine, keyed by the repo's path. A repo you clone therefore cannot start work by itself.
 
-crew adds `usage/` and `log/` to `.crew/.gitignore` and leaves your own rules there alone.
+crew adds `usage/`, `log/` and `work/` to `.crew/.gitignore` and leaves your own rules there alone.
 
 ## Safety
 
 - **Secrets are masked.** Anything that looks like a key, token, password, private key, JWT, connection-string password or bearer token is masked before it is written anywhere crew writes. Words in a rule, like 「密碼：至少 8 個字元」, are left alone. Masking works by pattern, so a secret in an unusual shape can still get through: keep secrets out of PRDs and answers.
 - **crew never writes over what it cannot read, nor outside the repo.** A board it cannot parse (a merge conflict, a typo) is left as it is until you fix it. A file of crew's that is itself a link, or whose path leads out of the repo, is neither read nor written. That includes a file that links to another file inside the repo. A directory link on the way is followed only when it lands inside the repo. Either way crew tells you why.
 - **Write tools take only crew's own callers.** Only crew's roles and the main conversation can write to the board, threads, questions or memory. Other agents and the roles a reset retired cannot.
-- **Each role has its own permissions on the board.** The PM edits features and criteria; QA writes test cases.
+- **Each role has its own permissions on the board.** The PM edits features and criteria; QA writes test cases; the tech lead plans tasks. The full-stack cannot write the board at all.
+- **The full-stack's code stays on crew's branch.** It works in `.crew/work/<name>`, a git worktree on branch `crew/<name>` that crew makes from your checkout's `HEAD`. Your own checkout and branches are left alone, and nothing is pushed: merging is yours. It edits files and runs commands under your Claude Code permission mode, like any agent. crew itself runs only `git rev-parse`, `git worktree add` and `git log`, with the repo's hooks off. A folder that is not a git repo stops the full-stack, and crew says why.
 - **Your words stay yours.** Roles cannot save or replace your preferences, nor a decision you made or the main conversation relayed for you. The daily tidy-up saves only facts and lessons, never decisions or preferences.
 - **Answers are marked by who relayed them.** An answer Claude relays for you is saved as `brain Q-nn`, so it stays traceable.
 

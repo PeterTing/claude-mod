@@ -6,6 +6,7 @@ import type { Op, Tracker } from './board'
 import { emptyLive, snapshotOf } from './live'
 import type { Snapshot } from './model'
 import { bandText } from './views'
+import { withCommits } from './git'
 import { requirementsOf } from './prd'
 
 const NOW = Date.UTC(2026, 9, 15, 6, 0, 0)
@@ -45,6 +46,7 @@ const LIVE: CrewLive = {
     pm: { agentId: 'a1', model: 'claude-sonnet-5-5', label: 'Sonnet', effort: 'high', tier: 'S', limit: 60_000, state: 'working', doing: '確認 AC-003', context: 8_000 },
     qa: { agentId: 'a2', model: 'claude-sonnet-5-5', label: 'Sonnet', effort: 'medium', tier: 'S', limit: 60_000, state: 'idle', doing: '—', context: 12_000 },
     techlead: { state: 'idle', doing: '—', context: 0 },
+    fullstack: { state: 'idle', doing: '—', context: 0 },
   },
   usage: {
     pm: { input: 1_000, output: 2_000, cacheRead: 9_000, cacheWrite: 3_000, wakes: 2, rotations: 0 },
@@ -182,7 +184,7 @@ describe('development status by PRD requirement', () => {
   test('marks the stages crew does not track yet as later, never as done', () => {
     const rows = snapshotOf({ board, live: emptyLive(), now: NOW, prd: { requirements: reqs } }).requirements ?? []
     expect(rows).toHaveLength(4)
-    expect(rows.every(r => (['design', 'code', 'review', 'runs'] as const).every(k => r.layers[k].state === 'later'))).toBe(true)
+    expect(rows.every(r => (['design', 'review', 'runs'] as const).every(k => r.layers[k].state === 'later'))).toBe(true)
   })
 
   test('does not call test cases done while a feature that answers the requirement has no criteria', () => {
@@ -272,7 +274,8 @@ describe('the tech lead’s tasks', () => {
     expect(g3).toMatchObject({ state: 'active', covered: 2, total: 3, name: '每條驗收條件都拆好任務' })
     expect(g3?.gaps.map(g => g.id)).toEqual(['AC-003'])
     expect(snap.progress?.stages.find(st => st.label === '架構')).toMatchObject({ done: 2, total: 3, state: 'active' })
-    expect(snap.progress?.total).toBe(snapshotOf({ board: tested, live: planning, now: NOW }).progress?.total)
+    // The two tasks add two units of code still to build.
+    expect((snap.progress?.total ?? 0) - (snapshotOf({ board: tested, live: planning, now: NOW }).progress?.total ?? 0)).toBe(2)
     expect((snap.progress?.done ?? 0) - (snapshotOf({ board: tested, live: planning, now: NOW }).progress?.done ?? 0)).toBe(2)
   })
 
@@ -298,5 +301,52 @@ describe('the tech lead’s tasks', () => {
     const task = items.find(i => i.id === 'TASK-001')
     expect(task).toMatchObject({ title: '方案頁', owner: 'techlead', status: 'todo' })
     expect(task?.note).toMatch(/AC-001[\s\S]*M/)
+  })
+})
+
+describe('the full-stack’s commits', () => {
+  const reqs = requirementsOf('## 訂閱\n- 可以選月繳方案')
+  const [r1] = reqs.map(r => r.id)
+  const split = apply(
+    newTracker('shop'),
+    [
+      { op: 'add_feature', title: '方案選擇', summary: '', sources: [r1 ?? ''] },
+      { op: 'add_criterion', feature: 'PRD-001', text: '可以選月繳' },
+    ],
+    'pm',
+  )
+  const tested = apply(split, [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e' }], 'qa')
+  const planned = apply(
+    tested,
+    [
+      { op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '方案頁', detail: '', size: 'S' },
+      { op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '方案 API', detail: '', size: 'M' },
+    ],
+    'techlead',
+  )
+  const half = withCommits(planned, new Map([['TASK-001', ['abc1234def']]])) ?? planned
+  const building: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-002' } }
+
+  test('make the 實作 stage and the full-stack row live', () => {
+    const snap = snapshotOf({ board: half, live: building, now: NOW })
+    expect(snap.progress?.stages.find(st => st.label === '實作')).toMatchObject({ done: 1, total: 2, state: 'active' })
+    expect(snap.roles.find(r => r.id === 'fullstack')?.doing).toBe('—')
+    expect(snap.roles.find(r => r.id === 'uiux')?.doing).toBe('第 4 階段加入')
+  })
+
+  test('fill each requirement’s code column, done only once its tasks are', () => {
+    expect((snapshotOf({ board: half, live: building, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]?.layers.code).toEqual({ state: 'doing', note: '1/2' })
+    const all = withCommits(planned, new Map([['TASK-001', ['abc1234def']], ['TASK-002', ['def5678abc']]])) ?? planned
+    expect((snapshotOf({ board: all, live: building, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]?.layers.code).toEqual({ state: 'done', note: '2/2' })
+    // Review and test runs are still to come: never shown as done by a commit.
+    expect((snapshotOf({ board: all, live: building, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]?.layers.review.state).toBe('later')
+  })
+
+  test('show a committed task as under way, by the full-stack, with its commit; a task being built as the full-stack’s', () => {
+    const items = snapshotOf({ board: half, live: building, now: NOW }).items
+    expect(items.find(i => i.id === 'TASK-001')).toMatchObject({ owner: 'fullstack', status: 'doing' })
+    expect(items.find(i => i.id === 'TASK-001')?.note).toMatch(/commit abc1234/)
+    expect(items.find(i => i.id === 'TASK-002')).toMatchObject({ owner: 'fullstack', status: 'doing' })
+    expect(items.find(i => i.id === 'TASK-002')?.note).toMatch(/全端正在做/)
   })
 })

@@ -1,4 +1,5 @@
-import { gateG1, gateG3, gateG4 } from './board'
+import { criteriaOf, gateG1, gateG3, gateG4, tasksOf } from './board'
+import type { Task } from './board'
 import type { GateGap, Tracker } from './board'
 import { gateG0, refsOf, requirementList } from './prd'
 import type { Requirement } from './prd'
@@ -12,10 +13,10 @@ import type { Route } from './router'
  * three rounds the person decides. Every gate is computed in code.
  */
 
-export type FlowStage = 'idle' | 'splitting' | 'writing_tests' | 'confirming' | 'adding_tests' | 'planning' | 'done' | 'escalated'
+export type FlowStage = 'idle' | 'splitting' | 'writing_tests' | 'confirming' | 'adding_tests' | 'planning' | 'building' | 'done' | 'escalated'
 
 /** The roles the flow gives work to. */
-export type FlowRole = 'pm' | 'qa' | 'techlead'
+export type FlowRole = 'pm' | 'qa' | 'techlead' | 'fullstack'
 
 export type FlowState = {
   stage: FlowStage
@@ -31,14 +32,16 @@ export type FlowState = {
   awaitingQa?: boolean
   /** Where an escalated flow picks up once the person answers. */
   resumeAt?: ResumeAt
+  /** The task the full-stack is building. */
+  building?: string
 }
 
-type ResumeAt = 'splitting' | 'confirming' | 'planning'
+type ResumeAt = 'splitting' | 'confirming' | 'planning' | 'building'
 
 export const INITIAL: FlowState = { stage: 'idle', round: 0, retries: 0 }
 
 /** The stages in which a role is at work on the PRD: a new start waits, a restart resumes. */
-export const RUNNING: readonly FlowStage[] = ['splitting', 'writing_tests', 'confirming', 'adding_tests', 'planning']
+export const RUNNING: readonly FlowStage[] = ['splitting', 'writing_tests', 'confirming', 'adding_tests', 'planning', 'building']
 
 /** `requirements`: the PRD's requirements as it stands now, which G0 holds the board to; absent, G0 is not checked. */
 export type FlowEvent =
@@ -87,7 +90,7 @@ export type FlowAction =
 
 export type StepResult = { state: FlowState; actions: FlowAction[] }
 
-export type Inbox = { pm?: readonly string[]; qa?: readonly string[]; techlead?: readonly string[] }
+export type Inbox = { pm?: readonly string[]; qa?: readonly string[]; techlead?: readonly string[]; fullstack?: readonly string[] }
 
 const MAX_ROUNDS = 3
 const MAX_RETRIES = 2
@@ -201,12 +204,96 @@ const finish = (state: FlowState, board: Tracker, requirements?: readonly Requir
   if (g0 !== undefined && g0.gaps.length > 0) return realign(state, g0.gaps)
   const g3 = gateG3(board)
   if (g3.gaps.length > 0) return plan(state, g3)
+  const next = unbuilt(board)
+  if (next !== undefined) return build(state, board, next)
   const g4 = gateG4(board)
+  const tasks = liveTasks(board)
+  const { building: _, ...rest } = state
   return {
-    state: { ...state, stage: 'done' },
-    actions: [{ type: 'done', text: `PM＋QA＋Tech lead 完成：每條驗收條件都有 test case（G4 ${g4.covered}/${g4.total}）和任務（G3 ${g3.covered}/${g3.total}）。` }],
+    state: { ...rest, stage: 'done' },
+    actions: [
+      {
+        type: 'done',
+        text: `PM＋QA＋Tech lead＋全端 完成：每條驗收條件都有 test case（G4 ${g4.covered}/${g4.total}）和任務（G3 ${g3.covered}/${g3.total}），每個任務都有 commit（實作 ${tasks.length}/${tasks.length}）。`,
+      },
+    ],
   }
 }
+
+/** The tasks in the plan: in a feature in scope, not dropped, in the order the tech lead numbered them. */
+const liveTasks = (board: Tracker): Task[] =>
+  board.prd_items
+    .filter(i => i.crew_dropped === undefined)
+    .flatMap(tasksOf)
+    .filter(t => t.crew_dropped === undefined)
+    .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
+
+/** The first task with no commit doing it yet. */
+const unbuilt = (board: Tracker): Task | undefined => liveTasks(board).find(t => (t.crew_commits ?? []).length === 0)
+
+const fsRoute = (task: Task): Route => routeFor('fullstack', task.size ?? 'M')
+
+/** What the full-stack is asked to build: the task, the criteria it serves and their test cases, and how crew sees it done. */
+const buildPrompt = (board: Tracker, task: Task, opening: string): string => {
+  const criteria = board.prd_items.flatMap(criteriaOf).filter(c => task.acceptance_criteria.includes(c.id))
+  const cases = board.prd_items.flatMap(i => i.test_cases).filter(c => (c.acceptance_criteria ?? []).some(a => task.acceptance_criteria.includes(a)))
+  return [
+    `${opening}請實作 ${task.id} ${task.title}${task.size === undefined ? '' : `（大小 ${task.size}）`}。`,
+    ...(task.detail === '' ? [] : [`要做的事：${task.detail}`]),
+    `對應的驗收條件：\n${criteria.map(c => `- ${c.id} ${c.text}`).join('\n')}`,
+    ...(cases.length === 0 ? [] : [`它們的 test case：${cases.map(c => `${c.id}${c.title === undefined ? '' : ` ${c.title}`}`).join('、')}（用 board_read 看步驟和預期結果）`]),
+    '規則：',
+    '1. 只在 crew 附上的工作目錄裡改程式，不要切換或改動其他分支，也不要 push。',
+    '2. 先寫會失敗的測試，再實作，跑專案的測試確認通過。',
+    `3. 做完用 git commit，訊息以「${task.id}: 」開頭，寫做了什麼。一個任務可以有幾個 commit，都要以任務編號開頭；crew 看 commit 判斷做到哪裡。`,
+    `4. 需要技術取捨時，用 thread_post 問 Tech lead（item 填 ${task.id}）；需要產品決定時用 ask_person。`,
+    '5. 完成後用一句話回報。',
+  ].join('\n')
+}
+
+/** The full-stack builds the next task: a fresh agent the first time, a message after. */
+const build = (state: FlowState, board: Tracker, task: Task, opening = ''): StepResult => {
+  const first = liveTasks(board).every(t => (t.crew_commits ?? []).length === 0)
+  const next: FlowState = { ...state, stage: 'building', building: task.id, retries: state.building === task.id ? state.retries : 0, round: 0 }
+  const text = buildPrompt(board, task, opening)
+  return {
+    state: next,
+    actions: [first && opening === '' ? { type: 'spawn', role: 'fullstack', route: fsRoute(task), prompt: text } : { type: 'message', role: 'fullstack', item: task.id, text, route: fsRoute(task) }],
+  }
+}
+
+/** A run ended while building: new criteria go to QA, new gaps to the tech lead, questions between the two, then the next task. */
+const afterBuild = (state: FlowState, board: Tracker, inbox: Inbox = {}, requirements?: readonly Requirement[], by: FlowRole = 'fullstack'): StepResult => {
+  const g4 = gateG4(board)
+  if (g4.gaps.length > 0) return afterPlan(state, board, {}, requirements)
+  const g3 = gateG3(board)
+  if (g3.gaps.length > 0) return plan(state, g3)
+  const forTl = inbox.techlead ?? []
+  if (forTl.length > 0 && state.round < MAX_ROUNDS) {
+    return {
+      state: { ...state, round: state.round + 1 },
+      actions: [{ type: 'message', role: 'techlead', item: forTl[0], text: threadNotice(by === 'fullstack' ? '全端' : ROLE_LABEL[by], forTl), route: tlRoute(forTl.length) }],
+    }
+  }
+  const forFs = inbox.fullstack ?? []
+  const asked = liveTasks(board).find(t => t.id === state.building)
+  if (forFs.length > 0 && by !== 'fullstack' && asked !== undefined) {
+    return { state, actions: [{ type: 'message', role: 'fullstack', item: forFs[0], text: threadNotice(ROLE_LABEL[by], forFs), route: fsRoute(asked) }] }
+  }
+  if (asked !== undefined && (asked.crew_commits ?? []).length === 0) {
+    if (by !== 'fullstack') return { state, actions: [] }
+    if (state.retries >= MAX_RETRIES - 1) {
+      return escalate({ ...state, retries: state.retries + 1 }, `${asked.id} ${asked.title} 做了兩次還沒有 commit。要怎麼處理？`, asked.id, 'building')
+    }
+    return {
+      state: { ...state, retries: state.retries + 1 },
+      actions: [{ type: 'message', role: 'fullstack', item: asked.id, text: `${asked.id} 還沒有 commit：crew 在工作目錄的分支上找不到以「${asked.id}: 」開頭的 commit。請做完並 commit；做不了就說明卡在哪裡。`, route: fsRoute(asked) }],
+    }
+  }
+  return finish(state, board, requirements)
+}
+
+const ROLE_LABEL: Record<FlowRole, string> = { pm: 'PM', qa: 'QA', techlead: 'Tech lead', fullstack: '全端' }
 
 const tlRoute = (size: number): Route => routeFor('techlead', tierFor({ kind: 'plan_tasks', size: Math.max(1, size) }))
 
@@ -371,8 +458,13 @@ const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered'
   // otherwise with the PM, who resumes the split and the gaps.
   if (state.stage !== 'escalated' || event.escalation !== true) return { state, actions: [{ ...message, person: true }] }
   const resumeAt = state.resumeAt ?? 'confirming'
-  const to: FlowRole = resumeAt === 'planning' ? 'techlead' : 'pm'
-  const resumed: FlowAction = { ...message, role: to, route: to === 'techlead' ? tlRoute(1) : routeFor('pm', tierFor({ kind: 'confirm_gaps', size: 1 })) }
+  const to: FlowRole = resumeAt === 'planning' ? 'techlead' : resumeAt === 'building' ? 'fullstack' : 'pm'
+  const resumed: FlowAction = {
+    ...message,
+    role: to,
+    item: to === 'fullstack' ? state.building : message.item,
+    route: to === 'techlead' ? tlRoute(1) : to === 'fullstack' ? routeFor('fullstack', 'M') : routeFor('pm', tierFor({ kind: 'confirm_gaps', size: 1 })),
+  } as FlowAction
   const { resumeAt: _, ...rest } = state
   return {
     state: { ...rest, stage: resumeAt, round: resumeAt === 'splitting' ? rest.round : 0, retries: resumeAt === 'confirming' ? rest.retries : 0, ...(resumeAt === 'splitting' ? { aligning: 0 } : {}) },
@@ -412,6 +504,12 @@ const resume = (was: FlowState, event: Extract<FlowEvent, { type: 'resume' }>): 
         state,
         actions: [{ type: 'message', role: 'qa', item: g4.gaps[0]?.id, text: resumeToQa(g4.gaps), route: routeFor('qa', tierFor({ kind: 'add_tests', size: g4.gaps.length })) }],
       }
+    case 'building': {
+      const g3 = gateG3(event.board)
+      const next = unbuilt(event.board)
+      if (g4.gaps.length > 0 || g3.gaps.length > 0 || next === undefined) return afterBuild(state, event.board, {}, event.requirements, 'pm')
+      return build({ ...state, building: next.id }, event.board, next, 'Claude Code 重開過。')
+    }
     case 'planning': {
       const g3 = gateG3(event.board)
       if (g4.gaps.length > 0 || g3.gaps.length === 0) return afterPlan(state, event.board, {}, event.requirements)
@@ -494,6 +592,7 @@ const afterRole = (state: FlowState, event: Extract<FlowEvent, { type: 'role_don
   if (role === 'pm' && state.stage === 'confirming') return afterConfirm(state, board, inbox, requirements)
   if (role === 'techlead' && state.stage === 'planning') return afterPlan(state, board, inbox, requirements)
   if (role === 'pm' && state.stage === 'planning') return afterPmInPlanning(state, board, inbox, requirements)
+  if (state.stage === 'building' && role !== 'qa') return afterBuild(state, board, inbox, requirements, role)
   // A finished board can open again: the PM adds criteria after an answer, or one role writes to the other;
   // a PM turn that left the board short of the PRD sends the PM back to it.
   if (state.stage === 'done') {
@@ -504,8 +603,10 @@ const afterRole = (state: FlowState, event: Extract<FlowEvent, { type: 'role_don
     if (role === 'techlead' && (gateG3(board).gaps.length > 0 || (inbox.pm ?? []).length > 0)) return afterPlan(state, board, inbox, requirements)
     if (role !== 'techlead' && (inbox.techlead ?? []).length > 0) {
       const forTl = inbox.techlead ?? []
-      return { state: { ...state, stage: 'planning' }, actions: [{ type: 'message', role: 'techlead', item: forTl[0], text: threadNotice(role === 'pm' ? 'PM' : 'QA', forTl), route: tlRoute(forTl.length) }] }
+      return { state: { ...state, stage: 'planning' }, actions: [{ type: 'message', role: 'techlead', item: forTl[0], text: threadNotice(ROLE_LABEL[role], forTl), route: tlRoute(forTl.length) }] }
     }
+    // A task the plan gained after the flow finished, with no commit yet, goes to the full-stack.
+    if (gateG3(board).gaps.length === 0 && gateG4(board).gaps.length === 0 && unbuilt(board) !== undefined) return finish(state, board, requirements)
   }
   return { state, actions: [] }
 }

@@ -37,6 +37,8 @@ export type Task = {
   size?: TaskSize
   /** Why the task left the plan, when it did. */
   crew_dropped?: string
+  /** The commits on crew's branch that do this task, as crew read them from git. */
+  crew_commits?: string[]
   [key: string]: unknown
 }
 
@@ -104,7 +106,7 @@ const ALLOWED: Record<string, readonly Op['op'][]> = {
   techlead: ['add_task', 'drop_task'],
 }
 
-const ROLE_LABEL: Record<string, string> = { pm: 'PM', qa: 'QA', techlead: 'Tech lead' }
+const ROLE_LABEL: Record<string, string> = { pm: 'PM', qa: 'QA', techlead: 'Tech lead', fullstack: '全端' }
 
 const SIZES: readonly TaskSize[] = ['S', 'M', 'L', 'XL']
 

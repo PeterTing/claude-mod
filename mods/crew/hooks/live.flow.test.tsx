@@ -1,14 +1,14 @@
 import type { PromptOrigin, RenderPropsOf } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 
-import { command, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { build, command, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
 
 describe('crew, PM and QA', () => {
   test('registers its tools and its roles when the session starts', async ($, on) => {
     const w = world($, on)
     await start($)
     expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'memory_save', 'memory_search', 'crew'])
-    expect(w.registered.agents).toEqual(['pm', 'qa', 'techlead'])
+    expect(w.registered.agents).toEqual(['pm', 'qa', 'techlead', 'fullstack'])
   })
 
   test('walks a PRD from split to every criterion covered', async ($, on) => {
@@ -22,7 +22,7 @@ describe('crew, PM and QA', () => {
     expect(w.spawned[0]?.name).toBeUndefined()
     expect(w.spawned[0]?.prompt).toMatch(/docs\/PRD\.md/)
     expect(w.board()?.mode).toBe('local-only')
-    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\n')
+    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\nwork/\n')
 
     const wrote = await write($, 'a-pm-1', SPLIT)
     expect(String(wrote.result)).toMatch(/已寫入：PRD-001、PRD-002、AC-001、AC-002/)
@@ -48,7 +48,11 @@ describe('crew, PM and QA', () => {
     expect(w.spawned[2]?.prompt).toMatch(/2 條驗收條件[\s\S]*add_task/)
     await write($, 'a-techlead-3', PLAN)
     await done($, 'a-techlead-3')
-    expect(w.toasts.at(-1)).toMatch(/G4 2\/2[\s\S]*G3 2\/2/)
+    // Every criterion planned: the full-stack builds the tasks, one at a time.
+    expect(w.spawned[3]).toMatchObject({ subagentType: 'crew:fullstack', model: 'sonnet' })
+    expect(w.spawned[3]?.prompt).toMatch(/TASK-001[\s\S]*工作目錄：\/repo\/\.crew\/work\/prd（分支 crew\/prd）/)
+    await build($)
+    expect(w.toasts.at(-1)).toMatch(/G4 2\/2[\s\S]*G3 2\/2[\s\S]*實作 2\/2/)
 
     const tracker = w.board()
     expect(tracker?.prd_items.flatMap(i => i.test_cases.map(c => c.id))).toEqual(['TC-001', 'TC-002'])
@@ -97,6 +101,7 @@ describe('crew, PM and QA', () => {
     expect((await $.command.run(command('status'))).text).toMatch(/planning/)
     await write($, 'a-techlead-3', PLAN)
     await done($, 'a-techlead-3')
+    await build($)
     const after = await $.command.run(command('status'))
     expect(after.text).toMatch(/done/)
     const usage = JSON.parse(w.disk.get(`${ROOT}/.crew/usage/2026-10-15.json`) ?? '{}') as { usage: Record<string, { wakes: number }> }

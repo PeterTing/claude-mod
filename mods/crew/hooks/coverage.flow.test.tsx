@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { parseMemories } from './memory'
-import { command, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { build, command, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
 
 /** What the second test review found untested: parallel writes, QA's questions, the brain's relays, and each rule's other side. */
 
@@ -67,8 +67,9 @@ describe('work the person started', () => {
     expect((await notice($, 'a-qa-3')).drop).toBeDefined()
     await write($, 'a-techlead-4', PLAN)
     await done($, 'a-techlead-4')
+    await build($, ['TASK-001', 'TASK-002'], 'a-fullstack-5')
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
-    expect((await notice($, 'a-techlead-4')).drop).toBeDefined()
+    expect((await notice($, 'a-fullstack-5')).drop).toBeDefined()
     await w.clock.advance(61_000)
     expect(w.prompts).toEqual([])
   })
@@ -139,6 +140,7 @@ describe('third test review', () => {
     await done($, 'a-qa-2')
     await write($, 'a-techlead-3', PLAN)
     await done($, 'a-techlead-3')
+    await build($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
     await $.command.run(command('ask pm 補一條：可以改方案'))
     await write($, 'a-pm-1', [{ op: 'add_criterion', feature: 'PRD-001', text: '可以改方案' }])

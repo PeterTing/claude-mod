@@ -66,7 +66,7 @@ describe('a broken file left behind', () => {
     w.store.set(STATE_KEY, { prdPath: 'docs/PRD.md', flow: { stage: 'nonsense' }, questions: [null, 3, { id: 'Q-01', question: '留下', status: 'open', from: 'pm', t: 1 }], lead: 'x' })
     await start($)
     expect(w.registered.tools).toHaveLength(8)
-    expect(w.registered.agents).toEqual(['pm', 'qa', 'techlead'])
+    expect(w.registered.agents).toEqual(['pm', 'qa', 'techlead', 'fullstack'])
     expect((await $.command.run(command('status'))).text).toMatch(/crew（idle）[\s\S]*待你決定 1/)
     expect((await $.command.run(command('thread AC-001'))).text).toBe('QA → PM：ok')
   })
