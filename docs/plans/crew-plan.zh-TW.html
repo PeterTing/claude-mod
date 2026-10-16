@@ -751,13 +751,21 @@ flowchart LR
     <li>PRD 不見：面板和提示列都顯示原因，檔案放回去後恢復 ✓。</li>
   </ul>
   <p class="prose">已知限制：在 crew 沒有記錄的舊看板上開始另一份 PRD 時，舊功能仍會算進新 PRD，由 PM 處理。</p>
-  <h3>接下來：每一欄都接上真實訊號（等你確認）</h3>
+  <h3>第 4b 階段：Tech lead 拆任務（2026-10-16，0.2.0 已上線）</h3>
+  <ul class="plain prose">
+    <li>QA 寫完 test case 後，Tech lead（Opus・high）把每條驗收條件拆成任務。每個任務都寫明要做什麼、要改哪些地方、對應哪些驗收條件，以及大小（S、M、L、XL）。G3 由程式計算：每條驗收條件都要有任務。</li>
+    <li>任務的缺口會先退回給 Tech lead，第二次還沒補上就問你。Tech lead 需要取捨時，透過討論串問 PM，答案再轉回給它。新增的驗收條件先交給 QA 寫測試，再交給 Tech lead 拆任務。重開後會接續拆到一半的任務。</li>
+    <li>面板上，Tech lead 這一列、G3、「架構」階段、每條需求的「任務」欄，都改由看板算出。任務列在看板分頁，在 4c 接上 commit 之前都標「還沒開始」。</li>
+    <li>實跑一份待辦 App 的 PRD：PM 拆出 11 條驗收條件，QA 寫了 29 個 test case，Tech lead 拆了 12 個任務，每個任務都寫到檔案層級。G3 ✓，進度 100%。</li>
+    <li>三個 reviewer 各審兩輪，最後都沒有 critical 或 important。</li>
+  </ul>
+  <h3>接下來：每一欄都接上真實訊號</h3>
   <p class="prose">每一欄的狀態都從真實訊號算出來，角色自己說「做完了」不算數。實作前，會先在 <code>/crew demo</code> 把每一欄的樣子做成設計稿，請你確認。</p>
   <div class="table-wrap">
     <table>
       <thead><tr><th>階段</th><th>欄位</th><th>誰做</th><th>狀態從哪裡來</th><th>關卡</th></tr></thead>
       <tbody>
-        <tr><td>4b</td><td>任務</td><td>Tech lead</td><td>Tech lead 把驗收條件拆成任務，每個任務都要對應到驗收條件。</td><td>G3：每條驗收條件都有任務</td></tr>
+        <tr><td>4b ✓</td><td>任務</td><td>Tech lead</td><td>Tech lead 把驗收條件拆成任務，每個任務都要對應到驗收條件。</td><td>G3：每條驗收條件都有任務</td></tr>
         <tr><td>4c</td><td>實作</td><td>全端</td><td>git commit 訊息裡寫的 TASK 編號；只算真的進了分支的 commit。</td><td>—</td></tr>
         <tr><td>4d</td><td>Review</td><td>Tech lead</td><td>review 結果釘在某個 commit sha 上；之後又有新的 commit，就標成「過期」，要重新 review。</td><td>G5：最新的 commit 都 review 過</td></tr>
         <tr><td>4e</td><td>測試結果</td><td>QA</td><td>crew 跑你指定的測試指令，把結果對應到 TC 編號，並保留證據。指令只存在本機，不放進 repo，避免 clone 下來的 repo 讓 crew 跑任意指令。</td><td>G6：每個 test case 都有通過的結果</td></tr>
