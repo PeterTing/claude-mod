@@ -50,6 +50,8 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 | `/crew reset` | Forgets this session's flow and roles. The board, threads and memory are kept. |
 | `/crew demo` | The design preview with sample data. `/crew demo off` closes it. |
 
+**After upgrading from 0.1.0.** A board crew finished then has no tasks, so its progress counts the plan as not done. Run `/crew start <PRD file>` once: crew checks the board without a new split, and the tech lead plans the tasks.
+
 **After a restart.** When Claude Code starts on a PRD crew left unfinished on this machine, the roles start again by themselves, and crew says how many questions are waiting for you.
 
 ## The board stays on the PRD, live
