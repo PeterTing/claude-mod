@@ -127,7 +127,7 @@ describe('the board held to the PRD', () => {
     const text = await paneText($, 'progress')
     expect(text).toMatch(/PRD 需求[\s\S]*\n規格\n設計\n測試案例\n任務\n實作\nReview\n測試結果\n/)
     // Spec, test cases, tasks and code come from the board and git; the rest are not tracked yet, and never shown as done.
-    expect(text).toMatch(new RegExp(`${REQ}\\n[^\\n]*\\n✓\\n—\\n✓ 2/2\\n✓ 2/2\\n✓ 2/2\\n—\\n—\\n`))
+    expect(text).toMatch(new RegExp(`${REQ}\\n[^\\n]*\\n✓\\n—\\n✓ 2/2\\n✓ 2/2\\n◐ 2/2\\n—\\n—\\n`))
   })
 
   test('shows how the board stands against the PRD, and when crew last looked', async ($, on) => {

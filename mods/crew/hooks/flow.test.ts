@@ -721,9 +721,18 @@ describe('the PRD as the flow holds the board to it', () => {
       expect((r.actions[0] as { text: string }).text).toMatch(/重開過/)
     })
 
-    test('opens a finished board again when a new task has no commit', () => {
-      const r = step({ stage: 'done', round: 0, retries: 0 }, { type: 'role_done', role: 'techlead', board: committed(plannedTwo(), ['TASK-001']) })
-      expect(r.state).toMatchObject({ stage: 'building', building: 'TASK-002' })
+    test('does not start building a finished board’s tasks on a turn that is not the flow’s', () => {
+      const r = step({ stage: 'done', round: 0, retries: 0 }, { type: 'role_done', role: 'pm', board: committed(plannedTwo(), ['TASK-001']) })
+      expect(r).toEqual({ state: { stage: 'done', round: 0, retries: 0 }, actions: [] })
+    })
+
+    test('sends the full-stack the answer the tech lead gave in its report, once the full-stack’s run is over', () => {
+      const s = { stage: 'building' as const, round: 1, retries: 0, building: 'TASK-001' }
+      const r = step(s, { type: 'role_done', role: 'techlead', board: plannedTwo(), report: '用 Stripe。' })
+      expect(r.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', item: 'TASK-001' })
+      expect((r.actions[0] as { text: string }).text).toMatch(/「用 Stripe。」/)
+      // While the full-stack is still at work, its own run's end takes the flow on.
+      expect(step(s, { type: 'role_done', role: 'techlead', board: plannedTwo(), report: '用 Stripe。', working: ['fullstack'] }).actions).toEqual([])
     })
   })
 })

@@ -15,7 +15,7 @@ export const NOW = Date.UTC(2026, 9, 15, 6, 0, 0)
 
 export const PRD = '# 會員訂閱\n\n使用者可以選月繳方案，可以隨時取消，取消後用到期末。'
 
-export type Spawn = { subagentType: string; name?: string; description: string; model?: string; prompt: string }
+export type Spawn = { subagentType: string; name?: string; description: string; model?: string; prompt: string; cwd?: string }
 
 /** The world a test made last: what `build` commits into. */
 const current: { commit?: (subject: string, branch?: string) => string } = {}
@@ -65,7 +65,16 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   const isDir = (path: string) => [...disk.keys()].some(p => p.startsWith(`${path}/`))
   on('fs.exists', (_$, e) => ({ value: disk.has(resolve(e.path)) || isDir(resolve(e.path)) }))
   /** A repo's git, as far as crew asks it: branches with their commits (newest first), and worktrees. */
-  const git = { repo: true, branches: new Map<string, { sha: string; subject: string }[]>([['HEAD', []]]), worktrees: new Map<string, string>(), commands: [] as string[][] }
+  const git = {
+    repo: true,
+    branches: new Map<string, { sha: string; subject: string }[]>([['HEAD', []]]),
+    worktrees: new Map<string, string>(),
+    commands: [] as string[][],
+    /** What `git status --porcelain` says in crew's worktree: changes not committed. */
+    dirty: '',
+    /** What it says in the person's checkout. */
+    checkout: '',
+  }
   let shas = 0
   /** A commit the full-stack made on a branch (crew's, by default the PRD's). */
   const commit = (subject: string, branch = 'crew/prd') => {
@@ -93,10 +102,16 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
       disk.set(`${dir}/.git`, `gitdir: ${ROOT}/.git/worktrees/x`)
       return ok()
     }
+    if (args[0] === 'status' && args[1] === '--porcelain') return ok(argv[2] === ROOT ? git.checkout : git.dirty)
     if (args[0] === 'log') {
-      const refs = args.slice(4, args.indexOf('--'))
+      const end = args.indexOf('--')
+      const not = args.indexOf('--not')
+      const refs = args.slice(4, not === -1 ? end : not).map(r => r.replace('refs/heads/', ''))
+      // `--not --exclude=<ref> --branches`: commits on no other branch.
+      const keep = not === -1 ? undefined : args.slice(not + 1, end).find(a => a.startsWith('--exclude='))?.replace('--exclude=refs/heads/', '')
+      const elsewhere = new Set(not === -1 ? [] : [...git.branches].filter(([b]) => b !== keep).flatMap(([, cs]) => cs.map(c => c.sha)))
       const seen = new Set<string>()
-      const lines = refs.flatMap(r => git.branches.get(r) ?? []).filter(c => !seen.has(c.sha) && seen.add(c.sha) !== undefined)
+      const lines = refs.flatMap(r => git.branches.get(r) ?? []).filter(c => !elsewhere.has(c.sha) && !seen.has(c.sha) && seen.add(c.sha) !== undefined)
       return ok(lines.map(c => `${c.sha}\t${c.subject}`).join('\n'))
     }
     return fail(`unknown: ${args.join(' ')}`)
@@ -163,7 +178,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   // The kit hands a plugin's spawn down as the Agent tool's input, and keeps the agent id to the engine:
   // the plugin finds its agent in the list instead, as it would behind a hook that kept the id back.
   on('agent.spawn', (_$, e) => {
-    const input = e as unknown as { subagent_type?: string; subagentType?: string; name?: string; description: string; model?: string; prompt: string }
+    const input = e as unknown as { subagent_type?: string; subagentType?: string; name?: string; description: string; model?: string; prompt: string; cwd?: string }
     if (denySpawn !== '' && (denySpawnOf === '' || (input.subagentType ?? input.subagent_type) === denySpawnOf)) return { deny: denySpawn }
     order.push(`spawn:${input.subagentType ?? input.subagent_type ?? ''}`)
     spawned.push({
@@ -172,6 +187,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
       prompt: input.prompt,
       ...(input.name === undefined ? {} : { name: input.name }),
       ...(input.model === undefined ? {} : { model: input.model }),
+      ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
     })
     return { model: input.model ?? 'claude-sonnet-5-5' }
   })

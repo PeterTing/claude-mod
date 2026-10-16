@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
-import { command, done, paneText, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { build, command, done, paneText, PLAN, ROOT, SPLIT, start, world, write } from './world'
 
 /** The full-stack builds the tasks one at a time in crew's own worktree; a commit, not its word, says a task is built. */
 
@@ -87,7 +87,10 @@ describe('the full-stack', () => {
       t = r.tracker
     }
     w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(t))
+    // crew made its branch and worktree in the last session, and keeps that in its own store.
     w.git.branches.set('crew/prd', [])
+    w.disk.set(`${ROOT}/.crew/work/prd/.git`, 'gitdir: x')
+    w.store.set(`work:${ROOT}`, { prd: 'docs/PRD.md', branch: 'crew/prd', dir: `${ROOT}/.crew/work/prd`, built: {} })
     w.commit('TASK-001: 方案頁')
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, questions: [], lead: 'person' })
     await start($)
@@ -117,5 +120,95 @@ describe('the full-stack', () => {
     const text = await paneText($, 'board')
     expect(text).toMatch(/TASK-001[\s\S]*commit abc0001/)
     expect(text).toMatch(/TASK-002[\s\S]*全端正在做/)
+  })
+
+  test('runs in its worktree', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:fullstack', cwd: `${ROOT}/.crew/work/prd` })
+  })
+
+  test('counts only commits on crew’s own branch: the checkout’s own TASK- commits are not its work', async ($, on) => {
+    const w = world($, on)
+    w.commit('TASK-001: fix login redirect', 'HEAD')
+    await start($)
+    await planned($)
+    expect(w.spawned.at(-1)?.prompt).toMatch(/請實作 TASK-001/)
+    expect(await paneText($, 'progress')).toMatch(/實作 0\/2/)
+  })
+
+  test('keeps a task built once its commit was seen, after the branch is merged and deleted', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await build($)
+    expect((await $.command.run(command('status'))).text).toMatch(/done/)
+    // The person merges crew/prd and deletes it: its commits are now on HEAD only.
+    w.git.branches.set('HEAD', [...(w.git.branches.get('crew/prd') ?? []), ...(w.git.branches.get('HEAD') ?? [])])
+    w.git.branches.delete('crew/prd')
+    await w.clock.advance(31_000)
+    await $.command.run(command('ask pm 月繳價格多少？'))
+    await done($, 'a-pm-1', '一百元')
+    expect(w.spawned.filter(s => s.subagentType === 'crew:fullstack')).toHaveLength(1)
+    expect(await paneText($, 'progress')).toMatch(/實作 2\/2/)
+  })
+
+  test('does not start building a finished board’s tasks on an unrelated turn', async ($, on) => {
+    const w = world($, on)
+    let t = newTracker('repo')
+    for (const [by, ops] of [
+      ['pm', SPLIT],
+      ['qa', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }]],
+      ['techlead', PLAN],
+    ] as const) {
+      const r = applyOps(t, ops as unknown as Op[], { by, today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
+      if (!r.ok) throw new Error(r.errors.join())
+      t = r.tracker
+    }
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(t))
+    w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'done', round: 0, retries: 0 }, questions: [], lead: 'person' })
+    await start($)
+    await $.command.run(command('ask pm 月繳價格多少？'))
+    await done($, 'a-pm-1', '一百元')
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm'])
+    expect(w.git.commands.some(c => c.includes('worktree'))).toBe(false)
+  })
+
+  test('hears the tech lead’s answer even when it came in the report, not the thread', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await $.tool.call({ tool: 'mcp__crew__thread_post', tool_use_id: 'q', agentId: 'a-fullstack-4', item: 'TASK-001', to: 'techlead', text: '金流用哪家？' } as never)
+    await done($, 'a-fullstack-4', '等 Tech lead')
+    expect(w.sent.at(-1)?.to).toBe('a-techlead-3')
+    await done($, 'a-techlead-3', '用 Stripe。')
+    expect(w.sent.at(-1)?.to).toBe('a-fullstack-4')
+    expect(w.sent.at(-1)?.text).toMatch(/用 Stripe/)
+  })
+
+  test('does not count a task built while its worktree holds changes not committed', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.commit('TASK-001: 先寫失敗的測試')
+    w.git.dirty = ' M src/plan.ts\n'
+    await done($, 'a-fullstack-4', '先休息')
+    expect(w.sent.at(-1)?.to).toBe('a-fullstack-4')
+    expect(w.sent.at(-1)?.text).toMatch(/TASK-001 的工作目錄還有沒 commit 的修改/)
+    w.git.dirty = ''
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-4')
+    expect(w.sent.at(-1)?.text).toMatch(/請實作 TASK-002/)
+  })
+
+  test('shows code as committed, not done, until a review checks it', async ($, on) => {
+    world($, on)
+    await start($)
+    await planned($)
+    await build($)
+    const text = await paneText($, 'progress')
+    expect(text).not.toMatch(/實作 ✓/)
+    expect(text).toMatch(/◐ 2\/2/)
   })
 })

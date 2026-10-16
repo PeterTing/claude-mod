@@ -146,7 +146,8 @@ const requirementRows = (board: Tracker, requirements: readonly Requirement[]): 
         design: NOT_YET,
         cases: { state: cases === 'done' && spec !== 'done' ? 'doing' : cases, note: `${tested}/${criteria.length}` },
         tasks: { state: tasks === 'done' && spec !== 'done' ? 'doing' : tasks, note: `${withTask}/${criteria.length}` },
-        code: serving.length === 0 ? { state: 'todo', note: '0/0' } : { state: code === 'done' && (tasks !== 'done' || spec !== 'done') ? 'doing' : code, note: `${built}/${serving.length}` },
+        // A commit says code is there, not that it is right: done waits for a review (phase 4d).
+        code: serving.length === 0 ? { state: 'todo', note: '0/0' } : { state: code === 'todo' ? 'todo' : 'doing', note: `${built}/${serving.length}` },
         review: NOT_YET,
         runs: NOT_YET,
       },
@@ -213,7 +214,8 @@ export const snapshotOf = ({
             // The plan is done only once the split is, as testing is.
             { ...stageOf('架構', g3, stage === 'planning'), ...(split.gaps.length > 0 && g3.total > 0 && g3.gaps.length === 0 ? { state: stage === 'planning' ? ('active' as const) : ('pending' as const) } : {}) },
             // Code is done only once the plan is: a criterion still without a task has nothing built for it.
-            { ...stageOf('實作', built, stage === 'building'), ...((split.gaps.length > 0 || g3.gaps.length > 0) && built.total > 0 && built.gaps.length === 0 ? { state: stage === 'building' ? ('active' as const) : ('pending' as const) } : {}) },
+            // Code committed is not code checked: the stage is not done until a review says so (phase 4d).
+            { ...stageOf('實作', built, stage === 'building'), ...(built.total > 0 && built.gaps.length === 0 ? { state: stage === 'building' ? ('active' as const) : ('pending' as const) } : {}) },
             // Testing is done only once the split is: a requirement still without features has nothing tested yet.
             { ...stageOf('測試', g4, testing), ...(split.gaps.length > 0 && g4.total > 0 && g4.gaps.length === 0 ? { state: testing ? ('active' as const) : ('pending' as const) } : {}) },
             pendingStage('驗收'),

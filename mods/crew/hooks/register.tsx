@@ -12,7 +12,7 @@ import { dayOf, emptyLive, snapshotOf } from './live'
 import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, redact, searchMemories, serializeMemories } from './memory'
 import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { ROLE_NAMES } from './model'
-import { baselineFor, baselineOf, changeKey, cut, diffRequirements, earlierFor, gateG0, MAX_REQUIREMENTS, refsOf, requirementsOf } from './prd'
+import { baselineFor, baselineOf, changeKey, cut, diffRequirements, earlierFor, fingerprint, gateG0, MAX_REQUIREMENTS, refsOf, requirementsOf } from './prd'
 import { branchOf, commitsByTask, withCommits, workdirOf } from './git'
 import type { Requirement } from './prd'
 import { composeStart, relatedOf, threadLines, wakePlan, withMemories, workingSet } from './pack'
@@ -607,11 +607,14 @@ async function startRole($: any, role: CrewRole, route: Route, given: string, re
   })
   // Unnamed on purpose: a named agent in a team-enabled session becomes a teammate, whose
   // finish notices reach the main conversation and whose prompt is the lead's, not the role card.
+  // The full-stack runs in its worktree, so its tools start there and not in the person's checkout.
+  const cwd = role === 'fullstack' ? (await loadWork($)).dir : undefined
   const spawned = await $.agent.spawn({
     subagentType: `crew:${role}`,
     description: `crew ${crewName(role)}`,
     prompt,
     model: route.model,
+    ...(cwd === undefined ? {} : { cwd }),
   })
   // The engine answers the new agent's id; when a hook beneath kept it back, find the agent by name.
   let id: string | undefined = spawned.deny === undefined ? spawned.agentId : undefined
@@ -671,7 +674,10 @@ const WORKDIR = '工作目錄：'
  * role is blocked and says why.
  */
 async function withWorkdir($: any, role: CrewRole, work: string): Promise<string | undefined> {
-  if (role !== 'fullstack' || work.includes(WORKDIR)) return work
+  if (role !== 'fullstack') return work
+  // What the checkout held when the full-stack's work began: its turn end tells what it changed there.
+  checkout.before = await checkoutChanges($)
+  if (work.includes(WORKDIR)) return work
   const wd = await ensureWorkdir($)
   if ('error' in wd) {
     await update($, live, l => ({ ...l, roles: { ...l.roles, fullstack: { ...l.roles.fullstack, state: 'blocked' as const, doing: cut(wd.error, 200) } } }))
@@ -1010,45 +1016,131 @@ const inboxOf = (l: CrewLive): Record<CrewRole, string[]> => {
 const git = ($: any, args: readonly string[]) =>
   $.process.run(['git', '-C', files.root, ...args], { timeoutMs: 30_000 }) as Promise<{ exitCode: number; stdout: string; stderr: string }>
 
-/** The worktree and branch the full-stack builds this PRD in: made from the checkout's HEAD the first time. */
+/**
+ * crew's own record of the full-stack's work, on this machine and not in the
+ * repo: the branch and worktree it made for the PRD, and the commits it has
+ * seen on that branch doing each task. A board or branch a repo brings is
+ * neither crew's branch nor crew's record.
+ */
+type Work = { prd?: string; branch?: string; dir?: string; built: Record<string, string[]> }
+
+const workKey = (): string => `work:${files.root}`
+
+async function loadWork($: any): Promise<Work> {
+  const v = (await $.store.get(workKey())) as Partial<Work> | undefined
+  const built: Record<string, string[]> = {}
+  if (typeof v?.built === 'object' && v.built !== null) {
+    for (const [id, shas] of Object.entries(v.built)) if (/^TASK-\d+$/.test(id) && Array.isArray(shas)) built[id] = shas.filter((x): x is string => typeof x === 'string' && /^[0-9a-f]{7,40}$/.test(x))
+  }
+  return {
+    built,
+    ...(typeof v?.prd === 'string' ? { prd: v.prd } : {}),
+    ...(typeof v?.branch === 'string' && /^crew\/[a-z0-9-]+$/.test(v.branch) ? { branch: v.branch } : {}),
+    ...(typeof v?.dir === 'string' && v.dir.startsWith(`${files.root}/.crew/work/`) ? { dir: v.dir } : {}),
+  }
+}
+
+const saveWork = ($: any, work: Work) => $.store.set(workKey(), work)
+
+/**
+ * The worktree and branch the full-stack builds this PRD in: made from the
+ * checkout's HEAD the first time, and crew's own from then on. A branch of the
+ * name that crew did not make is left alone: crew makes one of its own beside it.
+ */
 async function ensureWorkdir($: any): Promise<{ dir: string; branch: string } | { error: string }> {
   const l = await read($, live)
   if (l.prdPath === null) return { error: '還沒有開始的 PRD。' }
   const path = relativeOf(l.prdPath)
-  const dir = workdirOf(files.root, path)
-  const branch = branchOf(path)
+  const work = await loadWork($)
   try {
-    if (!(await staysIn($, dir))) return { error: `${dir} 是連結，或指到 repo 外。` }
     const inside = await git($, ['rev-parse', '--is-inside-work-tree'])
     if (inside.exitCode !== 0 || inside.stdout.trim() !== 'true') return { error: '這個資料夾不是 git repo：全端要在 crew 自己的分支上 commit。' }
-    if (await $.fs.exists(`${dir}/.git`)) return { dir, branch }
-    const has = await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
-    const made = has.exitCode === 0 ? await git($, ['worktree', 'add', dir, branch]) : await git($, ['worktree', 'add', '-b', branch, dir, 'HEAD'])
+    if (work.prd === path && work.branch !== undefined && work.dir !== undefined) {
+      if (!(await staysIn($, work.dir))) return { error: `${work.dir} 是連結，或指到 repo 外。` }
+      if (await $.fs.exists(`${work.dir}/.git`)) return { dir: work.dir, branch: work.branch }
+      const back = await git($, ['worktree', 'add', work.dir, work.branch])
+      if (back.exitCode !== 0) return { error: `建立工作目錄失敗：${cut(squeeze(back.stderr), 200)}` }
+      return { dir: work.dir, branch: work.branch }
+    }
+    let branch = branchOf(path)
+    let dir = workdirOf(files.root, path)
+    const taken = await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
+    if (taken.exitCode === 0 || (await $.fs.exists(dir))) {
+      const mark = fingerprint(`${path}${await $.clock.now()}`)
+      branch = `${branch}-${mark}`
+      dir = `${dir}-${mark}`
+    }
+    if (!(await staysIn($, dir))) return { error: `${dir} 是連結，或指到 repo 外。` }
+    const made = await git($, ['worktree', 'add', '-b', branch, dir, 'HEAD'])
     if (made.exitCode !== 0) return { error: `建立工作目錄失敗：${cut(squeeze(made.stderr), 200)}` }
+    await saveWork($, { ...work, prd: path, branch, dir })
     await note($, { kind: 'workdir', dir, branch })
+    $.ui.toast(`crew：全端開始在 ${dir}（分支 ${branch}）寫程式。它照你的權限模式執行，不會 push，合併由你決定。`)
     return { dir, branch }
   } catch (err) {
     return { error: `git 沒辦法執行：${cut(String(err), 200)}` }
   }
 }
 
-/** Reads the commits that do tasks, on crew's branch and the checkout's history, and marks them on the board. */
+/**
+ * The commits that do tasks, as crew has seen them on its own branch: only the
+ * commits no other branch has, so the checkout's own history is not crew's
+ * work. What crew has seen stays seen, through a merge or a deleted branch, and
+ * the board's marks follow crew's record, not what the board was given.
+ */
 async function syncCommits($: any) {
   const l = await read($, live)
   if (l.prdPath === null) return
-  const branch = branchOf(relativeOf(l.prdPath))
   try {
-    const has = await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
-    const log = await git($, ['log', '--format=%H%x09%s', '-n', '2000', ...(has.exitCode === 0 ? [branch] : []), 'HEAD', '--'])
-    if (log.exitCode !== 0) return
-    const commits = commitsByTask(log.stdout)
+    const work = await loadWork($)
+    let seen = work.built
+    if (work.branch !== undefined) {
+      const has = await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${work.branch}`])
+      if (has.exitCode === 0) {
+        const log = await git($, ['log', '--format=%H%x09%s', '-n', '2000', `refs/heads/${work.branch}`, '--not', `--exclude=refs/heads/${work.branch}`, '--branches', '--'])
+        if (log.exitCode === 0) {
+          const next: Record<string, string[]> = { ...seen }
+          for (const [id, shas] of commitsByTask(log.stdout)) next[id] = [...new Set([...(next[id] ?? []), ...shas])]
+          if (JSON.stringify(next) !== JSON.stringify(seen)) {
+            seen = next
+            await saveWork($, { ...work, built: seen })
+          }
+        }
+      }
+    }
     await changeBoard($, async board => {
       if (board === null) return { value: undefined }
-      const marked = withCommits(board, commits)
+      const marked = withCommits(board, new Map(Object.entries(seen)))
       return marked === null ? { value: undefined } : { board: marked, value: undefined }
     })
   } catch (err) {
     if (!(err instanceof BoardRefused)) $.ui.log(`crew: could not read the commits: ${String(err)}`, { to: 'debug' })
+  }
+}
+
+/** The checkout's own changes, crew's files left out: what the full-stack must leave as it found it. */
+async function checkoutChanges($: any): Promise<string[]> {
+  try {
+    const r = await git($, ['status', '--porcelain'])
+    if (r.exitCode !== 0) return []
+    return r.stdout.split('\n').filter(line => line.trim() !== '' && !/^.{3}(?:"?\.crew\/|"?prd-tracker\.json)/.test(line))
+  } catch {
+    return []
+  }
+}
+
+/** The checkout's changes when the full-stack's run began, to tell what it changed there. */
+const checkout: { before: string[] | undefined } = { before: undefined }
+
+/** Whether the full-stack's worktree holds changes it has not committed. */
+async function workUnclean($: any): Promise<boolean> {
+  const work = await loadWork($)
+  if (work.dir === undefined) return false
+  try {
+    const r = (await $.process.run(['git', '-C', work.dir, 'status', '--porcelain'], { timeoutMs: 30_000 })) as { exitCode: number; stdout: string }
+    return r.exitCode === 0 && r.stdout.trim() !== ''
+  } catch {
+    return false
   }
 }
 
@@ -1481,6 +1573,19 @@ async function roleEnded($: any, e: any, next: any, role: CrewRole, before: Crew
   const flowWork = before.roles[role].run !== 'person' || !RUNNING.includes(l.flow.stage)
   // What the full-stack committed is the signal of what it built: read before the flow looks at the board.
   await syncCommits($)
+  const unclean = role === 'fullstack' && (await workUnclean($))
+  if (role === 'fullstack' && checkout.before !== undefined) {
+    // The full-stack works in its worktree: anything new in the person's checkout after its run is said, once.
+    const was = new Set(checkout.before)
+    const touched = (await checkoutChanges($)).filter(line => !was.has(line))
+    checkout.before = undefined
+    if (touched.length > 0) {
+      const text = `全端這一輪之後，你的工作目錄多了 ${touched.length} 個變更（${cut(touched.map(t => t.slice(3)).join('、'), 160)}）：請檢查，全端應該只改 crew 的工作目錄。`
+      $.ui.toast(`crew：${text}`)
+      await note($, { kind: 'checkout_touched', files: touched.slice(0, 20) })
+      if (before.lead === 'brain') tellBrain(text)
+    }
+  }
   const board = await loadBoard($)
   const requirements = (await prdView($))?.requirements
   // Whether QA has a run of the flow's under way now: a PM sync then waits for it rather than starting another.
@@ -1499,6 +1604,8 @@ async function roleEnded($: any, e: any, next: any, role: CrewRole, before: Crew
       ...(requirements === undefined ? {} : { requirements }),
       ...(qaWorking ? { qaWorking } : {}),
       ...(working.length === 0 ? {} : { working }),
+      ...(unclean ? { unclean } : {}),
+      report: cut(redact(e.answer ?? ''), 600),
     })
   }
   else if (board === null && boardProblem() !== undefined) $.ui.toast(`crew：流程停在這裡。${boardProblem() ?? ''}`)

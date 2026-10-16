@@ -334,10 +334,10 @@ describe('the full-stack’s commits', () => {
     expect(snap.roles.find(r => r.id === 'uiux')?.doing).toBe('第 4 階段加入')
   })
 
-  test('fill each requirement’s code column, done only once its tasks are', () => {
+  test('fill each requirement’s code column, under way while committed and never done by a commit alone', () => {
     expect((snapshotOf({ board: half, live: building, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]?.layers.code).toEqual({ state: 'doing', note: '1/2' })
     const all = withCommits(planned, new Map([['TASK-001', ['abc1234def']], ['TASK-002', ['def5678abc']]])) ?? planned
-    expect((snapshotOf({ board: all, live: building, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]?.layers.code).toEqual({ state: 'done', note: '2/2' })
+    expect((snapshotOf({ board: all, live: building, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]?.layers.code).toEqual({ state: 'doing', note: '2/2' })
     // Review and test runs are still to come: never shown as done by a commit.
     expect((snapshotOf({ board: all, live: building, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]?.layers.review.state).toBe('later')
   })
