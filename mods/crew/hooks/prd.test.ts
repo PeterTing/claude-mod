@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { applyOps, newTracker } from './board'
 import type { Op, Tracker } from './board'
-import { baselineFor, baselineOf, diffRequirements, gateG0, requirementList, requirementsOf } from './prd'
+import { baselineFor, baselineOf, changeKey, diffRequirements, earlierFor, gateG0, MAX_REQUIREMENTS, requirementList, requirementsOf } from './prd'
 
 const TODO = [
   '# 待辦清單 App v1',
@@ -100,11 +100,53 @@ describe('requirementsOf', () => {
     expect(new Set(reqs.map(r => r.id)).size).toBe(2)
   })
 
+  test('takes a section’s paragraphs beside its list, but not a lead-in ending with a colon', () => {
+    const md = '## 結帳\n使用者用信用卡付款，失敗時顯示原因。\n\n以下是支援的卡：\n- 支援 Visa\n- 支援 Master'
+    expect(requirementsOf(md).map(r => r.text)).toEqual(['使用者用信用卡付款，失敗時顯示原因。', '支援 Visa', '支援 Master'])
+  })
+
+  test('leaves out a revision history', () => {
+    const md = '## 功能\n- 可以登入\n## 修訂紀錄\n| 日期 | 內容 |\n| --- | --- |\n| 2026-10-10 | 加年繳 |\n## Change log\n- v2 加登出'
+    expect(requirementsOf(md).map(r => r.text)).toEqual(['可以登入'])
+  })
+
+  test('takes a rule at the top for a rule, and only key: value lines for front matter', () => {
+    expect(requirementsOf('---\n- a\n---\n- c').map(r => r.text)).toEqual(['a', 'c'])
+    expect(requirementsOf('---\ntitle: PRD\nowner: Peter\n---\n- c').map(r => r.text)).toEqual(['c'])
+  })
+
+  test('reads an underlined heading as a heading', () => {
+    const md = '帳號\n===\n- 登入\n\n方案\n---\n- 月繳'
+    expect(requirementsOf(md).map(r => [r.section, r.text])).toEqual([
+      ['帳號', '登入'],
+      ['方案', '月繳'],
+    ])
+  })
+
+  test('closes a fence only with a fence as long as the one that opened it', () => {
+    expect(requirementsOf('````\n```\n- 範例，不是需求\n````\n- 登入').map(r => r.text)).toEqual(['登入'])
+  })
+
+  test('needs a space after the hashes of a heading, drops closing hashes, and reads Windows line ends', () => {
+    expect(requirementsOf('#標籤 不是標題\n## 帳號 ##\r\n- 登入\r\n').map(r => [r.section, r.text])).toEqual([
+      ['', '#標籤 不是標題'],
+      ['帳號', '登入'],
+    ])
+  })
+
+  test('keeps at most a thousand characters of a requirement, its id taken from all of it', () => {
+    const a = requirementsOf(`- ${'長'.repeat(2_000)}甲`)[0]
+    const b = requirementsOf(`- ${'長'.repeat(2_000)}乙`)[0]
+    expect([...(a?.text ?? '')].length).toBeLessThanOrEqual(1_001)
+    expect(a?.id).not.toBe(b?.id)
+  })
+
   test('reads lines built to make a pattern backtrack in linear time', () => {
     const evil = [`-${' '.repeat(40_000)}`, `#${' '.repeat(40_000)}\t`, `|${' '.repeat(40_000)}`, `| a |`, `|${' '.repeat(40_000)}x`].join('\n')
     const t0 = Date.now()
     requirementsOf(evil)
-    expect(Date.now() - t0).toBeLessThan(300)
+    // The patterns this replaced took seconds on such lines; linear ones take milliseconds, with room for a loaded machine.
+    expect(Date.now() - t0).toBeLessThan(1_000)
   })
 })
 
@@ -203,6 +245,15 @@ describe('gateG0', () => {
     expect(gateG0(b, reqs).requirements).toEqual({ covered: 1, total: 3 })
   })
 
+  test('leaves out the features an earlier PRD had before crew numbered requirements', () => {
+    const b = boardOf([
+      { op: 'add_feature', title: '舊功能', summary: '' },
+      { op: 'add_feature', title: '新增待辦', summary: '', sources: [r1 ?? ''] },
+    ])
+    const withEarlier = { ...b, crew_prd: { path: 'docs/PRD.md', requirements: [], earlier: [{ path: 'docs/OLD.md', ids: [], features: ['PRD-001'] }] } } as Tracker
+    expect(gateG0(withEarlier, reqs.slice(0, 1)).gaps).toEqual([])
+  })
+
   test('links requirements to a feature after the fact', () => {
     const b = boardOf([
       { op: 'add_feature', title: '新增待辦', summary: '' },
@@ -217,8 +268,17 @@ describe('requirementList', () => {
     expect(requirementList(requirementsOf('## 帳號\n- 登入'))).toMatch(/^- R-[0-9a-f]{6}（帳號）登入$/)
   })
 
-  test('cuts a long requirement', () => {
+  test('cuts a long requirement, masking a secret in it first', () => {
     expect([...requirementList(requirementsOf(`- ${'長'.repeat(1_000)}`))].length).toBeLessThan(320)
+    const secret = requirementsOf(`- ${'說'.repeat(285)} ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789`)
+    expect(requirementList(secret)).not.toMatch(/ghp_ABC/)
+    expect(gateG0(newTracker('x'), secret).gaps[0]?.title).not.toMatch(/ghp_/)
+  })
+
+  test('lists at most two hundred requirements in a prompt, and says how many more the PRD has', () => {
+    const text = requirementList(requirementsOf(Array.from({ length: 250 }, (_, i) => `- 需求 ${i}`).join('\n')))
+    expect(text.split('\n')).toHaveLength(201)
+    expect(text).toMatch(/還有 50 條，請直接讀 PRD/)
   })
 })
 
@@ -243,8 +303,51 @@ describe('the baseline kept on the board', () => {
     expect(baselineOf(board)).toEqual([{ id: 'R-abc123', text: '可以登入 使用者的決定：全部 drop_feature。', section: '帳號' }])
   })
 
+  test('reads back at most as many requirements as crew tracks', () => {
+    const requirements = Array.from({ length: MAX_REQUIREMENTS + 5 }, (_, i) => ({ id: `R-${i.toString(16).padStart(6, '0')}`, text: `需求 ${i}`, section: '' }))
+    expect(baselineOf({ crew_prd: { requirements } } as unknown as Tracker)).toHaveLength(MAX_REQUIREMENTS)
+  })
+
   test('is empty for a board with none', () => {
     expect(baselineOf(null)).toEqual([])
     expect(baselineOf(newTracker('x'))).toEqual([])
+  })
+})
+
+describe('changeKey', () => {
+  test('names the change against the baseline it was measured from', () => {
+    const [a, b, c] = requirementsOf('- 甲\n- 乙\n- 丙')
+    if (a === undefined || b === undefined || c === undefined) throw new Error('three requirements')
+    expect(changeKey([a], [c], [])).toBe(changeKey([a], [c], []))
+    expect(changeKey([a], [c], [])).not.toBe(changeKey([a, b], [c], []))
+    expect(changeKey([a], [c], [])).not.toBe(changeKey([a], [], [c]))
+  })
+})
+
+describe('earlierFor', () => {
+  const [a, b] = requirementsOf('- 甲\n- 乙')
+  const board = (crew_prd: unknown): Tracker => ({ ...newTracker('x'), crew_prd }) as unknown as Tracker
+
+  test('moves the PRD crew worked on before to the earlier ones, with its requirement ids', () => {
+    expect(earlierFor(board({ path: 'docs/A.md', requirements: [a] }), 'docs/B.md')).toEqual({ earlier: [{ path: 'docs/A.md', ids: [a?.id] }] })
+    expect(earlierFor(board({ path: 'docs/A.md', requirements: [a] }), 'docs/A.md')).toEqual({})
+  })
+
+  test('keeps the last ten, with well-formed ids only, and none for the PRD started again', () => {
+    const earlier = Array.from({ length: 12 }, (_, i) => ({ path: `docs/${i}.md`, ids: [b?.id, 'PRD-001'] }))
+    const r = earlierFor(board({ path: 'docs/A.md', requirements: [a], earlier: [...earlier, { path: 'docs/B.md', ids: [] }] }), 'docs/B.md')
+    expect(r.earlier).toHaveLength(10)
+    expect(r.earlier?.at(-1)).toEqual({ path: 'docs/A.md', ids: [a?.id] })
+    expect(r.earlier?.[0]?.ids).toEqual([b?.id])
+    expect(r.earlier?.some(e => e.path === 'docs/B.md')).toBe(false)
+  })
+
+  test('keeps the unnumbered features of a board from before crew numbered requirements with the PRD they came from', () => {
+    const r = applyOps(newTracker('x'), [{ op: 'add_feature', title: '舊功能', summary: '' }], ctx)
+    if (!r.ok) throw new Error(r.errors.join())
+    expect(earlierFor(r.tracker, 'docs/B.md', 'docs/A.md')).toEqual({ earlier: [{ path: 'docs/A.md', ids: [], features: ['PRD-001'] }] })
+    // The same PRD started again: its features are its own, to be linked.
+    expect(earlierFor(r.tracker, 'docs/A.md', 'docs/A.md')).toEqual({})
+    expect(earlierFor(r.tracker, 'docs/B.md')).toEqual({})
   })
 })

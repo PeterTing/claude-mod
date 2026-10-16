@@ -316,10 +316,11 @@ const resume = (state: FlowState, event: Extract<FlowEvent, { type: 'resume' }>)
 }
 
 /**
- * The PRD file changed. A finished board goes back to the PM to sync, and the
- * flow runs again from the split; a running flow keeps its stage, the PM is
- * told, and the flow cannot finish until the board answers the PRD again.
- * Each change is told once; before any PRD was started there is nothing to sync.
+ * The PRD file changed. The board goes back to the PM to sync and the flow runs
+ * again from the split, with fresh rounds: QA finishing meanwhile waits for the
+ * PM, and then tests only what is new. A flow that waits for the person keeps
+ * waiting, and the PM is told. Each change is told once; before any PRD was
+ * started there is nothing to sync.
  */
 const prdChanged = (state: FlowState, event: Extract<FlowEvent, { type: 'prd_changed' }>): StepResult => {
   if (state.stage === 'idle' || state.synced === event.key) return { state, actions: [] }
@@ -331,8 +332,8 @@ const prdChanged = (state: FlowState, event: Extract<FlowEvent, { type: 'prd_cha
     text: event.unlinked === true ? linkPrompt(event.requirements, gaps) : syncPrompt(event.added, event.removed, gaps),
     route: routeFor('pm', tierFor({ kind: 'confirm_gaps', size: Math.max(1, event.added.length + event.removed.length) })),
   }
-  if (state.stage === 'done') return { state: { stage: 'splitting', round: 0, retries: 0, synced: event.key }, actions: [message] }
-  return { state: { ...state, synced: event.key }, actions: [message] }
+  if (state.stage === 'escalated') return { state: { ...state, synced: event.key }, actions: [message] }
+  return { state: { stage: 'splitting', round: 0, retries: 0, aligning: 0, synced: event.key }, actions: [message] }
 }
 
 /** One event in, the next state and what to do out. */
@@ -356,8 +357,11 @@ export const step = (state: FlowState, event: FlowEvent): StepResult => {
   const { requirements } = event
   if (role === 'qa' && (state.stage === 'writing_tests' || state.stage === 'adding_tests')) return afterTests(state, board, inbox, requirements)
   if (role === 'pm' && state.stage === 'confirming') return afterConfirm(state, board, inbox, requirements)
-  // A finished board can open again: the PM adds criteria after an answer, or one role writes to the other.
+  // A finished board can open again: the PM adds criteria after an answer, or one role writes to the other;
+  // a PM turn that left the board short of the PRD sends the PM back to it.
   if (state.stage === 'done') {
+    const g0 = role === 'pm' && requirements !== undefined ? gateG0(board, requirements) : undefined
+    if (g0 !== undefined && g0.gaps.length > 0) return realign(state, g0.gaps)
     if (role === 'pm' && (gateG4(board).gaps.length > 0 || (inbox.qa ?? []).length > 0)) return afterConfirm(state, board, inbox, requirements)
     if (role === 'qa' && (inbox.pm ?? []).length > 0) return afterTests(state, board, inbox, requirements)
   }

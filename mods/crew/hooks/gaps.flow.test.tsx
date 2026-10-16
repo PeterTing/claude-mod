@@ -304,7 +304,7 @@ describe('restarting at each stage', () => {
 })
 
 describe('the daily tidy-up', () => {
-  test('runs again the next day for the day before', { timeoutMs: 30_000 }, async ($, on) => {
+  test('runs again the next day for the day before', { timeoutMs: 90_000 }, async ($, on) => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))

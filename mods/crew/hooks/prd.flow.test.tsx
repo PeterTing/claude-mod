@@ -3,6 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { applyOps, newTracker } from './board'
+import { parseMemories } from './memory'
 import { requirementsOf } from './prd'
 import { command, done, paneText, PRD, REQ, ROOT, SPLIT, start, world, write } from './world'
 
@@ -322,5 +323,304 @@ describe('the board held to the PRD', () => {
     await w.clock.advance(10_000)
     await start($)
     expect((await $.command.run(command(`thread ${NEW_REQ}`))).text).toMatch(/PRD 改了/)
+  })
+
+  test('tells the PM about a second, different change after the first was synced', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    w.disk.set(PRD_PATH, CHANGED)
+    await w.clock.advance(10_000)
+    await write($, 'a-pm-1', [
+      { op: 'add_criterion', feature: 'PRD-001', text: '可以改成年繳' },
+      { op: 'link_requirements', feature: 'PRD-001', requirements: [NEW_REQ] },
+    ])
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-003'], title: 't', steps: ['s'], expected: 'e' }])
+    await done($, 'a-qa-2')
+    expect((await $.command.run(command('status'))).text).toMatch(/done[\s\S]*對準 PRD ✓/)
+    w.disk.set(PRD_PATH, `${CHANGED}\n\n使用者可以暫停訂閱。`)
+    await w.clock.advance(10_000)
+    expect(w.sent.filter(m => /PRD 改了/.test(m.text))).toHaveLength(2)
+    expect(w.toasts.filter(t => /PRD 改了/.test(t))).toHaveLength(2)
+  })
+
+  test('keeps the change the PM was told about in the store, for a real restart', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    w.disk.set(PRD_PATH, CHANGED)
+    await w.clock.advance(10_000)
+    expect(typeof (w.store.get(`state:${ROOT}`) as { flow?: { synced?: unknown } } | undefined)?.flow?.synced).toBe('string')
+  })
+
+  test('resumes a split after a restart with the requirement ids', async ($, on) => {
+    const w = world($, on)
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify({ ...newTracker('repo'), crew_prd: { path: 'docs/PRD.md', requirements: requirementsOf(PRD), synced_at: '2026-10-15' } }))
+    w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'splitting', round: 0, retries: 0 }, questions: [], lead: 'person' })
+    await start($)
+    expect(w.spawned[0]?.prompt).toMatch(new RegExp(`${REQ}[\\s\\S]*拆到一半`))
+  })
+
+  test('holds the split to the requirements last read while the PRD is gone', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    w.disk.delete(PRD_PATH)
+    await write($, 'a-pm-1', SPLIT.map(o => (o.op === 'add_feature' ? { op: o.op, title: o.title, summary: o.summary } : o)))
+    await done($, 'a-pm-1')
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm'])
+    expect(w.sent.at(-1)?.text).toMatch(/看板還對不上 PRD/)
+  })
+
+  test('keeps an edited and synced second PRD clear of the first one’s features', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    const second = '# 帳單\n\n每月寄出電子發票。'
+    w.disk.set(`${ROOT}/docs/BILLING.md`, second)
+    const req2 = requirementsOf(second)[0]?.id ?? ''
+    await $.command.run(command('start docs/BILLING.md'))
+    await write($, 'a-pm-3', [
+      { op: 'add_feature', title: '電子發票', summary: '', sources: [req2] },
+      { op: 'add_criterion', feature: 'PRD-003', text: '每月寄出發票' },
+    ])
+    await done($, 'a-pm-3')
+    const edited = `${second}\n\n發票可以下載 PDF。`
+    const req3 = requirementsOf(edited).find(r => r.text === '發票可以下載 PDF。')?.id ?? ''
+    w.disk.set(`${ROOT}/docs/BILLING.md`, edited)
+    await w.clock.advance(10_000)
+    await write($, 'a-pm-3', [
+      { op: 'add_feature', title: '下載 PDF', summary: '', sources: [req3] },
+      { op: 'add_criterion', feature: 'PRD-004', text: '可以下載 PDF' },
+    ])
+    await done($, 'a-pm-3')
+    await w.clock.advance(10_000)
+    const board = w.board() as { crew_prd?: { requirements: { id: string }[]; earlier?: { path: string }[] } } | null
+    expect(board?.crew_prd?.requirements.map(r => r.id)).toEqual([req2, req3])
+    expect(board?.crew_prd?.earlier?.map(e => e.path)).toEqual(['docs/PRD.md'])
+    expect((await $.command.run(command('status'))).text).toMatch(/對準 PRD ✓/)
+  })
+
+  test('does not count the split done on the progress tab while the board does not answer a changed PRD', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    w.disk.set(PRD_PATH, CHANGED)
+    await w.clock.advance(10_000)
+    const text = await paneText($, 'progress')
+    expect(text).toMatch(/拆解 \d+\/\d+/)
+    expect(text).not.toMatch(/拆解 ✓/)
+  })
+
+  test('gives an upgraded board a baseline once the PM links it, and tells the next change', async ($, on) => {
+    const w = world($, on)
+    const old = applyOps(newTracker('x'), [{ op: 'add_feature', title: '方案選擇', summary: '' }, { op: 'add_criterion', feature: 'PRD-001', text: '可以選月繳方案' }], {
+      by: 'pm',
+      today: '2026-10-15',
+      prefixes: { feature: 'PRD-', testCase: 'TC-' },
+    })
+    if (!old.ok) throw new Error(old.errors.join())
+    const tested = applyOps(old.tracker, [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e' }], { by: 'qa', today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } })
+    if (!tested.ok) throw new Error(tested.errors.join())
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(tested.tracker))
+    w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'done', round: 0, retries: 0 }, questions: [], lead: 'person' })
+    await start($)
+    await write($, 'a-pm-1', [{ op: 'link_requirements', feature: 'PRD-001', requirements: [REQ] }])
+    await done($, 'a-pm-1')
+    await w.clock.advance(10_000)
+    expect((w.board() as { crew_prd?: { requirements: { id: string }[] } } | null)?.crew_prd?.requirements.map(r => r.id)).toEqual([REQ])
+    w.disk.set(PRD_PATH, CHANGED)
+    await w.clock.advance(10_000)
+    expect(w.sent.some(m => /PRD 改了/.test(m.text))).toBe(true)
+  })
+
+  test('starts a new PRD on an upgraded board without the old PRD’s features holding it up', async ($, on) => {
+    const w = world($, on)
+    const old = applyOps(newTracker('x'), [{ op: 'add_feature', title: '方案選擇', summary: '' }, { op: 'add_criterion', feature: 'PRD-001', text: '可以選月繳方案' }], {
+      by: 'pm',
+      today: '2026-10-15',
+      prefixes: { feature: 'PRD-', testCase: 'TC-' },
+    })
+    if (!old.ok) throw new Error(old.errors.join())
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(old.tracker))
+    // crew worked on docs/PRD.md before, and is idle now.
+    w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'idle', round: 0, retries: 0 }, questions: [], lead: 'person' })
+    const second = '# 帳單\n\n每月寄出電子發票。'
+    w.disk.set(`${ROOT}/docs/BILLING.md`, second)
+    const req2 = requirementsOf(second)[0]?.id ?? ''
+    await start($)
+    await $.command.run(command('start docs/BILLING.md'))
+    const pm = `a-pm-${w.spawned.length}`
+    await write($, pm, [
+      { op: 'add_feature', title: '電子發票', summary: '', sources: [req2] },
+      { op: 'add_criterion', feature: 'PRD-002', text: '每月寄出發票' },
+    ])
+    await done($, pm)
+    expect(w.sent.some(m => /看板還對不上 PRD/.test(m.text))).toBe(false)
+    expect(w.spawned.at(-1)?.subagentType).toBe('crew:qa')
+  })
+
+  test('takes the same PRD under another spelling of its path as the same PRD', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    // The PRD drops its one requirement for another; PRD-001 and PRD-002 answer nothing in it now.
+    w.disk.set(PRD_PATH, '# 會員訂閱\n\n使用者可以選年繳方案。')
+    await $.command.run(command(`start ./docs/../docs/PRD.md`))
+    const board = w.board() as { crew_prd?: { path: string; earlier?: unknown } } | null
+    expect(board?.crew_prd?.path).toBe('docs/PRD.md')
+    expect(board?.crew_prd?.earlier).toBeUndefined()
+    expect((await $.command.run(command('status'))).text).not.toMatch(/對準 PRD ✓/)
+    await $.command.run(command('reset'))
+    await $.command.run(command(`start ${ROOT}/docs/PRD.md`))
+    expect((w.board() as { crew_prd?: { path: string } } | null)?.crew_prd?.path).toBe('docs/PRD.md')
+  })
+
+  test('does not hold this PRD to a baseline another PRD left on the board', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string; requirements: unknown[] } }
+    board.crew_prd = { path: 'docs/OTHER.md', requirements: [{ id: 'R-aaaaaa', text: '隊友的需求', section: '' }] }
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    await w.clock.advance(10_000)
+    await w.clock.advance(10_000)
+    expect(w.sent.some(m => /移除的需求/.test(m.text))).toBe(false)
+    expect((await $.command.run(command('status'))).text).toMatch(/看板對準的是另一份 PRD/)
+  })
+
+  test('masks a secret before cutting a long requirement in the thread', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    const long = `${'說'.repeat(285)} ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789`
+    w.disk.set(PRD_PATH, `${PRD}\n\n${long}`)
+    await w.clock.advance(10_000)
+    const threads = [...w.disk.entries()].filter(([k]) => k.includes('/.crew/threads/')).map(([, v]) => v).join('\n')
+    expect(threads).toMatch(/PRD 改了/)
+    expect(threads).not.toMatch(/ghp_ABC/)
+  })
+
+  test('waits for a second look before telling the PM of any removal', async ($, on) => {
+    const w = world($, on)
+    const four = '# 會員訂閱\n- 可以選月繳\n- 可以取消\n- 可以暫停\n- 可以改年繳'
+    w.disk.set(PRD_PATH, four)
+    const ids = requirementsOf(four).map(r => r.id)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', [
+      { op: 'add_feature', title: 'A', summary: '', sources: ids },
+      { op: 'add_criterion', feature: 'PRD-001', text: 'x' },
+    ])
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e' }])
+    await done($, 'a-qa-2')
+    const sent = w.sent.length
+    w.disk.set(PRD_PATH, '# 會員訂閱\n- 可以選月繳\n- 可以取消\n- 可以暫停')
+    await w.clock.advance(10_000)
+    expect(w.sent).toHaveLength(sent)
+    await w.clock.advance(10_000)
+    expect(w.sent.at(-1)?.text).toMatch(/移除的需求[\s\S]*可以改年繳/)
+  })
+
+  test('never tells a removal caught once and then undone', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    const sent = w.sent.length
+    w.disk.set(PRD_PATH, '# 會員訂閱\n\n使用者可以選年繳方案。')
+    await w.clock.advance(10_000)
+    w.disk.set(PRD_PATH, PRD)
+    await w.clock.advance(30_000)
+    expect(w.sent).toHaveLength(sent)
+    expect((await $.command.run(command('status'))).text).toMatch(/對準 PRD ✓/)
+  })
+
+  test('does not read a PRD whose folder became a link out of the repo', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    w.disk.delete(PRD_PATH)
+    w.disk.set('/outside/docs/PRD.md', `${PRD}\n\n外部的需求 SECRET。`)
+    w.links.set(`${ROOT}/docs`, '/outside/docs')
+    await w.clock.advance(20_000)
+    expect(JSON.stringify(w.sent)).not.toMatch(/SECRET/)
+    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).not.toMatch(/SECRET/)
+    expect((await $.command.run(command('status'))).text).toMatch(/讀不到 PRD/)
+  })
+
+  test('refuses a PRD with more requirements than crew tracks, and holds the board when one grows past it', async ($, on) => {
+    const w = world($, on)
+    const many = (n: number) => Array.from({ length: n }, (_, i) => `- 需求 ${i}`).join('\n')
+    w.disk.set(PRD_PATH, many(1_001))
+    await start($)
+    expect((await $.command.run(command('start docs/PRD.md'))).text).toMatch(/最多追 1000 條/)
+    expect(w.spawned).toEqual([])
+    w.disk.set(PRD_PATH, PRD)
+    await finished($)
+    w.disk.set(PRD_PATH, many(1_001))
+    await w.clock.advance(10_000)
+    w.disk.set(PRD_PATH, many(1_002))
+    await w.clock.advance(10_000)
+    expect((await $.command.run(command('status'))).text).toMatch(/超過 crew 一次能追的 1000 條/)
+    expect(w.sent.some(m => /PRD 改了/.test(m.text))).toBe(false)
+    expect(w.toasts.filter(t => /超過 crew 一次能追/.test(t))).toHaveLength(1)
+  })
+
+  test('tells a PRD that went away and came back changed once', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    w.disk.delete(PRD_PATH)
+    await w.clock.advance(10_000)
+    w.disk.set(PRD_PATH, CHANGED)
+    await w.clock.advance(50_000)
+    expect(w.sent.filter(m => /PRD 改了/.test(m.text))).toHaveLength(1)
+  })
+
+  test('sends the PM back when the board stops answering the PRD after the flow finished', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    await $.command.run(command('ask pm 先把兩個功能都拿掉'))
+    await write($, 'a-pm-1', [
+      { op: 'drop_feature', id: 'PRD-001', reason: '使用者要求' },
+      { op: 'drop_feature', id: 'PRD-002', reason: '使用者要求' },
+    ])
+    await done($, 'a-pm-1', '拿掉了')
+    expect(w.sent.at(-1)?.to).toBe('a-pm-1')
+    expect(w.sent.at(-1)?.text).toMatch(/看板還對不上 PRD/)
+  })
+
+  test('takes a drop back in memory too when the PM links the requirement again', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', [...SPLIT, { op: 'drop_requirement', id: REQ, reason: '下一版' }])
+    await write($, 'a-pm-1', [{ op: 'link_requirements', feature: 'PRD-001', requirements: [REQ] }])
+    const memories = parseMemories(w.disk.get(`${ROOT}/.crew/memory/memories.jsonl`) ?? '')
+    const drop = memories.find(m => m.text.includes('移出範圍'))
+    expect(drop?.refs).toContain(REQ)
+    expect(drop?.supersededBy).toBeDefined()
+  })
+
+  test('runs one look at a time: a look asked for during a slow one runs after it, on what it read', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    w.slow.ms = 500
+    w.disk.set(PRD_PATH, CHANGED)
+    const before = w.reads.get(PRD_PATH) ?? 0
+    // The check on the clock starts and waits on its read of the PRD.
+    await w.clock.advance(10_000)
+    // Meanwhile Claude Code reloads, which asks for a look of its own.
+    const restarted = start($)
+    await w.clock.advance(2_000)
+    await restarted
+    // One read: the second look ran after the first, not beside it, and found the PRD already read.
+    expect((w.reads.get(PRD_PATH) ?? 0) - before).toBe(1)
+    expect(w.toasts.filter(t => /PRD 改了/.test(t))).toHaveLength(1)
+    expect(w.sent.filter(m => /PRD 改了/.test(m.text))).toHaveLength(1)
   })
 })

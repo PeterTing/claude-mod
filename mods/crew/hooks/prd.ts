@@ -35,6 +35,13 @@ const join = (before: string, line: string): string => {
 }
 
 // Each pattern runs on a trimmed line and matches a prefix only, so no line can make it backtrack.
+const FENCE = /^(`{3,}|~{3,})/
+const UNDERLINE = /^(?:=+|-+)$/
+const FRONT_FIELD = /^[\w-]+\s*:/
+/** A section that records the PRD's own history, not what to build. */
+const HISTORY = /(修訂|版本|變更|更新)(紀錄|記錄|歷程|歷史)|revision|change\s?log/i
+/** How much of a requirement crew keeps: its id is taken from all of it. */
+const TEXT_KEPT = 1_000
 const ITEM_MARK = /^(?:[-*+]|\d{1,9}[.)])(?:\s+|$)/
 const TASK_BOX = /^\[[ xX]\]\s+/
 const HEADING_MARK = /^#{1,6}(?:\s+|$)/
@@ -49,17 +56,17 @@ const isDivider = (cells: readonly string[]): boolean => cells.length > 0 && cel
 type Block = { text: string; section: number; title: string; list: boolean }
 
 /**
- * The PRD's requirements, in order, once each: in a section with lists, each
- * list item (its wrapped lines with it) and table data row; in a section with
- * none, each paragraph. Front matter, code, headings and breaks are not
- * requirements.
+ * The PRD's requirements, in order, once each: each list item (its wrapped
+ * lines with it), table data row and paragraph. Not requirements: front matter,
+ * code, headings, breaks, a paragraph that ends with a colon (it leads in to
+ * a list), and a section that keeps the PRD's revision history.
  */
 export const requirementsOf = (markdown: string): Requirement[] => {
   const lines = markdown.split(/\r?\n/)
   const blocks: Block[] = []
   let section = 0
   let title = ''
-  let fence: string | undefined
+  let fence: { char: string; length: number } | undefined
   /** The block a following line may continue: an item, or a paragraph. */
   let open: Block | undefined
   /** A blank line came after a list item: only an indented line continues it. */
@@ -67,17 +74,21 @@ export const requirementsOf = (markdown: string): Requirement[] => {
   let i = 0
   if ((lines[0] ?? '').trim() === '---') {
     const close = lines.findIndex((l, n) => n > 0 && (l.trim() === '---' || l.trim() === '...'))
-    if (close > 0) i = close + 1
+    // Front matter holds key: value lines only; anything else makes the first line a rule.
+    if (close > 0 && lines.slice(1, close).every(l => l.trim() === '' || FRONT_FIELD.test(l.trim()))) i = close + 1
   }
   for (; i < lines.length; i++) {
     const raw = lines[i] ?? ''
     const line = raw.trim()
     if (fence !== undefined) {
-      if (line.startsWith(fence)) fence = undefined
+      // A fence closes only with the same mark, at least as long, and nothing after it.
+      const close = FENCE.exec(line)
+      if (close !== null && close[1]?.[0] === fence.char && (close[1]?.length ?? 0) >= fence.length && line.slice(close[0].length).trim() === '') fence = undefined
       continue
     }
-    if (line.startsWith('```') || line.startsWith('~~~')) {
-      fence = line.slice(0, 3)
+    const opening = FENCE.exec(line)
+    if (opening !== null) {
+      fence = { char: opening[1]?.[0] ?? '`', length: opening[1]?.length ?? 3 }
       open = undefined
       continue
     }
@@ -91,6 +102,14 @@ export const requirementsOf = (markdown: string): Requirement[] => {
       title = squeeze(line.replace(/^#+/, '').replace(/\s#+$/, ''))
       open = undefined
       gap = false
+      continue
+    }
+    // A paragraph underlined with = or - is a heading.
+    if (UNDERLINE.test(line) && open !== undefined && !open.list && !gap && blocks.at(-1) === open) {
+      blocks.pop()
+      section += 1
+      title = open.text
+      open = undefined
       continue
     }
     if (BREAK.test(line)) {
@@ -127,18 +146,17 @@ export const requirementsOf = (markdown: string): Requirement[] => {
     blocks.push(open)
     gap = false
   }
-  const listed = new Set(blocks.filter(b => b.list).map(b => b.section))
   const seen = new Map<string, string>()
   const out: Requirement[] = []
   for (const b of blocks) {
-    if (b.text === '' || (listed.has(b.section) && !b.list)) continue
+    if (b.text === '' || HISTORY.test(b.title) || (!b.list && /[:：]$/.test(b.text))) continue
     const key = b.text.replace(/\s+/g, '')
     let id = `R-${fingerprint(key)}`
     // Two different texts with one fingerprint: the later one takes the next free salted fingerprint.
     for (let salt = 1; seen.has(id) && seen.get(id) !== key; salt++) id = `R-${fingerprint(`${key}\u0000${salt}`)}`
     if (seen.has(id)) continue
     seen.set(id, key)
-    out.push({ id, text: b.text, section: b.title })
+    out.push({ id, text: cut(b.text, TEXT_KEPT), section: cut(b.title, TEXT_KEPT) })
   }
   return out
 }
@@ -165,10 +183,15 @@ export const droppedRequirements = (board: Tracker): Map<string, string> => {
 }
 
 /** Requirements of PRDs crew worked on before this one, whose features stay on the board. */
-const earlierIds = (board: Tracker): Set<string> => {
+const earlierOf = (board: Tracker, key: 'ids' | 'features'): Set<string> => {
   const earlier = (board as { crew_prd?: { earlier?: unknown } }).crew_prd?.earlier
   if (!Array.isArray(earlier)) return new Set()
-  return new Set(earlier.flatMap(e => (Array.isArray((e as { ids?: unknown } | null)?.ids) ? ((e as { ids: unknown[] }).ids.filter(i => typeof i === 'string') as string[]) : [])))
+  return new Set(
+    earlier.flatMap(e => {
+      const list = (e as Record<string, unknown> | null)?.[key]
+      return Array.isArray(list) ? list.filter((i): i is string => typeof i === 'string') : []
+    }),
+  )
 }
 
 /**
@@ -179,9 +202,10 @@ const earlierIds = (board: Tracker): Set<string> => {
  */
 export const gateG0 = (board: Tracker, requirements: readonly Requirement[]): G0 => {
   const current = new Set(requirements.map(r => r.id))
-  const earlier = earlierIds(board)
+  const earlier = earlierOf(board, 'ids')
+  const theirs = earlierOf(board, 'features')
   const features = board.prd_items.filter(i => {
-    if (i.crew_dropped !== undefined) return false
+    if (i.crew_dropped !== undefined || theirs.has(i.id)) return false
     const refs = refsOf(i)
     return refs.length === 0 || refs.some(r => current.has(r)) || !refs.every(r => earlier.has(r))
   })
@@ -191,7 +215,7 @@ export const gateG0 = (board: Tracker, requirements: readonly Requirement[]): G0
   let asked = 0
   for (const r of requirements) {
     if (answered.has(r.id) || settled.has(r.id)) asked += 1
-    else gaps.push({ id: r.id, title: `PRD 需求沒有對應的功能：${cut(r.text, 40)}` })
+    else gaps.push({ id: r.id, title: `PRD 需求沒有對應的功能：${cut(redact(r.text), 40)}` })
   }
   let traced = 0
   for (const f of features) {
@@ -213,16 +237,22 @@ export const diffRequirements = (before: readonly Requirement[], now: readonly R
 const TEXT_MAX = 300
 const SECTION_MAX = 80
 
-/** The requirements for a role's prompt, one a line. */
+/** How many requirements a role's prompt lists; the PM reads the PRD itself for the rest. */
+const LIST_MAX = 200
+
+/** The requirements for a role's prompt, one a line, secrets masked before the text is cut. */
 export const requirementList = (requirements: readonly Requirement[]): string =>
-  requirements.map(r => `- ${r.id}${r.section === '' ? '' : `（${cut(r.section, SECTION_MAX)}）`}${cut(r.text, TEXT_MAX)}`).join('\n')
+  [
+    ...requirements.slice(0, LIST_MAX).map(r => `- ${r.id}${r.section === '' ? '' : `（${cut(redact(r.section), SECTION_MAX)}）`}${cut(redact(r.text), TEXT_MAX)}`),
+    ...(requirements.length > LIST_MAX ? [`（還有 ${requirements.length - LIST_MAX} 條，請直接讀 PRD）`] : []),
+  ].join('\n')
 
 /** The requirements as the board keeps them, which is in git: secrets masked, long text cut. */
 export const baselineFor = (requirements: readonly Requirement[]): Requirement[] =>
   requirements.map(r => ({ id: r.id, text: cut(redact(r.text), TEXT_MAX), section: cut(redact(r.section), SECTION_MAX) }))
 
 /** The most requirements crew reads back from a board: a PRD with more is refused at start. */
-export const MAX_REQUIREMENTS = 400
+export const MAX_REQUIREMENTS = 1_000
 
 /** The requirements the board last answered, as it keeps them: well-formed entries only, each on one line. */
 export const baselineOf = (board: Tracker | null): Requirement[] => {
@@ -244,18 +274,27 @@ export const changeKey = (baseline: readonly Requirement[], added: readonly Requ
 /** How many earlier PRDs a board remembers. */
 const EARLIER_MAX = 10
 
+type Earlier = { path: string; ids: string[]; features?: string[] }
+
 /**
  * The PRDs crew worked on before `path`, as the board keeps them: a new PRD
  * moves the one before it there, with the ids of its requirements, so that
- * PRD's features stay its own and do not count against the new one.
+ * PRD's features stay its own and do not count against the new one. A board
+ * from before crew numbered requirements names no PRD: when crew knows it
+ * worked on another one (`previous`), that PRD keeps the board's unnumbered
+ * features.
  */
-export const earlierFor = (board: Tracker, path: string): { earlier?: { path: string; ids: string[] }[] } => {
+export const earlierFor = (board: Tracker, path: string, previous?: string): { earlier?: Earlier[] } => {
   const kept = (board as { crew_prd?: { path?: unknown; earlier?: unknown } }).crew_prd
-  if (kept === undefined) return {}
-  const before = (Array.isArray(kept.earlier) ? kept.earlier : []).flatMap((e): { path: string; ids: string[] }[] => {
-    const v = e as { path?: unknown; ids?: unknown } | null
+  if (kept === undefined) {
+    const unnumbered = board.prd_items.filter(i => i.crew_dropped === undefined && refsOf(i).length === 0).map(i => i.id)
+    return previous === undefined || previous === path || unnumbered.length === 0 ? {} : { earlier: [{ path: previous, ids: [], features: unnumbered }] }
+  }
+  const before = (Array.isArray(kept.earlier) ? kept.earlier : []).flatMap((e): Earlier[] => {
+    const v = e as { path?: unknown; ids?: unknown; features?: unknown } | null
     if (typeof v?.path !== 'string' || !Array.isArray(v.ids) || v.path === path || v.path === kept.path) return []
-    return [{ path: v.path, ids: v.ids.filter((i): i is string => typeof i === 'string' && REQUIREMENT_ID.test(i)) }]
+    const features = Array.isArray(v.features) ? v.features.filter((i): i is string => typeof i === 'string') : []
+    return [{ path: v.path, ids: v.ids.filter((i): i is string => typeof i === 'string' && REQUIREMENT_ID.test(i)), ...(features.length > 0 ? { features } : {}) }]
   })
   const moved = typeof kept.path === 'string' && kept.path !== path ? [{ path: kept.path, ids: baselineOf(board).map(r => r.id) }] : []
   const earlier = [...before, ...moved].slice(-EARLIER_MAX)

@@ -61,7 +61,15 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   }
   const isDir = (path: string) => [...disk.keys()].some(p => p.startsWith(`${path}/`))
   on('fs.exists', (_$, e) => ({ value: disk.has(resolve(e.path)) || isDir(resolve(e.path)) }))
-  on('fs.read', (_$, e) => (disk.has(resolve(e.path)) ? { value: disk.get(resolve(e.path)) ?? '' } : { deny: `ENOENT ${e.path}` }))
+  /** A read of a Markdown file takes this long, by the test's clock, so two looks at the PRD can meet. */
+  const slow = { ms: 0 }
+  /** How many times each file was read. */
+  const reads = new Map<string, number>()
+  on('fs.read', async (_$, e) => {
+    reads.set(e.path, (reads.get(e.path) ?? 0) + 1)
+    if (slow.ms > 0 && e.path.endsWith('.md')) await clock.sleep(slow.ms)
+    return disk.has(resolve(e.path)) ? { value: disk.get(resolve(e.path)) ?? '' } : { deny: `ENOENT ${e.path}` }
+  })
   on('fs.write', (_$, e) => {
     // Writes follow links, as a real file system's do.
     disk.set(resolve(e.path), e.text)
@@ -146,7 +154,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   const board = () => JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? 'null') as Tracker | null
-  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, clock, links, submitted, store }
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, clock, links, submitted, store, slow, reads }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)

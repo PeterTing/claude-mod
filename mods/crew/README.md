@@ -52,11 +52,14 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 
 ## The board stays on the PRD, live
 
-- **Every requirement is numbered.** crew reads the PRD itself and finds its requirements:
-  - in a section with lists, each list item (with its wrapped lines) and each table data row;
-  - in a section without lists, each paragraph, including the summary under the title.
+- **Every requirement is numbered.** crew reads the PRD itself. Each of these is a requirement:
+  - a list item, with its wrapped lines;
+  - a table data row;
+  - a paragraph, including the summary under the title.
 
-  Each gets a number from its words, such as `R-3fa2c1`. The number stays while other lines change or the spacing changes, and changes when its own words do. A summary that is not a requirement can be moved out of scope by the PM, with a reason.
+  These are not: front matter, code, headings, breaks, a paragraph ending with a colon (it leads in to a list), and a section that keeps the PRD's revision history (修訂紀錄, Change log).
+
+  Each requirement gets a number from its words, such as `R-3fa2c1`. The number stays while other lines change or the spacing changes, and changes when its own words do. A paragraph that is not a requirement can be moved out of scope by the PM, with a reason. crew tracks up to 1,000 requirements per PRD.
 - **The PM must cover every requirement.** The PM's features name the requirements they answer. Gate **G0**, checked by code against the PRD file as it stands, needs:
   - every requirement answered by a feature, or moved out of scope with a reason;
   - every feature answering a requirement that is still in the PRD.
@@ -65,10 +68,11 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 - **A changed PRD is caught within seconds.** crew checks the PRD file every 10 seconds; the check itself calls no model. When it changes:
   - the pane and the line above the prompt show what changed;
   - the PM is told which requirements were added and removed, once per change;
-  - the flow cannot finish until the board answers the PRD again, and then QA writes tests for what is new only.
+  - the flow goes back to the split, and cannot finish until the board answers the PRD again; then QA writes tests for what is new only.
 
-  It also runs when Claude Code starts, so an edit made while it was closed is caught too. A change that removes most requirements at once is confirmed on the next check, about 10 seconds later, so a file caught half-saved is not taken for a real edit. A PRD with no requirements left is never sent to the PM.
-- **A PRD crew cannot read is called out.** When the PRD is deleted, moved, swapped for a link, or holds no requirement, the pane and the line above the prompt say so, and crew keeps holding the board to the requirements it last read. Each new version of the PRD is checked again before crew reads it: it must still be a file in the repo, reached through no link.
+  It also runs when Claude Code starts, so an edit made while it was closed is caught too. An added requirement is told at once. A removed one is confirmed on the next check, about 10 seconds later, so a file caught half-saved is not taken for a real edit. A PRD with no requirements left is never sent to the PM.
+- **A PRD crew cannot read is called out.** The pane and the line above the prompt say so when the PRD is deleted, moved, swapped for a link, or holds no requirement. crew then keeps holding the board to the requirements it last read. Each new version of the PRD is checked before and after crew reads it: it must still be a file in the repo, reached through no link.
+- **A board synced to another PRD is called out too.** When a teammate's board on another PRD is committed, crew says so instead of measuring this PRD against it. `/crew start` on this PRD moves the board over.
 - **The pane says how current it is.** It shows how the board stands against the PRD, when the PRD last changed, and when crew last looked.
 - **Progress is counted per requirement.** The Progress tab lists each PRD requirement with how far each stage of its development is: spec, design, test cases, tasks, code, review, test results. Today crew fills in two stages from the board:
   - spec: every feature that answers the requirement has criteria;

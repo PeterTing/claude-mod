@@ -168,7 +168,7 @@ export const snapshotOf = ({
 
   const linked = board === null ? new Set<string>() : coveredCriteria(board)
   // The split is done once every feature has criteria and the board answers the PRD.
-  const split: GateResult = g0 === undefined ? g1 : { covered: g1.covered + g0.requirements.covered, total: g1.total + g0.requirements.total, gaps: [...g1.gaps, ...g0.gaps] }
+  const split: GateResult = g0 === undefined ? g1 : { covered: g1.covered + g0.covered, total: g1.total + g0.total, gaps: [...g1.gaps, ...g0.gaps] }
   const features: Feature[] = (board?.prd_items ?? []).map(item => {
     const criteria = criteriaOf(item)
     const covered = criteria.filter(c => linked.has(c.id)).length

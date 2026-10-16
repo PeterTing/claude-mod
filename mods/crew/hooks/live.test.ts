@@ -4,6 +4,8 @@ import type { CrewLive } from '../types'
 import { applyOps, newTracker } from './board'
 import type { Op, Tracker } from './board'
 import { emptyLive, snapshotOf } from './live'
+import type { Snapshot } from './model'
+import { bandText } from './views'
 import { requirementsOf } from './prd'
 
 const NOW = Date.UTC(2026, 9, 15, 6, 0, 0)
@@ -205,8 +207,27 @@ describe('development status by PRD requirement', () => {
     expect(snap.requirements).toHaveLength(4)
   })
 
+  test('shows a requirement as in scope while a feature answers it, even with its drop still on record', () => {
+    const answered = apply(board, [{ op: 'add_feature', title: '年繳', summary: '', sources: [r4 ?? ''] }], 'pm')
+    const row = (snapshotOf({ board: answered, live: emptyLive(), now: NOW, prd: { requirements: reqs } }).requirements ?? [])[3]
+    expect(row?.dropped).toBeUndefined()
+  })
+
   test('counts the split done only once the board answers the PRD', () => {
     const snap = snapshotOf({ board, live: emptyLive(), now: NOW, prd: { requirements: [...reqs, { id: 'R-000001', text: '新需求', section: '' }] } })
     expect(snap.progress?.stages[0]?.state).not.toBe('done')
+  })
+})
+
+describe('how aligned the board is, in a word', () => {
+  const snap = (alignment: NonNullable<Snapshot['alignment']>): Snapshot =>
+    ({ ...snapshotOf({ board: null, live: emptyLive(), now: NOW }), alignment }) as Snapshot
+  const base = { covered: 3, total: 3, gaps: 0, added: 0, removed: 0, prdChanged: '剛剛', checked: '剛剛' }
+
+  test('is aligned only with no gap, no change pending and a PRD crew can read', () => {
+    expect(bandText(snap(base), 'crew')).toMatch(/對準 PRD ✓/)
+    expect(bandText(snap({ ...base, added: 1 }), 'crew')).toMatch(/⚠ PRD 改了/)
+    expect(bandText(snap({ ...base, gaps: 2, added: 1 }), 'crew')).toMatch(/⚠ PRD 對不上 2/)
+    expect(bandText(snap({ ...base, gaps: 2, problem: '讀不到 PRD：找不到 docs/PRD.md' }), 'crew')).toMatch(/⚠ 讀不到 PRD：找不到 docs\/PRD\.md/)
   })
 })

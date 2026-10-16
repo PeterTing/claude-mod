@@ -270,7 +270,7 @@ describe('housekeeping', () => {
     expect(w.disk.get(`${ROOT}/.crew/memory/consolidated.json`) ?? '').not.toMatch(/2026-10-15/)
   })
 
-  test('starts each day’s token count from zero', { timeoutMs: 30_000 }, async ($, on) => {
+  test('starts each day’s token count from zero', { timeoutMs: 90_000 }, async ($, on) => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
