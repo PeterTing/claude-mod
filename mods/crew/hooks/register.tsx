@@ -1409,9 +1409,22 @@ async function roleEnded($: any, e: any, next: any, role: CrewRole, before: Crew
   const requirements = (await prdView($))?.requirements
   // Whether QA has a run of the flow's under way now: a PM sync then waits for it rather than starting another.
   // A run answering the person is not the flow's: its end does not reach the flow, and work for QA waits behind it.
-  const qa = (await read($, live)).roles.qa
+  const roles = (await read($, live)).roles
+  const qa = roles.qa
   const qaWorking = role === 'pm' && qa.state === 'working' && qa.run !== 'person'
-  if (board !== null && flowWork) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l), ...(requirements === undefined ? {} : { requirements }), ...(qaWorking ? { qaWorking } : {}) })
+  // The other roles at work on the flow's runs: the flow waits for those runs rather than start them again.
+  const working = CREW_ROLES.filter(r => r !== role && roles[r].state === 'working' && roles[r].run !== 'person')
+  if (board !== null && flowWork) {
+    await feed($, {
+      type: 'role_done',
+      role,
+      board,
+      inbox: inboxOf(l),
+      ...(requirements === undefined ? {} : { requirements }),
+      ...(qaWorking ? { qaWorking } : {}),
+      ...(working.length === 0 ? {} : { working }),
+    })
+  }
   else if (board === null && boardProblem() !== undefined) $.ui.toast(`crew：流程停在這裡。${boardProblem() ?? ''}`)
   // Work the flow gave the role while it was busy, now that it is free.
   const waiting = (await read($, live)).pending[role] ?? []

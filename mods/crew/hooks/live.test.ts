@@ -284,6 +284,15 @@ describe('the tech lead’s tasks', () => {
     ])
   })
 
+  test('leave a dropped task out of the requirement’s tasks cell, and keep the cell short of done while a feature has no criteria', () => {
+    const dropped = apply(tested, [{ op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: 't', detail: '' }, { op: 'drop_task', id: 'TASK-001', reason: 'x' }], 'techlead')
+    expect([0].map(i => (snapshotOf({ board: dropped, live: planning, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[i]?.layers.tasks)).toEqual([{ state: 'todo', note: '0/1' }])
+    const more = apply(board, [{ op: 'add_feature', title: '方案說明', summary: '', sources: [r1 ?? ''] }], 'pm')
+    expect((snapshotOf({ board: more, live: planning, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]?.layers.tasks.state).toBe('doing')
+    // A dropped task is not on the board tab either.
+    expect(snapshotOf({ board: dropped, live: planning, now: NOW }).items.some(i => i.id === 'TASK-001')).toBe(false)
+  })
+
   test('list on the board tab, owned by the tech lead, not started until code lands', () => {
     const items = snapshotOf({ board, live: planning, now: NOW }).items
     const task = items.find(i => i.id === 'TASK-001')

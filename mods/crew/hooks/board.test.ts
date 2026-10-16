@@ -491,6 +491,23 @@ describe('tasks the tech lead breaks the criteria into', () => {
     expect((r.tracker.decisions?.at(-1) as { decision: string }).decision).toMatch(/TASK-001 移出：併到 TASK-002/)
   })
 
+  test('are refused on a feature out of scope, and shown on the board as dropped once dropped', () => {
+    const out = run(withTwoFeatures(), [{ op: 'drop_feature', id: 'PRD-001', reason: '下一版' }])
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    const r = run(out.tracker, [task(['AC-001'])], 'techlead')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors[0]).toMatch(/PRD-001 已經移出範圍/)
+    const d = run(withTwoFeatures(), [task(['AC-001']), { op: 'drop_task', id: 'TASK-001', reason: '不做' }], 'techlead')
+    expect(d.ok).toBe(true)
+    if (!d.ok) return
+    const text = renderBoard(d.tracker)
+    expect(text).toMatch(/任務 TASK-001 方案頁 — 移出：不做/)
+    expect(text).toMatch(/AC-001 可以選月繳方案 ← 沒有 test case · 還沒有任務/)
+    // Before any task exists the board shows no task lines.
+    expect(renderBoard(withTwoFeatures())).not.toMatch(/任務/)
+  })
+
   test('G3 holds every criterion in scope to a task', () => {
     const r = run(withTwoFeatures(), [task(['AC-001']), { op: 'add_task', feature: 'PRD-002', criteria: ['AC-002'], title: '取消', detail: '', size: 'S' }, { op: 'add_task', feature: 'PRD-002', criteria: ['AC-003'], title: '到期', detail: '', size: 'S' }, { op: 'drop_task', id: 'TASK-003', reason: '不做' }], 'techlead')
     expect(r.ok).toBe(true)

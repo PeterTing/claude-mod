@@ -45,8 +45,19 @@ export type FlowEvent =
   /** `board`: the board as it stands; one that already answers this PRD is checked, not split again. */
   | { type: 'start'; prd: { path: string; size: number; text?: string }; requirements?: readonly Requirement[]; board?: Tracker }
   /** `inbox`: items whose threads hold messages to that role it has not been woken for yet. */
-  /** `qaWorking`: QA has a run under way right now, as crew sees its agents. */
-  | { type: 'role_done'; role: FlowRole; board: Tracker; inbox?: Inbox; requirements?: readonly Requirement[]; qaWorking?: boolean }
+  /**
+   * `qaWorking`: QA has a run under way right now, as crew sees its agents.
+   * `working`: the other roles with a run of the flow's under way, which the flow does not start again beside it.
+   */
+  | {
+      type: 'role_done'
+      role: FlowRole
+      board: Tracker
+      inbox?: Inbox
+      requirements?: readonly Requirement[]
+      qaWorking?: boolean
+      working?: readonly FlowRole[]
+    }
   /**
    * The PRD file changed: what it added and removed since the board last
    * answered it. `key` names the change, told to the PM once; `unlinked`: the
@@ -467,6 +478,14 @@ export const step = (state: FlowState, event: FlowEvent): StepResult => {
     }
   }
   if (event.type === 'prd_changed') return prdChanged(state, event)
+  // A role at work on a run of the flow's is not started again beside it: that run's end takes the flow on.
+  const busy = event.working ?? []
+  const r = afterRole(state, event)
+  return busy.length === 0 ? r : { ...r, actions: r.actions.filter(a => a.type !== 'spawn' || !busy.includes(a.role)) }
+}
+
+/** A role's run ended: what the flow does next. */
+const afterRole = (state: FlowState, event: Extract<FlowEvent, { type: 'role_done' }>): StepResult => {
   const { role, board } = event
   const inbox = event.inbox ?? {}
   if (role === 'pm' && state.stage === 'splitting') return afterSplit(state, board, event.requirements, event.qaWorking === true)

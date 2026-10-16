@@ -197,7 +197,8 @@ export const snapshotOf = ({
           stages: [
             stageOf('拆解', split, stage === 'splitting'),
             pendingStage('設計'),
-            stageOf('架構', g3, stage === 'planning'),
+            // The plan is done only once the split is, as testing is.
+            { ...stageOf('架構', g3, stage === 'planning'), ...(split.gaps.length > 0 && g3.total > 0 && g3.gaps.length === 0 ? { state: stage === 'planning' ? ('active' as const) : ('pending' as const) } : {}) },
             pendingStage('實作'),
             // Testing is done only once the split is: a requirement still without features has nothing tested yet.
             { ...stageOf('測試', g4, testing), ...(split.gaps.length > 0 && g4.total > 0 && g4.gaps.length === 0 ? { state: testing ? ('active' as const) : ('pending' as const) } : {}) },

@@ -3,9 +3,15 @@ import type { Engine } from 'claude-code/testing'
 
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
-import { command, done, paneText, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { requirementsOf } from './prd'
+import { command, done, paneText, PLAN, PRD, ROOT, SPLIT, start, world, write } from './world'
 
 /** The tech lead breaks the tested criteria into tasks; G3 holds every criterion to one. */
+
+const PRD_PATH = `${ROOT}/docs/PRD.md`
+const ADDED = '使用者可以改成年繳方案。'
+const CHANGED = `${PRD}\n\n${ADDED}`
+const NEW_REQ = requirementsOf(CHANGED).find(r => r.text === ADDED)?.id ?? ''
 
 const tested = async ($: Engine) => {
   await $.command.run(command('start docs/PRD.md'))
@@ -123,5 +129,49 @@ describe('the tech lead', () => {
     await write($, 'a-techlead-3', PLAN)
     // Two features with criteria, two criteria with test cases, and the tech lead's two tasks.
     expect(await paneText($)).toMatch(/今天完成 6 項/)
+  })
+
+  test('keeps one tech lead when the PRD changes while it plans', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    w.disk.set(PRD_PATH, CHANGED)
+    await w.clock.advance(10_000)
+    await write($, 'a-pm-1', [
+      { op: 'add_criterion', feature: 'PRD-001', text: '可以改成年繳' },
+      { op: 'link_requirements', feature: 'PRD-001', requirements: [NEW_REQ] },
+    ])
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-003'], title: 't', steps: ['s'], expected: 'e' }])
+    await done($, 'a-qa-2')
+    // The tech lead's first run ends: it is asked for what is still without a task, as itself.
+    await write($, 'a-techlead-3', PLAN)
+    await done($, 'a-techlead-3')
+    expect(w.sent.at(-1)?.to).toBe('a-techlead-3')
+    expect(w.sent.at(-1)?.text).toMatch(/AC-003/)
+    await write($, 'a-techlead-3', [{ op: 'add_task', feature: 'PRD-001', criteria: ['AC-003'], title: '年繳', detail: '', size: 'S' }])
+    await done($, 'a-techlead-3')
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:techlead'])
+    expect((await $.command.run(command('status'))).text).toMatch(/done/)
+  })
+
+  test('does not call the plan done on the progress tab while the board does not answer a changed PRD', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-techlead-3', PLAN)
+    await done($, 'a-techlead-3')
+    w.disk.set(PRD_PATH, CHANGED)
+    await w.clock.advance(10_000)
+    expect(await paneText($, 'progress')).not.toMatch(/架構 ✓/)
+  })
+
+  test('sends an answer to its own question to it', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await call($, 'ask_person', { question: '年繳要不要做？' }, 'a-techlead-3')
+    expect((await $.command.run(command('answer Q-01 先不做'))).text).toBe('已把 Q-01 的回答轉給 Tech lead。')
+    expect(w.sent.at(-1)?.to).toBe('a-techlead-3')
   })
 })
