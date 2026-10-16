@@ -6,18 +6,20 @@
 /plugin install crew --marketplace PeterTing/claude-mod
 ```
 
-Two roles run today:
+Three roles run today:
 
 - **PM** splits a PRD into features and acceptance criteria.
 - **QA** writes a test case for every criterion.
+- **Tech lead** breaks the criteria into tasks: what to build, for which criteria, and how big (S, M, L, XL). Gate **G3**, checked by code, needs a task for every criterion.
 
 The team also handles:
 
-- **Gaps:** they go back to the PM, who drops each one with a reason or asks QA to test it.
+- **Gaps:** test gaps go back to the PM, who drops each one with a reason or asks QA to test it. Criteria without a task go back to the tech lead, and then to you.
+- **Questions between roles:** the tech lead asks the PM through a thread when it needs a trade-off, and gets the answer back.
 - **Questions:** product questions come to you.
 - **Memory:** the team keeps it in the repo, so a role can start from a clean context without forgetting.
 
-UI/UX, full-stack and tech lead come in phase 4. The plan is in [`docs/plans/crew-plan.zh-TW.html`](../../docs/plans/crew-plan.zh-TW.html).
+UI/UX and full-stack come later in phase 4, and with them the code, review and test-run stages of each requirement. The plan is in [`docs/plans/crew-plan.zh-TW.html`](../../docs/plans/crew-plan.zh-TW.html).
 
 ## Two ways to run it
 
@@ -35,13 +37,13 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 
 | Command | What it does |
 | --- | --- |
-| `/crew start <PRD file>` | The PM splits the PRD, then QA writes test cases. The PRD must be a file inside the repo. |
+| `/crew start <PRD file>` | The PM splits the PRD, QA writes test cases, then the tech lead breaks the criteria into tasks. The PRD must be a file inside the repo. |
 | `/crew answer <Q-nn> <answer>` | Answers a question a role asked you. The answer is saved as a decision. |
-| `/crew ask <pm\|qa> <question>` | Asks a role directly. Its reply lands in thread `ASK-nn`, and a toast tells you when it is there. |
+| `/crew ask <pm\|qa\|techlead> <question>` | Asks a role directly. Its reply lands in thread `ASK-nn`, and a toast tells you when it is there. |
 | `/crew thread <id>` | Prints a thread, for example `ASK-01` or `AC-003`. |
 | `/crew remember <text>` | Saves one of your preferences (`PREF`). Every role gets your preferences with its work. |
 | `/crew recall <words or ids>` | Searches the team's memory. |
-| `/crew rotate <pm\|qa>` | The next time that role is woken, it starts from a fresh context. It gets the board's state, the related memories and its last report. |
+| `/crew rotate <pm\|qa\|techlead>` | The next time that role is woken, it starts from a fresh context. It gets the board's state, the related memories and its last report. |
 | `/crew resume` | Starts the roles of an unfinished PRD again, for example after a role's run failed. |
 | `/crew consolidate [YYYY-MM-DD]` | Haiku reads a day's log and saves facts and lessons nobody saved. This also runs by itself once a day for the previous day. |
 | `/crew status` | One-line summary. |
@@ -77,9 +79,10 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 - **Starting a PRD the board already mostly answers checks it, without a new split.** The board is held to the PRD as it stands: the PM fills what is missing, and QA tests what has no test case. A PRD the board answers less than half of is split, and the PM is told which requirements already have features.
 - **A PRD change while QA is writing tests keeps that QA.** The PM syncs; when QA's run ends, QA is asked for the new criteria only.
 - **The pane says how current it is.** It shows how the board stands against the PRD, when the PRD last changed, and when crew last looked.
-- **Progress is counted per requirement.** The Progress tab lists each PRD requirement with how far each stage of its development is: spec, design, test cases, tasks, code, review, test results. Today crew fills in two stages from the board:
+- **Progress is counted per requirement.** The Progress tab lists each PRD requirement with how far each stage of its development is: spec, design, test cases, tasks, code, review, test results. Today crew fills in three stages from the board:
   - spec: every feature that answers the requirement has criteria;
-  - test cases: those criteria have test cases, counted done only once the spec is.
+  - test cases: those criteria have test cases, counted done only once the spec is;
+  - tasks: those criteria have the tech lead's tasks, counted done only once the spec is.
 
   The other stages show `—` until the roles that do them are added, and never show as done before then. A requirement moved out of scope shows the reason instead.
 - **One board, several PRDs.** Starting another PRD keeps the earlier one's requirement numbers on the board, so its features stay its own and do not hold up the new PRD's split. A board from before crew numbered requirements is not reported as a PRD change: the PM is asked to link its features to the requirements.

@@ -25,8 +25,11 @@ import type { Actions } from './views'
 const PANE = 'crew'
 
 /** The names the roles get as teammates, and how a message names them. */
-const CREW_TEAMMATE = /^crew-(pm|qa)\b/i
-const CREW_MENTION = /@crew-(pm|qa)\b/i
+const CREW_TEAMMATE = /^crew-(pm|qa|techlead)\b/i
+const CREW_MENTION = /@crew-(pm|qa|techlead)\b/i
+
+/** One of the roles crew runs. */
+const isCrewRole = (v: unknown): v is CrewRole => typeof v === 'string' && (CREW_ROLES as readonly string[]).includes(v)
 
 const isDemo = atom({ plugin: 'crew', key: 'isDemo' } as const, false)
 const tab = atom({ plugin: 'crew', key: 'tab' } as const, 'overview' as CrewTab)
@@ -743,7 +746,7 @@ async function execute($: any, actions: readonly FlowAction[]) {
   }
 }
 
-async function ask($: any, from: 'pm' | 'qa' | 'crew' | 'brain', asked: string, item?: string): Promise<string> {
+async function ask($: any, from: CrewRole | 'crew' | 'brain', asked: string, item?: string): Promise<string> {
   const t = await $.clock.now()
   const question = cut(redact(asked), 500)
   let id = ''
@@ -955,7 +958,7 @@ async function resumeFlow($: any): Promise<string> {
   if ('error' in prd && l.flow.stage === 'splitting') return `沒有接續：${prd.error}`
   const text: string = 'error' in prd ? '' : await $.fs.read(prd.full)
   // The roles' old conversations are gone or stuck: whoever the flow calls starts fresh.
-  await update($, live, s => ({ ...s, roles: { pm: { ...s.roles.pm, rotate: true }, qa: { ...s.roles.qa, rotate: true } } }))
+  await update($, live, s => ({ ...s, roles: { pm: { ...s.roles.pm, rotate: true }, qa: { ...s.roles.qa, rotate: true }, techlead: { ...s.roles.techlead, rotate: true } } }))
   $.ui.toast(`crew：接續 ${l.prdPath}（${l.flow.stage}）`)
   await note($, { kind: 'resume', path: l.prdPath, stage: l.flow.stage })
   const requirements = (await prdView($))?.requirements
@@ -970,12 +973,12 @@ async function saveUsage($: any) {
 }
 
 /** Items whose threads hold a message to each role written after that role was last woken. */
-const inboxOf = (l: CrewLive): { pm: string[]; qa: string[] } => {
-  const unread = (role: 'pm' | 'qa') =>
+const inboxOf = (l: CrewLive): Record<CrewRole, string[]> => {
+  const unread = (role: CrewRole) =>
     Object.entries(l.threads)
       .filter(([, messages]) => messages.some(m => m.to === role && m.from !== 'crew' && (m.n ?? 0) > (l.seen[role] ?? 0)))
       .map(([item]) => item)
-  return { pm: unread('pm'), qa: unread('qa') }
+  return { pm: unread('pm'), qa: unread('qa'), techlead: unread('techlead') }
 }
 
 /** Whitespace folded to single spaces: text from the board kept to one line. */
@@ -1296,15 +1299,17 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
       if (by === 'person') tellBrain(`使用者回答了你的問題 ${q.id}：${quoted(answer)}`)
       return `已記下 ${id} 的回答。`
     }
-    if (q.item !== undefined && ITEM.test(q.item)) await post($, { item: q.item, from: by, to: q.from === 'qa' ? 'qa' : 'pm', text: `${q.question} → ${answer}` })
-    await remember($, { type: 'DEC', text: `${decided}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `${by} ${q.id}` }, q.from === 'qa' ? 'qa' : 'pm')
-    await feed($, { type: 'answered', question: q.question, answer, role: q.from === 'qa' ? 'qa' : 'pm', escalation: q.from === 'crew' })
+    // A role's own question goes back to that role; the flow's own question, to the role its stage waits on.
+    const askedBy: CrewRole = isCrewRole(q.from) ? q.from : (await read($, live)).flow.resumeAt === 'planning' ? 'techlead' : 'pm'
+    if (q.item !== undefined && ITEM.test(q.item)) await post($, { item: q.item, from: by, to: askedBy, text: `${q.question} → ${answer}` })
+    await remember($, { type: 'DEC', text: `${decided}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `${by} ${q.id}` }, askedBy)
+    await feed($, { type: 'answered', question: q.question, answer, ...(isCrewRole(q.from) ? { role: q.from } : {}), escalation: q.from === 'crew' })
     return `已把 ${id} 的回答轉給 ${q.from === 'qa' ? 'QA' : 'PM'}。`
   }
   if (verb === 'ask') {
     const [role = '', ...words] = rest
     const question = words.join(' ')
-    if ((role !== 'pm' && role !== 'qa') || question === '') return '用法：/crew ask <pm|qa> <你的問題>'
+    if (!isCrewRole(role) || question === '') return '用法：/crew ask <pm|qa|techlead> <你的問題>'
     const l = await read($, live)
     const name = crewName(role)
     if (l.roles[role].state === 'working') return `${name} 正在工作，等它這一輪做完再問。`
@@ -1322,7 +1327,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
   }
   if (verb === 'rotate') {
     const role = rest[0] ?? ''
-    if (role !== 'pm' && role !== 'qa') return '用法：/crew rotate <pm|qa>'
+    if (!isCrewRole(role)) return '用法：/crew rotate <pm|qa|techlead>'
     const r = (await read($, live)).roles[role]
     const name = crewName(role)
     if (r.agentId === undefined) return `${name} 還沒開始，下次叫它時就是新的 context。`
@@ -1466,7 +1471,7 @@ export const register: Register = on => {
       }
       await $.command.register({
         name: 'crew',
-        description: 'crew 產品團隊：/crew start <PRD>、answer <Q-編號> <回答>、ask <pm|qa> <問題>、recall、remember、resume、status',
+        description: 'crew 產品團隊：/crew start <PRD>、answer <Q-編號> <回答>、ask <pm|qa|techlead> <問題>、recall、remember、resume、status',
       })
       for (const spec of TOOL_SPECS) {
         await $.tool.register({ ...spec, isDeferred: false })
@@ -1544,7 +1549,7 @@ export const register: Register = on => {
       [d.criteria, d.feature, ...(Array.isArray(d.requirements) ? d.requirements : [])].filter((x): x is string => typeof x === 'string')
     for (const d of (r.tracker.decisions ?? []) as Decided[]) {
       if (typeof d.id !== 'string' || had.has(d.id) || typeof d.decision !== 'string') continue
-      await remember($, { id: d.id, type: 'DEC', text: d.decision, refs: refsOfDecision(d), source: role }, role === 'pm' || role === 'qa' ? role : undefined)
+      await remember($, { id: d.id, type: 'DEC', text: d.decision, refs: refsOfDecision(d), source: role }, isCrewRole(role) ? role : undefined)
     }
     // A drop this write took back (a requirement linked again) is taken back in memory too.
     const accepted = new Set(((board?.decisions ?? []) as Decided[]).filter(d => d.status === undefined || d.status === 'accepted').map(d => d.id))
@@ -1553,9 +1558,9 @@ export const register: Register = on => {
       if (typeof d.id !== 'string' || !accepted.has(d.id) || d.status !== 'superseded' || !Array.isArray(d.requirements)) continue
       // Only a decision a role made is a role's to take back: never the person's, nor one the brain relayed.
       const memory = theirs.get(d.id)
-      if (!/^DEC-\d+$/.test(d.id) || (memory !== undefined && (memory.type !== 'DEC' || !['pm', 'qa'].includes(memory.source)))) continue
+      if (!/^DEC-\d+$/.test(d.id) || (memory !== undefined && (memory.type !== 'DEC' || !isCrewRole(memory.source)))) continue
       const refs = refsOfDecision(d)
-      await remember($, { type: 'DEC', text: `PRD 需求 ${refs.join('、')} 移回範圍：有功能對應它了。`, refs, supersedes: d.id, source: role }, role === 'pm' || role === 'qa' ? role : undefined)
+      await remember($, { type: 'DEC', text: `PRD 需求 ${refs.join('、')} 移回範圍：有功能對應它了。`, refs, supersedes: d.id, source: role }, isCrewRole(role) ? role : undefined)
     }
     // Done means progress moved: a feature got its first criterion, a criterion its first test case.
     const covered = (t: Tracker) => {
@@ -1585,8 +1590,8 @@ export const register: Register = on => {
   on('tool.call', { tool: 'mcp__crew__thread_post' }, async ($, e: any) => {
     const role = callerOf(await read($, live), e.agentId)
     if (role === undefined) return { result: NOT_YOURS }
-    if (typeof e.item !== 'string' || typeof e.text !== 'string' || (e.to !== 'pm' && e.to !== 'qa')) {
-      return { result: 'thread_post 需要 item、to（pm 或 qa）和 text。' }
+    if (typeof e.item !== 'string' || typeof e.text !== 'string' || !isCrewRole(e.to)) {
+      return { result: 'thread_post 需要 item、to（pm、qa 或 techlead）和 text。' }
     }
     if (!ITEM.test(e.item)) return { result: `item 要是看板上的編號，例如 AC-003、PRD-001。${String(e.item).slice(0, 40)} 不是。` }
     await post($, { item: e.item, from: role, to: e.to, text: e.text })
@@ -1662,7 +1667,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'mcp__crew__memory_search' }, async ($, e: any) => {
     const caller = callerOf(await read($, live), e.agentId)
     if (typeof e.query !== 'string' || e.query.trim() === '') return { result: 'memory_search 需要 query。' }
-    const role = caller === 'pm' || caller === 'qa' ? caller : undefined
+    const role = isCrewRole(caller) ? caller : undefined
     const hits = searchMemories(await loadMemories($), { text: e.query, ...(role === undefined ? {} : { role }), related: relatedOf(await loadBoard($)), limit: 8 })
     const pack = packMemories(hits.filter(h => h.why !== 'pref'), 1_500)
     await note($, { kind: 'search', role: caller ?? 'other', query: e.query, ids: pack.ids })

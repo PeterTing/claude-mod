@@ -44,6 +44,7 @@ const LIVE: CrewLive = {
   roles: {
     pm: { agentId: 'a1', model: 'claude-sonnet-5-5', label: 'Sonnet', effort: 'high', tier: 'S', limit: 60_000, state: 'working', doing: '確認 AC-003', context: 8_000 },
     qa: { agentId: 'a2', model: 'claude-sonnet-5-5', label: 'Sonnet', effort: 'medium', tier: 'S', limit: 60_000, state: 'idle', doing: '—', context: 12_000 },
+    techlead: { state: 'idle', doing: '—', context: 0 },
   },
   usage: {
     pm: { input: 1_000, output: 2_000, cacheRead: 9_000, cacheWrite: 3_000, wakes: 2, rotations: 0 },
@@ -81,7 +82,9 @@ describe('snapshotOf', () => {
 
   test('counts progress over the stages built so far, and shows each feature', () => {
     const s = snapshotOf({ board: BOARD, live: LIVE, now: NOW })
-    expect(s.progress).toMatchObject({ done: 4, total: 5 })
+    // Two features with criteria, two of three criteria tested, none planned into tasks yet.
+    expect(s.progress).toMatchObject({ done: 4, total: 8 })
+    expect(s.progress?.stages.find(st => st.label === '架構')).toMatchObject({ done: 0, total: 3, state: 'pending' })
     expect(s.progress?.stages.find(st => st.label === '拆解')).toMatchObject({ done: 2, total: 2, state: 'done' })
     expect(s.progress?.stages.find(st => st.label === '測試')).toMatchObject({ done: 2, total: 3, state: 'active' })
     expect(s.progress?.stages.find(st => st.label === '實作')).toMatchObject({ total: 0, state: 'pending' })
@@ -179,7 +182,7 @@ describe('development status by PRD requirement', () => {
   test('marks the stages crew does not track yet as later, never as done', () => {
     const rows = snapshotOf({ board, live: emptyLive(), now: NOW, prd: { requirements: reqs } }).requirements ?? []
     expect(rows).toHaveLength(4)
-    expect(rows.every(r => (['design', 'tasks', 'code', 'review', 'runs'] as const).every(k => r.layers[k].state === 'later'))).toBe(true)
+    expect(rows.every(r => (['design', 'code', 'review', 'runs'] as const).every(k => r.layers[k].state === 'later'))).toBe(true)
   })
 
   test('does not call test cases done while a feature that answers the requirement has no criteria', () => {
@@ -229,5 +232,62 @@ describe('how aligned the board is, in a word', () => {
     expect(bandText(snap({ ...base, added: 1 }), 'crew')).toMatch(/⚠ PRD 改了/)
     expect(bandText(snap({ ...base, gaps: 2, added: 1 }), 'crew')).toMatch(/⚠ PRD 對不上 2/)
     expect(bandText(snap({ ...base, gaps: 2, problem: '讀不到 PRD：找不到 docs/PRD.md' }), 'crew')).toMatch(/⚠ 讀不到 PRD：找不到 docs\/PRD\.md/)
+  })
+})
+
+describe('the tech lead’s tasks', () => {
+  const reqs = requirementsOf('## 訂閱\n- 可以選月繳方案\n- 可以取消訂閱')
+  const [r1, r2] = reqs.map(r => r.id)
+  const split = apply(
+    newTracker('shop'),
+    [
+      { op: 'add_feature', title: '方案選擇', summary: '', sources: [r1 ?? ''] },
+      { op: 'add_feature', title: '取消訂閱', summary: '', sources: [r2 ?? ''] },
+      { op: 'add_criterion', feature: 'PRD-001', text: '可以選月繳' },
+      { op: 'add_criterion', feature: 'PRD-002', text: '取消後用到期末' },
+      { op: 'add_criterion', feature: 'PRD-002', text: '取消要確認' },
+    ],
+    'pm',
+  )
+  const tested = apply(split, [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002', 'AC-003'], title: 't', steps: ['s'], expected: 'e' }], 'qa')
+  const board = apply(
+    tested,
+    [
+      { op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '方案頁', detail: '', size: 'M' },
+      { op: 'add_task', feature: 'PRD-002', criteria: ['AC-002'], title: '取消流程', detail: '', size: 'L' },
+    ],
+    'techlead',
+  )
+  const planning: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'planning', round: 0, retries: 0 } }
+
+  test('show the tech lead as a role crew runs', () => {
+    const tl = snapshotOf({ board, live: planning, now: NOW }).roles.find(r => r.id === 'techlead')
+    expect(tl?.doing).toBe('—')
+    expect(tl?.limit).toBeGreaterThan(0)
+  })
+
+  test('make G3 and the 架構 stage from the board, and count toward progress', () => {
+    const snap = snapshotOf({ board, live: planning, now: NOW })
+    const g3 = snap.gates.find(g => g.id === 'G3')
+    expect(g3).toMatchObject({ state: 'active', covered: 2, total: 3, name: '每條驗收條件都拆好任務' })
+    expect(g3?.gaps.map(g => g.id)).toEqual(['AC-003'])
+    expect(snap.progress?.stages.find(st => st.label === '架構')).toMatchObject({ done: 2, total: 3, state: 'active' })
+    expect(snap.progress?.total).toBe(snapshotOf({ board: tested, live: planning, now: NOW }).progress?.total)
+    expect((snap.progress?.done ?? 0) - (snapshotOf({ board: tested, live: planning, now: NOW }).progress?.done ?? 0)).toBe(2)
+  })
+
+  test('fill the tasks column of each requirement, done only once its spec is', () => {
+    const rows = snapshotOf({ board, live: planning, now: NOW, prd: { requirements: reqs } }).requirements ?? []
+    expect(rows.map(r => [r.layers.tasks.state, r.layers.tasks.note])).toEqual([
+      ['done', '1/1'],
+      ['doing', '1/2'],
+    ])
+  })
+
+  test('list on the board tab, owned by the tech lead, not started until code lands', () => {
+    const items = snapshotOf({ board, live: planning, now: NOW }).items
+    const task = items.find(i => i.id === 'TASK-001')
+    expect(task).toMatchObject({ title: '方案頁', owner: 'techlead', status: 'todo' })
+    expect(task?.note).toMatch(/AC-001[\s\S]*M/)
   })
 })

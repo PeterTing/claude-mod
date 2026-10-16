@@ -25,6 +25,14 @@ const SPLIT: readonly Op[] = [
 
 const tc = (criteria: string[]): Op => ({ op: 'add_test_case', criteria, title: 't', steps: ['s'], expected: 'e' })
 
+/** A board with the tech lead's tasks on top: one task per feature, covering the criteria given. */
+const planned = (pm: readonly Op[], qa: readonly Op[], tasks: readonly { feature: string; criteria: string[] }[]): Tracker => {
+  const b = board(pm, qa)
+  const r = applyOps(b, tasks.map((t, i) => ({ op: 'add_task', feature: t.feature, criteria: t.criteria, title: `任務 ${i + 1}`, detail: '', size: 'S' }) as Op), ctx('techlead'))
+  if (!r.ok) throw new Error(r.errors.join('; '))
+  return r.tracker
+}
+
 const run = (events: readonly FlowEvent[], from: FlowState = INITIAL) => {
   let state = from
   const actions = []
@@ -71,15 +79,84 @@ describe('step', () => {
     expect(twice.actions.at(-1)).toMatchObject({ type: 'ask_person' })
   })
 
-  test('finishes when QA covers every criterion', () => {
+  test('hands the tested board to the tech lead to break into tasks', () => {
     const { state, actions } = run([
       START,
       { type: 'role_done', role: 'pm', board: board(SPLIT) },
       { type: 'role_done', role: 'qa', board: board(SPLIT, [tc(['AC-001', 'AC-002'])]) },
     ])
+    expect(state.stage).toBe('planning')
+    expect(actions.at(-1)).toMatchObject({ type: 'spawn', role: 'techlead', route: { label: 'Opus', effort: 'high' } })
+    expect((actions.at(-1) as { prompt: string }).prompt).toMatch(/2 條驗收條件[\s\S]*add_task/)
+  })
+
+  test('finishes once every criterion has a test case and a task', () => {
+    const { state, actions } = run(
+      [{ type: 'role_done', role: 'techlead', board: planned(SPLIT, [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001', 'AC-002'] }]) }],
+      { stage: 'planning', round: 0, retries: 0 },
+    )
     expect(state.stage).toBe('done')
     expect(actions.at(-1)).toMatchObject({ type: 'done' })
-    expect((actions.at(-1) as { text: string }).text).toMatch(/2\/2/)
+    expect((actions.at(-1) as { text: string }).text).toMatch(/G4 2\/2[\s\S]*G3 2\/2/)
+  })
+
+  test('sends the tech lead back to criteria without tasks, then asks the person, whose answer goes to the tech lead', () => {
+    const half = planned(SPLIT, [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001'] }])
+    const first = step({ stage: 'planning', round: 0, retries: 0 }, { type: 'role_done', role: 'techlead', board: half })
+    expect(first.state.stage).toBe('planning')
+    expect(first.actions[0]).toMatchObject({ type: 'message', role: 'techlead', item: 'AC-002' })
+    expect((first.actions[0] as { text: string }).text).toMatch(/還沒有任務[\s\S]*AC-002/)
+    const second = step(first.state, { type: 'role_done', role: 'techlead', board: half })
+    expect(second.state).toMatchObject({ stage: 'escalated', resumeAt: 'planning' })
+    expect(second.actions[0]).toMatchObject({ type: 'ask_person' })
+    const answered = step(second.state, { type: 'answered', question: 'q', answer: 'AC-002 合併到 TASK-001', escalation: true })
+    expect(answered.state).toMatchObject({ stage: 'planning', retries: 0 })
+    expect(answered.actions[0]).toMatchObject({ type: 'message', role: 'techlead' })
+  })
+
+  test('passes the tech lead’s questions to the PM and the PM’s answers back, a bounded number of times', () => {
+    const half = planned(SPLIT, [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001'] }])
+    const asked = step({ stage: 'planning', round: 0, retries: 0 }, { type: 'role_done', role: 'techlead', board: half, inbox: { pm: ['AC-002'] } })
+    expect(asked.state).toMatchObject({ stage: 'planning', round: 1 })
+    expect(asked.actions[0]).toMatchObject({ type: 'message', role: 'pm', item: 'AC-002' })
+    expect((asked.actions[0] as { text: string }).text).toMatch(/Tech lead 在這些項目的討論串留言給你：AC-002/)
+    const back = step(asked.state, { type: 'role_done', role: 'pm', board: half, inbox: { techlead: ['AC-002'] } })
+    expect(back.actions[0]).toMatchObject({ type: 'message', role: 'techlead', item: 'AC-002' })
+    expect((back.actions[0] as { text: string }).text).toMatch(/PM 在這些項目的討論串留言給你/)
+    // The PM ending without a word for the tech lead still hands the plan back to it.
+    expect(step(asked.state, { type: 'role_done', role: 'pm', board: half }).actions[0]).toMatchObject({ type: 'message', role: 'techlead' })
+    // After three rounds the gaps go to the person.
+    expect(step({ stage: 'planning', round: 3, retries: 1 }, { type: 'role_done', role: 'techlead', board: half, inbox: { pm: ['AC-002'] } }).state.stage).toBe('escalated')
+  })
+
+  test('sends new criteria to QA first, then to the tech lead for what is new only', () => {
+    const plannedBoard = planned([...SPLIT, { op: 'add_criterion', feature: 'PRD-001', text: '可以改方案' }], [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001', 'AC-002'] }])
+    // The PM added AC-003 while the tech lead planned: QA tests it first.
+    const toQa = step({ stage: 'planning', round: 0, retries: 0 }, { type: 'role_done', role: 'techlead', board: plannedBoard })
+    expect(toQa.state.stage).toBe('adding_tests')
+    expect(toQa.actions[0]).toMatchObject({ type: 'message', role: 'qa', item: 'AC-003' })
+    const tested = applyOps(plannedBoard, [tc(['AC-003'])], ctx('qa'))
+    if (!tested.ok) throw new Error(tested.errors.join())
+    const toTl = step(toQa.state, { type: 'role_done', role: 'qa', board: tested.tracker })
+    expect(toTl.state.stage).toBe('planning')
+    expect(toTl.actions[0]).toMatchObject({ type: 'message', role: 'techlead', item: 'AC-003' })
+    expect((toTl.actions[0] as { text: string }).text).not.toMatch(/AC-001/)
+  })
+
+  test('resumes the tech lead’s planning after a restart', () => {
+    const half = planned(SPLIT, [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001'] }])
+    const r = step({ stage: 'planning', round: 0, retries: 0 }, { type: 'resume', board: half, prd: { path: 'docs/PRD.md', size: 600 } })
+    expect(r.actions[0]).toMatchObject({ type: 'message', role: 'techlead', item: 'AC-002' })
+    expect((r.actions[0] as { text: string }).text).toMatch(/重開過/)
+    const none = step({ stage: 'planning', round: 0, retries: 0 }, { type: 'resume', board: board(SPLIT, [tc(['AC-001', 'AC-002'])]), prd: { path: 'docs/PRD.md', size: 600 } })
+    expect(none.actions[0]).toMatchObject({ type: 'spawn', role: 'techlead' })
+  })
+
+  test('opens a finished board again when the tech lead drops a task the plan needs', () => {
+    const half = planned(SPLIT, [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001'] }])
+    const r = step({ stage: 'done', round: 0, retries: 0 }, { type: 'role_done', role: 'techlead', board: half })
+    expect(r.state.stage).toBe('planning')
+    expect(r.actions[0]).toMatchObject({ type: 'message', role: 'techlead', item: 'AC-002' })
   })
 
   test('sends the gaps to the PM, then the ones the PM keeps to QA', () => {
@@ -94,18 +171,19 @@ describe('step', () => {
     expect(toQa.actions.at(-1)).toMatchObject({ type: 'message', role: 'qa', item: 'AC-002' })
 
     const done = run([{ type: 'role_done', role: 'qa', board: board(SPLIT, [tc(['AC-001']), tc(['AC-002'])]) }], toQa.state)
-    expect(done.state.stage).toBe('done')
+    expect(done.state.stage).toBe('planning')
   })
 
-  test('finishes when the PM drops every gap', () => {
+  test('moves on to the tech lead when the PM drops every gap', () => {
     const gaps = board(SPLIT, [tc(['AC-001'])])
     const toPm = run([START, { type: 'role_done', role: 'pm', board: board(SPLIT) }, { type: 'role_done', role: 'qa', board: gaps }])
     const dropped = applyOps(gaps, [{ op: 'drop_criterion', id: 'AC-002', reason: '價格頁下一版' }], ctx('pm'))
     expect(dropped.ok).toBe(true)
     if (!dropped.ok) return
     const done = run([{ type: 'role_done', role: 'pm', board: dropped.tracker }], toPm.state)
-    expect(done.state.stage).toBe('done')
-    expect((done.actions.at(-1) as { text: string }).text).toMatch(/1\/1/)
+    expect(done.state.stage).toBe('planning')
+    expect(done.actions.at(-1)).toMatchObject({ type: 'spawn', role: 'techlead' })
+    expect((done.actions.at(-1) as { prompt: string }).prompt).toMatch(/1 條驗收條件/)
   })
 
   test('asks the person after three rounds that leave gaps', () => {
@@ -151,8 +229,13 @@ describe('step', () => {
   })
 
   test('picks up new criteria the PM adds after the flow finished, and sends them to QA', () => {
-    const covered = board(SPLIT, [tc(['AC-001', 'AC-002'])])
-    const finished = run([START, { type: 'role_done', role: 'pm', board: board(SPLIT) }, { type: 'role_done', role: 'qa', board: covered }])
+    const covered = planned(SPLIT, [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001', 'AC-002'] }])
+    const finished = run([
+      START,
+      { type: 'role_done', role: 'pm', board: board(SPLIT) },
+      { type: 'role_done', role: 'qa', board: board(SPLIT, [tc(['AC-001', 'AC-002'])]) },
+      { type: 'role_done', role: 'techlead', board: covered },
+    ])
     expect(finished.state.stage).toBe('done')
 
     const more = applyOps(covered, [{ op: 'add_criterion', feature: 'PRD-001', text: '標題前後空白會去掉' }], ctx('pm'))
@@ -183,7 +266,7 @@ describe('step', () => {
     expect(answered.actions.at(-1)).toMatchObject({ type: 'message', role: 'qa', item: 'AC-002' })
 
     const settled = run([{ type: 'role_done', role: 'qa', board: covered }], answered.state)
-    expect(settled.state.stage).toBe('done')
+    expect(settled.state.stage).toBe('planning')
   })
 
   test('stops passing thread messages back and forth after three rounds', () => {
@@ -196,7 +279,7 @@ describe('step', () => {
       ], r.state)
     }
     r = run([{ type: 'role_done', role: 'qa', board: covered, inbox: { pm: ['AC-002'] } }], r.state)
-    expect(r.state.stage).toBe('done')
+    expect(r.state.stage).toBe('planning')
   })
 
   test('ignores a role that finishes out of turn', () => {
@@ -251,7 +334,8 @@ describe('edges', () => {
 
   test('a restart in confirming with no gaps left finishes', () => {
     const r = step({ stage: 'confirming', round: 1, retries: 0 }, { type: 'resume', board: board(SPLIT, [tc(['AC-001', 'AC-002'])]), prd: { path: 'p', size: 1 } })
-    expect(r.state.stage).toBe('done')
+    expect(r.state.stage).toBe('planning')
+    expect(step({ stage: 'confirming', round: 1, retries: 0 }, { type: 'resume', board: planned(SPLIT, [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001', 'AC-002'] }]), prd: { path: 'p', size: 1 } }).state.stage).toBe('done')
   })
 })
 
@@ -299,7 +383,7 @@ describe('resume', () => {
 
   test('finishes a test round QA had completed', () => {
     const r = resume(at('adding_tests'), board(SPLIT, [tc(['AC-001', 'AC-002'])]))
-    expect(r.state.stage).toBe('done')
+    expect(r.state.stage).toBe('planning')
   })
 
   test('sends the PM the gaps it was confirming', () => {
@@ -547,7 +631,7 @@ describe('the PRD as the flow holds the board to it', () => {
   })
 
   test('checks a board already split for this PRD on a new start, instead of splitting it again', () => {
-    const covered = board(tied, [tc(['AC-001', 'AC-002'])])
+    const covered = planned(tied, [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001', 'AC-002'] }])
     const again = step({ stage: 'done', round: 1, retries: 0 }, { ...START_WITH, board: covered })
     expect(again.state.stage).toBe('done')
     expect(again.actions.some(a => a.type === 'spawn')).toBe(false)

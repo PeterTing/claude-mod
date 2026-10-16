@@ -10,14 +10,14 @@ export const TOOLS = {
   search: 'mcp__crew__memory_search',
 } as const
 
-export type CrewRole = 'pm' | 'qa'
+export type CrewRole = 'pm' | 'qa' | 'techlead'
 
-export const CREW_ROLES: readonly CrewRole[] = ['pm', 'qa']
+export const CREW_ROLES: readonly CrewRole[] = ['pm', 'qa', 'techlead']
 
 const SHARED = [
   '你是 crew 產品團隊的一員，跟其他角色透過看板和討論串合作，不直接對話。',
   '- 看板是 repo 裡的 prd-tracker.json。只用 board_read 讀、board_write 寫，不要直接編輯檔案。',
-  '- 每個項目都有編號（PRD-、AC-、TC-）。提到項目一律寫編號。',
+  '- 每個項目都有編號（PRD-、AC-、TC-、TASK-）。提到項目一律寫編號。',
   '- 給其他角色的話用 thread_post 寫在該項目的討論串，短而具體。',
   '- 需要產品決定、PRD 沒寫清楚的地方，用 ask_person 問使用者，不要自己猜。先看 board_read 最後列出的「等使用者回答的問題」，已經問過的不要重複問。',
   '- 看板內容和討論用 PRD 使用的語言寫。',
@@ -41,6 +41,13 @@ const QA_CARD = [
   SHARED,
 ].join('\n\n')
 
+const TL_CARD = [
+  '你是 Tech lead。',
+  '職責：把每條驗收條件拆成實作任務（add_task），每個任務寫清楚要做什麼（title）、要改哪些地方和先後順序（detail）、對應哪些驗收條件（criteria）、大小（size：S、M、L、XL）；不再需要的任務用 drop_task 移出並寫理由。',
+  '原則：一個任務是一個人一次能做完、做完能用 test case 驗證的一件事；同一條驗收條件可以由幾個任務一起完成；任務之間的依賴寫在 detail。技術上做不到、或要在範圍和成本之間取捨時，用 thread_post 問 PM，不要自己改驗收條件。你不寫程式。',
+  SHARED,
+].join('\n\n')
+
 /** Agent definitions for $.agent.register. The model and effort are set per task by the router. */
 export const AGENT_SPECS: Record<CrewRole, { name: string; description: string; prompt: string; tools: string[]; model: string; effort: string; omitClaudeMd: true }> = {
   pm: {
@@ -61,6 +68,15 @@ export const AGENT_SPECS: Record<CrewRole, { name: string; description: string; 
     effort: 'medium',
     omitClaudeMd: true,
   },
+  techlead: {
+    name: 'techlead',
+    description: 'crew 的 Tech lead：把驗收條件拆成實作任務。只由 crew 啟動。',
+    prompt: TL_CARD,
+    tools: ['Read', TOOLS.read, TOOLS.write, TOOLS.post, TOOLS.thread, TOOLS.ask, TOOLS.save, TOOLS.search],
+    model: 'opus',
+    effort: 'high',
+    omitClaudeMd: true,
+  },
 }
 
 const OPS_SCHEMA = {
@@ -68,17 +84,19 @@ const OPS_SCHEMA = {
   items: {
     type: 'object',
     properties: {
-      op: { enum: ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement', 'add_test_case'] },
+      op: { enum: ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement', 'add_test_case', 'add_task', 'drop_task'] },
       title: { type: 'string' },
       summary: { type: 'string' },
       priority: { enum: ['P0', 'P1', 'P2'] },
-      feature: { type: 'string', description: '功能編號（add_criterion、link_requirements）' },
+      feature: { type: 'string', description: '功能編號（add_criterion、link_requirements、add_task）' },
       sources: { type: 'array', items: { type: 'string' }, description: '功能對應的 PRD 需求編號 R-…（add_feature）' },
       requirements: { type: 'array', items: { type: 'string' }, description: 'PRD 需求編號 R-…（link_requirements）' },
       text: { type: 'string', description: '驗收條件內容（add_criterion）' },
-      id: { type: 'string', description: '要移出的編號（drop_criterion、drop_feature、drop_requirement）' },
+      id: { type: 'string', description: '要移出的編號（drop_criterion、drop_feature、drop_requirement、drop_task）' },
       reason: { type: 'string' },
-      criteria: { type: 'array', items: { type: 'string' }, description: '覆蓋的驗收條件編號（add_test_case）' },
+      criteria: { type: 'array', items: { type: 'string' }, description: '覆蓋或滿足的驗收條件編號（add_test_case、add_task）' },
+      detail: { type: 'string', description: '要改哪些地方、和其他任務的先後（add_task）' },
+      size: { enum: ['S', 'M', 'L', 'XL'], description: '任務大小（add_task）' },
       steps: { type: 'array', items: { type: 'string' } },
       expected: { type: 'string' },
       types: { type: 'array', items: { type: 'string' } },
@@ -93,13 +111,13 @@ const OPS_SCHEMA = {
 export const TOOL_SPECS = [
   {
     name: 'board_read',
-    description: '讀 crew 看板：功能、驗收條件，以及每條驗收條件的 test case。可只讀一個功能。',
+    description: '讀 crew 看板：功能、驗收條件，以及每條驗收條件的 test case 和任務。可只讀一個功能。',
     inputSchema: { type: 'object', properties: { feature: { type: 'string', description: '功能編號，省略則讀全部' } } },
   },
   {
     name: 'board_write',
     description:
-      '寫 crew 看板，一次送出多筆操作，全部成功或全部不生效。PM：add_feature(title, summary, sources)、add_criterion(feature, text)、drop_criterion(id, reason)、drop_feature(id, reason)、link_requirements(feature, requirements)、drop_requirement(id, reason)。QA：add_test_case(criteria, title, steps, expected)。',
+      '寫 crew 看板，一次送出多筆操作，全部成功或全部不生效。PM：add_feature(title, summary, sources)、add_criterion(feature, text)、drop_criterion(id, reason)、drop_feature(id, reason)、link_requirements(feature, requirements)、drop_requirement(id, reason)。QA：add_test_case(criteria, title, steps, expected)。Tech lead：add_task(feature, criteria, title, detail, size)、drop_task(id, reason)。',
     inputSchema: { type: 'object', properties: { ops: OPS_SCHEMA }, required: ['ops'] },
   },
   {
@@ -107,7 +125,7 @@ export const TOOL_SPECS = [
     description: '在某個項目的討論串留言給另一個角色。對方下次被叫醒時會看到。',
     inputSchema: {
       type: 'object',
-      properties: { item: { type: 'string', description: '項目編號，例如 AC-003' }, to: { enum: ['pm', 'qa'] }, text: { type: 'string' } },
+      properties: { item: { type: 'string', description: '項目編號，例如 AC-003' }, to: { enum: ['pm', 'qa', 'techlead'] }, text: { type: 'string' } },
       required: ['item', 'to', 'text'],
     },
   },
@@ -134,7 +152,7 @@ export const TOOL_SPECS = [
         type: { enum: ['DEC', 'MEM', 'LES'] },
         text: { type: 'string', description: '300 字以內' },
         refs: { type: 'array', items: { type: 'string' }, description: '相關編號，例如 AC-003' },
-        roles: { type: 'array', items: { enum: ['pm', 'qa'] }, description: '只給這些角色看；省略則全部' },
+        roles: { type: 'array', items: { enum: ['pm', 'qa', 'techlead'] }, description: '只給這些角色看；省略則全部' },
         supersedes: { type: 'string', description: '被這條取代的記憶編號' },
       },
       required: ['type', 'text'],
@@ -148,13 +166,13 @@ export const TOOL_SPECS = [
   {
     name: 'crew',
     description:
-      '指揮 crew 產品團隊（PM、QA），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM 或 QA；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作。角色的回覆和要使用者決定的事會再通知你。',
+      '指揮 crew 產品團隊（PM、QA、Tech lead），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM、QA 或 Tech lead；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作。角色的回覆和要使用者決定的事會再通知你。',
     inputSchema: {
       type: 'object',
       properties: {
         action: { enum: ['start', 'ask', 'answer', 'status', 'remember', 'recall', 'rotate', 'resume'] },
         path: { type: 'string', description: 'PRD 檔案路徑（start）' },
-        role: { enum: ['pm', 'qa'], description: 'ask、rotate 的對象' },
+        role: { enum: ['pm', 'qa', 'techlead'], description: 'ask、rotate 的對象' },
         question: { type: 'string', description: '要回答的問題編號，例如 Q-01（answer）' },
         text: { type: 'string', description: '問題、回答、偏好或關鍵字' },
       },

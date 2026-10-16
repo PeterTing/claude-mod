@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { applyOps, criteriaOf, gateG1, gateG4, newTracker, parseOps, prefixesFrom, renderBoard } from './board'
+import { applyOps, criteriaOf, gateG1, gateG3, gateG4, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf } from './board'
 import type { Op, Tracker } from './board'
 
 const CTX = { by: 'pm', today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } } as const
@@ -439,5 +439,93 @@ describe('parseOps', () => {
   test('needs a list', () => {
     expect(parseOps({ op: 'add_feature' }).ok).toBe(false)
     expect(parseOps([]).ok).toBe(false)
+  })
+})
+
+describe('tasks the tech lead breaks the criteria into', () => {
+  const task = (criteria: string[], title = '方案頁', extra: Record<string, unknown> = {}): Op => ({ op: 'add_task', feature: 'PRD-001', criteria, title, detail: '做方案選擇頁', size: 'M', ...extra }) as Op
+
+  test('land under the feature, numbered, with the criteria they serve', () => {
+    const r = run(withTwoFeatures(), [task(['AC-001']), { op: 'add_task', feature: 'PRD-002', criteria: ['AC-002', 'AC-003'], title: '取消流程', detail: '', size: 'L' }], 'techlead')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(tasksOf(r.tracker.prd_items[0]!)).toEqual([{ id: 'TASK-001', title: '方案頁', status: 'planned', acceptance_criteria: ['AC-001'], detail: '做方案選擇頁', size: 'M' }])
+    expect(tasksOf(r.tracker.prd_items[1]!).map(t => t.id)).toEqual(['TASK-002'])
+  })
+
+  test('say what is wrong with a task', () => {
+    const cases: [Op, RegExp][] = [
+      [{ ...task(['AC-001']), feature: 'PRD-404' } as Op, /找不到功能 PRD-404/],
+      [task([]), /沒有指定.*驗收條件/],
+      [task(['AC-002']), /AC-002 不是 PRD-001 的驗收條件/],
+      [task(['AC-001'], ' '), /標題是空白的/],
+      [task(['AC-001'], 't', { size: 'XXL' }), /size 要是 S、M、L 或 XL/],
+      [{ op: 'drop_task', id: 'TASK-404', reason: 'x' }, /找不到任務 TASK-404/],
+    ]
+    for (const [op, message] of cases) {
+      const r = run(withTwoFeatures(), [op], 'techlead')
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.errors[0]).toMatch(message)
+    }
+  })
+
+  test('are the tech lead’s alone to add and drop, and the tech lead adds nothing else', () => {
+    for (const by of ['pm', 'qa']) {
+      const r = run(withTwoFeatures(), [task(['AC-001'])], by)
+      expect(r.ok).toBe(false)
+    }
+    const r = run(withTwoFeatures(), [{ op: 'add_feature', title: 'x', summary: '' }], 'techlead')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors[0]).toMatch(/Tech lead 不能做 add_feature/)
+  })
+
+  test('can be dropped with a reason, which is recorded, and a dropped task keeps its number', () => {
+    const r = run(withTwoFeatures(), [task(['AC-001']), { op: 'drop_task', id: 'TASK-001', reason: '併到 TASK-002' }, task(['AC-001'], '方案頁 v2')], 'techlead')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const tasks = tasksOf(r.tracker.prd_items[0]!)
+    expect(tasks.map(t => [t.id, t.crew_dropped])).toEqual([
+      ['TASK-001', '併到 TASK-002'],
+      ['TASK-002', undefined],
+    ])
+    expect((r.tracker.decisions?.at(-1) as { decision: string }).decision).toMatch(/TASK-001 移出：併到 TASK-002/)
+  })
+
+  test('G3 holds every criterion in scope to a task', () => {
+    const r = run(withTwoFeatures(), [task(['AC-001']), { op: 'add_task', feature: 'PRD-002', criteria: ['AC-002'], title: '取消', detail: '', size: 'S' }, { op: 'add_task', feature: 'PRD-002', criteria: ['AC-003'], title: '到期', detail: '', size: 'S' }, { op: 'drop_task', id: 'TASK-003', reason: '不做' }], 'techlead')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const g3 = gateG3(r.tracker)
+    expect([g3.covered, g3.total]).toEqual([2, 3])
+    expect(g3.gaps.map(g => g.id)).toEqual(['AC-003'])
+    // A feature out of scope asks for no tasks.
+    const out = run(r.tracker, [{ op: 'drop_feature', id: 'PRD-002', reason: '下一版' }])
+    expect(out.ok && gateG3(out.tracker)).toEqual({ covered: 1, total: 1, gaps: [] })
+  })
+
+  test('show on the board under the criteria they serve', () => {
+    const r = run(withTwoFeatures(), [task(['AC-001'])], 'techlead')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const text = renderBoard(r.tracker)
+    expect(text).toMatch(/AC-001 可以選月繳方案 ← 沒有 test case · 任務 TASK-001/)
+    expect(text).toMatch(/  任務 TASK-001 方案頁（M）← AC-001：做方案選擇頁/)
+    expect(text).toMatch(/AC-002 .* · 還沒有任務/)
+  })
+
+  test('parse from what the model wrote', () => {
+    const ok = parseOps([
+      { op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: 't', detail: 'd', size: 'S' },
+      { op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: 't' },
+      { op: 'drop_task', id: 'TASK-001', reason: 'r' },
+    ])
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.ops[1]).toEqual({ op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: 't', detail: '' })
+    const bad = parseOps([{ op: 'add_task', criteria: ['AC-001'], title: 't' }, { op: 'add_task', feature: 'PRD-001', criteria: 'AC-001', title: 't' }, { op: 'drop_task', id: 'TASK-001' }])
+    expect(bad.ok).toBe(false)
+    if (bad.ok) return
+    expect(bad.error).toMatch(/第 1 筆 add_task 缺少 feature/)
+    expect(bad.error).toMatch(/第 2 筆 add_task 的 criteria/)
+    expect(bad.error).toMatch(/第 3 筆 drop_task 缺少 reason/)
   })
 })

@@ -1,14 +1,14 @@
 import type { PromptOrigin, RenderPropsOf } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 
-import { command, done, ROOT, SPLIT, start, world, write } from './world'
+import { command, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
 
 describe('crew, PM and QA', () => {
-  test('registers its tools and its two roles when the session starts', async ($, on) => {
+  test('registers its tools and its roles when the session starts', async ($, on) => {
     const w = world($, on)
     await start($)
     expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'memory_save', 'memory_search', 'crew'])
-    expect(w.registered.agents).toEqual(['pm', 'qa'])
+    expect(w.registered.agents).toEqual(['pm', 'qa', 'techlead'])
   })
 
   test('walks a PRD from split to every criterion covered', async ($, on) => {
@@ -43,7 +43,12 @@ describe('crew, PM and QA', () => {
 
     await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-002'], title: '取消後仍可用', steps: ['取消', '登入'], expected: '可以使用' }])
     await done($, 'a-qa-2')
-    expect(w.toasts.at(-1)).toMatch(/G4 2\/2/)
+    // Every criterion tested: the tech lead breaks them into tasks.
+    expect(w.spawned[2]).toMatchObject({ subagentType: 'crew:techlead', model: 'opus' })
+    expect(w.spawned[2]?.prompt).toMatch(/2 條驗收條件[\s\S]*add_task/)
+    await write($, 'a-techlead-3', PLAN)
+    await done($, 'a-techlead-3')
+    expect(w.toasts.at(-1)).toMatch(/G4 2\/2[\s\S]*G3 2\/2/)
 
     const tracker = w.board()
     expect(tracker?.prd_items.flatMap(i => i.test_cases.map(c => c.id))).toEqual(['TC-001', 'TC-002'])
@@ -61,8 +66,8 @@ describe('crew, PM and QA', () => {
       { op: 'add_test_case', criteria: ['AC-001'], title: '選月繳，餘額不足', steps: ['s'], expected: 'e' },
     ])
     const status = await $.command.run(command('status'))
-    // The PRD's requirement and both features (G0), two features with criteria, one criterion with a test case.
-    expect(status.text).toMatch(/進度 80%（4\/5）/)
+    // The PRD's requirement, two features with criteria, one criterion with a test case; two criteria still to plan into tasks.
+    expect(status.text).toMatch(/進度 57%（4\/7）/)
     const ui = await $.ui.mount({
       plugin: 'crew',
       surface: 'terminal',
@@ -89,6 +94,9 @@ describe('crew, PM and QA', () => {
     expect(status.text).toMatch(/confirming/)
 
     await done($, 'a-pm-1')
+    expect((await $.command.run(command('status'))).text).toMatch(/planning/)
+    await write($, 'a-techlead-3', PLAN)
+    await done($, 'a-techlead-3')
     const after = await $.command.run(command('status'))
     expect(after.text).toMatch(/done/)
     const usage = JSON.parse(w.disk.get(`${ROOT}/.crew/usage/2026-10-15.json`) ?? '{}') as { usage: Record<string, { wakes: number }> }

@@ -185,6 +185,12 @@ export const SPLIT = [
   { op: 'add_criterion', feature: 'PRD-002', text: '取消後仍可使用到期末' },
 ]
 
+/** The tech lead's plan for SPLIT: one task for each feature's criterion. */
+export const PLAN = [
+  { op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '方案頁', detail: '', size: 'S' },
+  { op: 'add_task', feature: 'PRD-002', criteria: ['AC-002'], title: '取消流程', detail: '', size: 'S' },
+]
+
 
 /** The pane's text on one tab. */
 export const paneText = async ($: Engine, tab?: string) => {

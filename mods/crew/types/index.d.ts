@@ -40,7 +40,7 @@ export type CrewQuestion = {
   question: string
   item?: string
   /** Who asked: a role, the flow itself (`crew`), or the main conversation (`brain`). */
-  from: 'pm' | 'qa' | 'crew' | 'brain'
+  from: 'pm' | 'qa' | 'techlead' | 'crew' | 'brain'
   status: 'open' | 'answered'
   answer?: string
   t: number
@@ -49,14 +49,16 @@ export type CrewQuestion = {
 export type CrewActivity = { t: number; day: string; role: string; id: string; title: string }
 
 export type CrewFlow = {
-  stage: 'idle' | 'splitting' | 'writing_tests' | 'confirming' | 'adding_tests' | 'done' | 'escalated'
+  stage: 'idle' | 'splitting' | 'writing_tests' | 'confirming' | 'adding_tests' | 'planning' | 'done' | 'escalated'
   round: number
   retries: number
   /** Times the PM was sent back because the board did not answer the PRD (G0). */
   aligning?: number
   /** The PRD change the PM was last told about. */
   synced?: string
-  resumeAt?: 'splitting' | 'confirming'
+  /** The PM synced while QA was at work: the flow waits for QA's run to end. */
+  awaitingQa?: boolean
+  resumeAt?: 'splitting' | 'confirming' | 'planning'
 }
 
 /** Work the flow gave a role while it was busy answering the person: handed over when that turn ends. */
@@ -72,9 +74,9 @@ export type CrewWork = {
 export type CrewLive = {
   prdPath: string | null
   flow: CrewFlow
-  roles: { pm: CrewLiveRole; qa: CrewLiveRole }
+  roles: { pm: CrewLiveRole; qa: CrewLiveRole; techlead: CrewLiveRole }
   /** Agent id → role, for every agent crew started. */
-  agents: Record<string, 'pm' | 'qa'>
+  agents: Record<string, 'pm' | 'qa' | 'techlead'>
   /** Token use by role, `brain` being the main conversation. */
   usage: Record<string, CrewUsage>
   /** Tokens by the tier of the task that spent them. */

@@ -1,4 +1,4 @@
-import { gateG1, gateG4 } from './board'
+import { gateG1, gateG3, gateG4 } from './board'
 import type { GateGap, Tracker } from './board'
 import { gateG0, refsOf, requirementList } from './prd'
 import type { Requirement } from './prd'
@@ -12,7 +12,10 @@ import type { Route } from './router'
  * three rounds the person decides. Every gate is computed in code.
  */
 
-export type FlowStage = 'idle' | 'splitting' | 'writing_tests' | 'confirming' | 'adding_tests' | 'done' | 'escalated'
+export type FlowStage = 'idle' | 'splitting' | 'writing_tests' | 'confirming' | 'adding_tests' | 'planning' | 'done' | 'escalated'
+
+/** The roles the flow gives work to. */
+export type FlowRole = 'pm' | 'qa' | 'techlead'
 
 export type FlowState = {
   stage: FlowStage
@@ -27,13 +30,15 @@ export type FlowState = {
   /** The PM synced while QA was still at work: the flow waits for QA's run to end, then gives it what is new. */
   awaitingQa?: boolean
   /** Where an escalated flow picks up once the person answers. */
-  resumeAt?: 'splitting' | 'confirming'
+  resumeAt?: ResumeAt
 }
+
+type ResumeAt = 'splitting' | 'confirming' | 'planning'
 
 export const INITIAL: FlowState = { stage: 'idle', round: 0, retries: 0 }
 
 /** The stages in which a role is at work on the PRD: a new start waits, a restart resumes. */
-export const RUNNING: readonly FlowStage[] = ['splitting', 'writing_tests', 'confirming', 'adding_tests']
+export const RUNNING: readonly FlowStage[] = ['splitting', 'writing_tests', 'confirming', 'adding_tests', 'planning']
 
 /** `requirements`: the PRD's requirements as it stands now, which G0 holds the board to; absent, G0 is not checked. */
 export type FlowEvent =
@@ -41,7 +46,7 @@ export type FlowEvent =
   | { type: 'start'; prd: { path: string; size: number; text?: string }; requirements?: readonly Requirement[]; board?: Tracker }
   /** `inbox`: items whose threads hold messages to that role it has not been woken for yet. */
   /** `qaWorking`: QA has a run under way right now, as crew sees its agents. */
-  | { type: 'role_done'; role: 'pm' | 'qa'; board: Tracker; inbox?: Inbox; requirements?: readonly Requirement[]; qaWorking?: boolean }
+  | { type: 'role_done'; role: FlowRole; board: Tracker; inbox?: Inbox; requirements?: readonly Requirement[]; qaWorking?: boolean }
   /**
    * The PRD file changed: what it added and removed since the board last
    * answered it. `key` names the change, told to the PM once; `unlinked`: the
@@ -57,21 +62,21 @@ export type FlowEvent =
       unlinked?: boolean
     }
   /** The person answered a question: the flow's own (`escalation`), or one a role asked with ask_person. */
-  | { type: 'answered'; question: string; answer: string; role?: 'pm' | 'qa'; escalation?: boolean }
+  | { type: 'answered'; question: string; answer: string; role?: FlowRole; escalation?: boolean }
   /** Claude Code started again on a flow the last session left running: its roles are gone. */
   | { type: 'resume'; board: Tracker; prd: { path: string; size: number; text?: string }; requirements?: readonly Requirement[] }
 
 export type FlowAction =
-  | { type: 'spawn'; role: 'pm' | 'qa'; route: Route; prompt: string }
+  | { type: 'spawn'; role: FlowRole; route: Route; prompt: string }
   /** `person`: the message carries the person's answer, not the flow's next step. */
-  | { type: 'message'; role: 'pm' | 'qa'; item?: string; text: string; route: Route; person?: true }
+  | { type: 'message'; role: FlowRole; item?: string; text: string; route: Route; person?: true }
   | { type: 'ask_person'; question: string; item?: string }
   | { type: 'status'; text: string }
   | { type: 'done'; text: string }
 
 export type StepResult = { state: FlowState; actions: FlowAction[] }
 
-export type Inbox = { pm?: readonly string[]; qa?: readonly string[] }
+export type Inbox = { pm?: readonly string[]; qa?: readonly string[]; techlead?: readonly string[] }
 
 const MAX_ROUNDS = 3
 const MAX_RETRIES = 2
@@ -124,6 +129,21 @@ const testsPrompt = (count: number): string =>
     '4. 完成後用一句話回報寫了幾個 test case。',
   ].join('\n')
 
+const planPrompt = (count: number): string =>
+  [
+    `看板上有 ${count} 條驗收條件，QA 都寫好 test case 了。請把它們拆成實作任務。`,
+    '1. 用 board_read 看全部的功能、驗收條件和 test case。',
+    '2. 用 board_write 的 add_task 寫任務：feature 填功能編號，criteria 填這個任務做完後滿足的驗收條件編號，title 寫要做什麼，detail 寫要改哪些地方、和其他任務的先後，size 填 S、M、L 或 XL。每條驗收條件都要有任務對應。',
+    '3. 技術上做不到、或需要 PM 取捨的，用 thread_post 問 PM（item 填驗收條件編號）；需要產品決定的用 ask_person。不要自己改驗收條件。',
+    '4. 完成後用一句話回報拆了幾個任務。',
+  ].join('\n')
+
+const planGaps = (gaps: readonly GateGap[]): string =>
+  [`看板上以下 ${gaps.length} 條驗收條件還沒有任務，請補上（先用 board_read 看已經拆好的，不要重複）：`, list(gaps)].join('\n')
+
+const resumeToTl = (gaps: readonly GateGap[]): string =>
+  [`Claude Code 重開過，任務拆到一半：以下 ${gaps.length} 條驗收條件還沒有任務，請補上（先用 board_read 看已經拆好的，不要重複）：`, list(gaps)].join('\n')
+
 const gapsToPm = (gaps: readonly GateGap[]): string =>
   [
     `QA 寫完 test case，以下 ${gaps.length} 條驗收條件還沒有 test case：`,
@@ -161,18 +181,72 @@ const realign = (state: FlowState, gaps: readonly GateGap[]): StepResult => {
   }
 }
 
-/** Done once every criterion has a test case, and only while the board answers the PRD as it stands. */
+/**
+ * Every criterion has a test case: done once each has a task as well, and only
+ * while the board answers the PRD as it stands; until then the tech lead plans.
+ */
 const finish = (state: FlowState, board: Tracker, requirements?: readonly Requirement[]): StepResult => {
   const g0 = requirements === undefined ? undefined : gateG0(board, requirements)
   if (g0 !== undefined && g0.gaps.length > 0) return realign(state, g0.gaps)
+  const g3 = gateG3(board)
+  if (g3.gaps.length > 0) return plan(state, g3)
   const g4 = gateG4(board)
   return {
     state: { ...state, stage: 'done' },
-    actions: [{ type: 'done', text: `PM＋QA 完成：每條驗收條件都有 test case（G4 ${g4.covered}/${g4.total}）。` }],
+    actions: [{ type: 'done', text: `PM＋QA＋Tech lead 完成：每條驗收條件都有 test case（G4 ${g4.covered}/${g4.total}）和任務（G3 ${g3.covered}/${g3.total}）。` }],
   }
 }
 
-const escalate = (state: FlowState, question: string, item: string | undefined, resumeAt: 'splitting' | 'confirming'): StepResult => ({
+const tlRoute = (size: number): Route => routeFor('techlead', tierFor({ kind: 'plan_tasks', size: Math.max(1, size) }))
+
+/** The tech lead breaks the criteria without tasks into tasks: the whole board the first time, what is new after. */
+const plan = (state: FlowState, g3: ReturnType<typeof gateG3>): StepResult => {
+  const next: FlowState = { ...state, stage: 'planning', retries: 0 }
+  if (g3.covered === 0) return { state: next, actions: [{ type: 'spawn', role: 'techlead', route: tlRoute(g3.total), prompt: planPrompt(g3.total) }] }
+  return { state: next, actions: [{ type: 'message', role: 'techlead', item: g3.gaps[0]?.id, text: planGaps(g3.gaps), route: tlRoute(g3.gaps.length) }] }
+}
+
+/** The tech lead's run ended: new criteria go to QA first; the PM answers the tech lead's questions; gaps go back, then to the person. */
+const afterPlan = (state: FlowState, board: Tracker, inbox: Inbox = {}, requirements?: readonly Requirement[]): StepResult => {
+  const g4 = gateG4(board)
+  if (g4.gaps.length > 0) {
+    return {
+      state: { ...state, stage: 'adding_tests' },
+      actions: [{ type: 'message', role: 'qa', item: g4.gaps[0]?.id, text: newCriteria(g4.gaps), route: routeFor('qa', tierFor({ kind: 'add_tests', size: g4.gaps.length })) }],
+    }
+  }
+  const g3 = gateG3(board)
+  const forPm = inbox.pm ?? []
+  if (forPm.length > 0 && state.round < MAX_ROUNDS) {
+    return {
+      state: { ...state, stage: 'planning', round: state.round + 1 },
+      actions: [{ type: 'message', role: 'pm', item: forPm[0], text: threadNotice('Tech lead', forPm), route: routeFor('pm', tierFor({ kind: 'confirm_gaps', size: forPm.length })) }],
+    }
+  }
+  if (g3.gaps.length === 0) return finish(state, board, requirements)
+  if (state.retries >= MAX_RETRIES - 1 || state.round >= MAX_ROUNDS) {
+    return escalate({ ...state, retries: state.retries + 1 }, `這些驗收條件還是沒有任務：${ids(g3.gaps)}。要怎麼處理？`, g3.gaps[0]?.id, 'planning')
+  }
+  return {
+    state: { ...state, stage: 'planning', retries: state.retries + 1 },
+    actions: [{ type: 'message', role: 'techlead', item: g3.gaps[0]?.id, text: planGaps(g3.gaps), route: tlRoute(g3.gaps.length) }],
+  }
+}
+
+/** The PM's run ended while the tech lead plans: its answers, or the plan's gaps, go back to the tech lead. */
+const afterPmInPlanning = (state: FlowState, board: Tracker, inbox: Inbox = {}, requirements?: readonly Requirement[]): StepResult => {
+  const g4 = gateG4(board)
+  const forTl = inbox.techlead ?? []
+  if (g4.gaps.length > 0) return afterPlan(state, board, {}, requirements)
+  if (forTl.length > 0) {
+    return { state, actions: [{ type: 'message', role: 'techlead', item: forTl[0], text: threadNotice('PM', forTl), route: tlRoute(forTl.length) }] }
+  }
+  const g3 = gateG3(board)
+  if (g3.gaps.length === 0) return finish(state, board, requirements)
+  return { state, actions: [{ type: 'message', role: 'techlead', item: g3.gaps[0]?.id, text: planGaps(g3.gaps), route: tlRoute(g3.gaps.length) }] }
+}
+
+const escalate = (state: FlowState, question: string, item: string | undefined, resumeAt: ResumeAt): StepResult => ({
   state: { ...state, stage: 'escalated', resumeAt },
   actions: [{ type: 'ask_person', question, ...(item === undefined ? {} : { item }) }],
 })
@@ -281,13 +355,15 @@ const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered'
     route: routeFor(role, tierFor({ kind: 'confirm_gaps', size: 1 })),
   }
   // A role's own question is the person's answer for that role to take in, even while the flow waits;
-  // only the answer to the flow's own question takes a waiting flow on, with the PM, who resumes both stages.
+  // only the answer to the flow's own question takes a waiting flow on: with the tech lead for its plan,
+  // otherwise with the PM, who resumes the split and the gaps.
   if (state.stage !== 'escalated' || event.escalation !== true) return { state, actions: [{ ...message, person: true }] }
-  const resumed: FlowAction = { ...message, role: 'pm', route: routeFor('pm', tierFor({ kind: 'confirm_gaps', size: 1 })) }
   const resumeAt = state.resumeAt ?? 'confirming'
+  const to: FlowRole = resumeAt === 'planning' ? 'techlead' : 'pm'
+  const resumed: FlowAction = { ...message, role: to, route: to === 'techlead' ? tlRoute(1) : routeFor('pm', tierFor({ kind: 'confirm_gaps', size: 1 })) }
   const { resumeAt: _, ...rest } = state
   return {
-    state: { ...rest, stage: resumeAt, round: resumeAt === 'confirming' ? 0 : rest.round, retries: resumeAt === 'splitting' ? 0 : rest.retries, ...(resumeAt === 'splitting' ? { aligning: 0 } : {}) },
+    state: { ...rest, stage: resumeAt, round: resumeAt === 'splitting' ? rest.round : 0, retries: resumeAt === 'confirming' ? rest.retries : 0, ...(resumeAt === 'splitting' ? { aligning: 0 } : {}) },
     actions: [resumed],
   }
 }
@@ -324,6 +400,12 @@ const resume = (was: FlowState, event: Extract<FlowEvent, { type: 'resume' }>): 
         state,
         actions: [{ type: 'message', role: 'qa', item: g4.gaps[0]?.id, text: resumeToQa(g4.gaps), route: routeFor('qa', tierFor({ kind: 'add_tests', size: g4.gaps.length })) }],
       }
+    case 'planning': {
+      const g3 = gateG3(event.board)
+      if (g4.gaps.length > 0 || g3.gaps.length === 0) return afterPlan(state, event.board, {}, event.requirements)
+      if (g3.covered === 0) return plan(state, g3)
+      return { state, actions: [{ type: 'message', role: 'techlead', item: g3.gaps[0]?.id, text: resumeToTl(g3.gaps), route: tlRoute(g3.gaps.length) }] }
+    }
     case 'confirming':
       if (g4.gaps.length === 0) return afterConfirm(state, event.board, {}, event.requirements)
       return {
@@ -390,6 +472,8 @@ export const step = (state: FlowState, event: FlowEvent): StepResult => {
   const { requirements } = event
   if (role === 'qa' && (state.stage === 'writing_tests' || state.stage === 'adding_tests')) return afterTests(state, board, inbox, requirements)
   if (role === 'pm' && state.stage === 'confirming') return afterConfirm(state, board, inbox, requirements)
+  if (role === 'techlead' && state.stage === 'planning') return afterPlan(state, board, inbox, requirements)
+  if (role === 'pm' && state.stage === 'planning') return afterPmInPlanning(state, board, inbox, requirements)
   // A finished board can open again: the PM adds criteria after an answer, or one role writes to the other;
   // a PM turn that left the board short of the PRD sends the PM back to it.
   if (state.stage === 'done') {
@@ -397,6 +481,11 @@ export const step = (state: FlowState, event: FlowEvent): StepResult => {
     if (g0 !== undefined && g0.gaps.length > 0) return realign(state, g0.gaps)
     if (role === 'pm' && (gateG4(board).gaps.length > 0 || (inbox.qa ?? []).length > 0)) return afterConfirm(state, board, inbox, requirements)
     if (role === 'qa' && (inbox.pm ?? []).length > 0) return afterTests(state, board, inbox, requirements)
+    if (role === 'techlead' && (gateG3(board).gaps.length > 0 || (inbox.pm ?? []).length > 0)) return afterPlan(state, board, inbox, requirements)
+    if (role !== 'techlead' && (inbox.techlead ?? []).length > 0) {
+      const forTl = inbox.techlead ?? []
+      return { state: { ...state, stage: 'planning' }, actions: [{ type: 'message', role: 'techlead', item: forTl[0], text: threadNotice(role === 'pm' ? 'PM' : 'QA', forTl), route: tlRoute(forTl.length) }] }
+    }
   }
   return { state, actions: [] }
 }

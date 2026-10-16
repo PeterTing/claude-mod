@@ -24,6 +24,22 @@ export type TestCase = {
   [key: string]: unknown
 }
 
+export type TaskSize = 'S' | 'M' | 'L' | 'XL'
+
+/** A piece of work the tech lead breaks criteria into: what to build, for which criteria, how big. */
+export type Task = {
+  id: string
+  title: string
+  status: string
+  /** The criteria this task serves, by id: crew's link for G3. */
+  acceptance_criteria: string[]
+  detail: string
+  size?: TaskSize
+  /** Why the task left the plan, when it did. */
+  crew_dropped?: string
+  [key: string]: unknown
+}
+
 export type PrdItem = {
   id: string
   title: string
@@ -61,6 +77,8 @@ export type Op =
   | { op: 'add_criterion'; feature: string; text: string }
   | { op: 'drop_criterion'; id: string; reason: string }
   | { op: 'drop_feature'; id: string; reason: string }
+  | { op: 'add_task'; feature: string; criteria: string[]; title: string; detail: string; size?: string }
+  | { op: 'drop_task'; id: string; reason: string }
   | {
       op: 'add_test_case'
       criteria: string[]
@@ -83,9 +101,20 @@ export type ApplyResult = { ok: true; tracker: Tracker; results: OpResult[] } | 
 const ALLOWED: Record<string, readonly Op['op'][]> = {
   pm: ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement'],
   qa: ['add_test_case'],
+  techlead: ['add_task', 'drop_task'],
 }
 
-const ROLE_LABEL: Record<string, string> = { pm: 'PM', qa: 'QA' }
+const ROLE_LABEL: Record<string, string> = { pm: 'PM', qa: 'QA', techlead: 'Tech lead' }
+
+const SIZES: readonly TaskSize[] = ['S', 'M', 'L', 'XL']
+
+/** A feature's tasks, read from what the board holds: entries without an id and a title are not crew's to count. */
+export const tasksOf = (item: PrdItem): Task[] =>
+  (Array.isArray(item.tasks) ? item.tasks : []).flatMap((entry): Task[] => {
+    const v = entry as Partial<Task> | null
+    if (typeof v !== 'object' || v === null || typeof v.id !== 'string' || typeof v.title !== 'string') return []
+    return [{ ...v, id: v.id, title: v.title, status: typeof v.status === 'string' ? v.status : 'planned', acceptance_criteria: Array.isArray(v.acceptance_criteria) ? v.acceptance_criteria.filter((c): c is string => typeof c === 'string') : [], detail: typeof v.detail === 'string' ? v.detail : '' } as Task]
+  })
 
 export const DEFAULT_PREFIXES: Prefixes = { feature: 'PRD-', testCase: 'TC-' }
 
@@ -239,6 +268,31 @@ const apply = (t: Tracker, op: Op, ctx: OpContext): string | OpResult => {
       recordDecision(t, ctx, { decision: `${op.id} ${item.title} 移出範圍：${op.reason}`, reason: op.reason, feature: op.id })
       return { op: op.op, id: op.id }
     }
+    case 'add_task': {
+      const item = feature(op.feature)
+      if (item === undefined) return `add_task：找不到功能 ${op.feature}`
+      if (item.crew_dropped !== undefined) return `add_task：${op.feature} 已經移出範圍`
+      if (op.title.trim() === '') return `add_task：${op.feature} 的任務標題是空白的`
+      if (op.criteria.length === 0) return `add_task：沒有指定這個任務對應的驗收條件`
+      const own = new Set(criteriaOf(item).map(c => c.id))
+      const foreign = op.criteria.filter(c => !own.has(c))
+      if (foreign.length > 0) return `add_task：${foreign.join('、')} 不是 ${op.feature} 的驗收條件`
+      if (op.size !== undefined && !SIZES.includes(op.size as TaskSize)) return 'add_task：size 要是 S、M、L 或 XL'
+      // A dropped task's id stays taken: decisions point at it.
+      const id = next(t.prd_items.flatMap(i => tasksOf(i).map(x => x.id)), 'TASK-')
+      item.tasks = [
+        ...(Array.isArray(item.tasks) ? item.tasks : []),
+        { id, title: op.title.trim(), status: 'planned', acceptance_criteria: [...new Set(op.criteria)], detail: op.detail.trim(), ...(op.size === undefined ? {} : { size: op.size }) },
+      ]
+      return { op: op.op, id }
+    }
+    case 'drop_task': {
+      const item = t.prd_items.find(i => tasksOf(i).some(x => x.id === op.id))
+      if (item === undefined) return `drop_task：找不到任務 ${op.id}`
+      item.tasks = item.tasks.map(x => ((x as { id?: unknown } | null)?.id === op.id ? { ...(x as object), crew_dropped: op.reason } : x))
+      recordDecision(t, ctx, { decision: `${op.id} 移出：${op.reason}`, reason: op.reason, task: op.id, feature: item.id })
+      return { op: op.op, id: op.id }
+    }
     case 'add_test_case': {
       const known = new Map(allCriteria(t).map(c => [c.id, c]))
       const missing = op.criteria.filter(id => !known.has(id))
@@ -309,11 +363,21 @@ export const gateG4 = (t: Tracker): GateResult => {
   return { covered: criteria.length - gaps.length, total: criteria.length, gaps }
 }
 
+/** G3: every acceptance criterion of a feature in scope has at least one task in the plan. */
+export const gateG3 = (t: Tracker): GateResult => {
+  const planned = new Set(inScope(t).flatMap(i => tasksOf(i).filter(x => x.crew_dropped === undefined).flatMap(x => x.acceptance_criteria)))
+  const criteria = inScope(t).flatMap(criteriaOf)
+  const gaps = criteria.filter(c => !planned.has(c.id)).map(c => ({ id: c.id, title: c.text, feature: c.feature }))
+  return { covered: criteria.length - gaps.length, total: criteria.length, gaps }
+}
+
 /** The board as compact text for a role to read: ids first, nothing it does not need. */
 export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): string => {
   const items = t.prd_items.filter(i => scope.feature === undefined || i.id === scope.feature)
   if (items.length === 0) return scope.feature === undefined ? '看板是空的。' : `找不到功能 ${scope.feature}。`
   const lines: string[] = []
+  // Tasks show once the tech lead has planned any: before that they would only be noise.
+  const planning = t.prd_items.some(i => tasksOf(i).length > 0)
   for (const item of items) {
     if (item.crew_dropped !== undefined) {
       lines.push(`${item.id} ${item.title} — 移出範圍：${item.crew_dropped}`)
@@ -325,7 +389,17 @@ export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): strin
     if (criteria.length === 0) lines.push('  （還沒有驗收條件）')
     for (const c of criteria) {
       const cases = t.prd_items.flatMap(i => i.test_cases).filter(tc => (tc.acceptance_criteria ?? []).includes(c.id))
-      lines.push(`  ${c.id} ${c.text} ← ${cases.length === 0 ? '沒有 test case' : cases.map(tc => tc.id).join(', ')}`)
+      const tasks = tasksOf(item).filter(x => x.crew_dropped === undefined && x.acceptance_criteria.includes(c.id))
+      const plan = planning ? ` · ${tasks.length === 0 ? '還沒有任務' : `任務 ${tasks.map(x => x.id).join(', ')}`}` : ''
+      lines.push(`  ${c.id} ${c.text} ← ${cases.length === 0 ? '沒有 test case' : cases.map(tc => tc.id).join(', ')}${plan}`)
+    }
+    for (const x of tasksOf(item)) {
+      const size = x.size === undefined ? '' : `（${x.size}）`
+      lines.push(
+        x.crew_dropped !== undefined
+          ? `  任務 ${x.id} ${x.title} — 移出：${x.crew_dropped}`
+          : `  任務 ${x.id} ${x.title}${size}← ${x.acceptance_criteria.join('、')}${x.detail === '' ? '' : `：${x.detail}`}`,
+      )
     }
   }
   const dropped = [...droppedRequirements(t)]
@@ -333,7 +407,7 @@ export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): strin
   return lines.join('\n')
 }
 
-const OP_NAMES = ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement', 'add_test_case'] as const
+const OP_NAMES = ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement', 'add_test_case', 'add_task', 'drop_task'] as const
 
 const isText = (v: unknown): v is string => typeof v === 'string'
 const isTextList = (v: unknown): v is string[] => Array.isArray(v) && v.every(isText)
@@ -386,6 +460,15 @@ export const parseOps = (raw: unknown): { ok: true; ops: Op[] } | { ok: false; e
         else ops.push({ op: 'link_requirements', feature: o.feature, requirements: o.requirements })
         return
       }
+      case 'add_task': {
+        if (!isText(o.feature)) errors.push(`${at} add_task 缺少 feature`)
+        else if (!isText(o.title)) errors.push(`${at} add_task 缺少 title`)
+        else if (!isTextList(o.criteria)) errors.push(`${at} add_task 的 criteria 要是驗收條件編號的陣列`)
+        else if (o.size !== undefined && !isText(o.size)) errors.push(`${at} add_task 的 size 要是 S、M、L 或 XL`)
+        else ops.push({ op: 'add_task', feature: o.feature, criteria: o.criteria, title: o.title, detail: isText(o.detail) ? o.detail : '', ...(isText(o.size) ? { size: o.size } : {}) })
+        return
+      }
+      case 'drop_task':
       case 'drop_requirement':
       case 'drop_criterion':
       case 'drop_feature': {
