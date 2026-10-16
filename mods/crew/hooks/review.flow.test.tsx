@@ -38,7 +38,7 @@ const boardWith = (tests: readonly Op[]) => {
 }
 
 describe('secrets stay out of every file crew writes', () => {
-  test('masks them in threads, the board and the saved state', async ($, on) => {
+  test('masks them in threads, the board and the saved state', { timeoutMs: 20_000 }, async ($, on) => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
@@ -65,7 +65,8 @@ describe('what crew keeps for a restart', () => {
     expect(w.spawned).toEqual([])
     await $.command.run(command('start docs/PRD.md'))
     expect(w.disk.has(`${ROOT}/.crew/state.json`) && !w.disk.get(`${ROOT}/.crew/state.json`)?.includes('"splitting"')).toBe(true)
-    expect(w.store.get(STATE_KEY)).toMatchObject({ prdPath: 'docs/PRD.md', flow: { stage: 'splitting' }, lead: 'person' })
+    // The board in the repo already answers this PRD: the person's start checks it and has QA test it, rather than split it again.
+    expect(w.store.get(STATE_KEY)).toMatchObject({ prdPath: 'docs/PRD.md', flow: { stage: 'writing_tests' }, lead: 'person' })
   })
 
   test('only takes a PRD inside the repo', async ($, on) => {

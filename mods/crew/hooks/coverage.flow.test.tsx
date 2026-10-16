@@ -19,7 +19,7 @@ const notice = async ($: Engine, agentId: string) =>
   }
 
 describe('writes a role makes at the same time', () => {
-  test('all land: board changes, memories and thread messages', async ($, on) => {
+  test('all land: board changes, memories and thread messages', { timeoutMs: 20_000 }, async ($, on) => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))

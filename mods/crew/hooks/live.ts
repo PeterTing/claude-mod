@@ -31,7 +31,7 @@ export const emptyLive = (): CrewLive => ({
   retired: [],
   usageDay: '',
   pending: {},
-  signals: { prdVersion: '', boardVersion: '', doubt: '', prdChangedAt: 0, checkedAt: 0, added: 0, removed: 0 },
+  signals: { prdVersion: '', boardVersion: '', doubt: '', doubtAt: 0, prdChangedAt: 0, checkedAt: 0, added: 0, removed: 0 },
 })
 
 const DAY = 86_400_000

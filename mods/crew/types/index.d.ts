@@ -109,8 +109,10 @@ export type CrewSignals = {
   prdVersion: string
   /** The board file's version at the last look: a board change brings the next look on. */
   boardVersion: string
-  /** A PRD version that removed most requirements at once, waiting for a second look to confirm it; '' with none. */
+  /** A PRD version that removed requirements, waiting for a later look to confirm it; '' with none. */
   doubt: string
+  /** When that version was first seen. */
+  doubtAt: number
   /** When the PRD file was last modified, as of the last look; 0 before the first. */
   prdChangedAt: number
   /** When crew last looked. */

@@ -73,6 +73,9 @@ const WATCH_MS = 10_000
 /** How often an unchanged PRD still updates the time crew last looked, so the pane does not redraw every check. */
 const QUIET_MS = 30_000
 
+/** How long after a removal is first seen a look may confirm it. */
+const CONFIRM_MS = 5_000
+
 /** How many roles' turn ends crew is handling right now. */
 const ending = { count: 0 }
 
@@ -962,6 +965,12 @@ const inboxOf = (l: CrewLive): { pm: string[]; qa: string[] } => {
   return { pm: unread('pm'), qa: unread('qa') }
 }
 
+/** Whitespace folded to single spaces: text from the board kept to one line. */
+const squeeze = (text: string): string => text.replace(/\s+/g, ' ').trim()
+
+/** A /crew start under way: the board and the session's PRD may disagree for a moment. */
+const starting = { busy: false }
+
 /**
  * The PRD's requirements as the file stands now. Each new version of the file
  * is checked again before crew reads it: it must still be a file in the repo,
@@ -978,10 +987,12 @@ async function prdView($: any): Promise<PrdView | undefined> {
     // A file that changed while crew read it is read again at the next look, not kept under the old version.
     if ((await versionOf($, fullPathOf(path))) === version) Object.assign(prdCache, { path, version, view })
   }
-  // A board another PRD was synced to (a teammate's, committed) is not this PRD's to measure against.
+  // A board another PRD was synced to (a teammate's, or another branch's) is not this PRD's to measure against:
+  // nothing is held to it until the person says which PRD to follow.
   const kept = (await loadBoard($)) as { crew_prd?: { path?: unknown } } | null
-  if (view.problem === undefined && typeof kept?.crew_prd?.path === 'string' && relativeOf(kept.crew_prd.path) !== path) {
-    view = { ...view, problem: `看板對準的是另一份 PRD（${cut(kept.crew_prd.path, 80)}）；/crew start ${path} 讓看板改對準這一份` }
+  if (!starting.busy && view.problem === undefined && typeof kept?.crew_prd?.path === 'string' && relativeOf(kept.crew_prd.path) !== path) {
+    const theirs = cut(squeeze(kept.crew_prd.path), 80)
+    view = { problem: `看板對準的是另一份 PRD「${theirs}」，crew 追的是「${path}」：要跟看板走用 /crew start ${theirs}，要讓看板改對準這一份用 /crew start ${path}` }
   }
   if (view.problem !== undefined) warnOnce($, view.problem)
   return view
@@ -1095,8 +1106,8 @@ async function look($: any) {
     const unlinked = baseline.length === 0 && unnumbered(board)
     drift = baseline.length === 0 ? NO_DRIFT : diffRequirements(baseline, requirements)
     const moved = drift.added.length + drift.removed.length > 0
-    if (drift.removed.length > 0 && s.doubt !== version) {
-      // A removal may be a file caught half-written: it counts once the next look finds the same file.
+    if (drift.removed.length > 0 && !(s.doubt === version && now - s.doubtAt >= CONFIRM_MS)) {
+      // A removal may be a file caught half-written: it counts once a look some seconds later finds the same file.
       doubt = version
       seen = s.prdVersion
     } else if (moved || unlinked) {
@@ -1128,6 +1139,7 @@ async function look($: any) {
       prdVersion: seen,
       boardVersion,
       doubt,
+      doubtAt: doubt === '' ? 0 : doubt === s.doubt ? s.doubtAt : now,
       prdChangedAt: Number.isFinite(modified) ? modified : x.signals.prdChangedAt,
       checkedAt: now,
       added: drift.added.length,
@@ -1174,13 +1186,17 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     if (RUNNING.includes(stage)) return `crew 正在進行（${stage}），等這一輪完成再開始新的；卡住的話用 /crew resume 接續，或 /crew reset。`
     const prd = await prdFile($, typed)
     if ('error' in prd) return prd.error
-    const path = relativeOf(typed)
+    // The PRD is known by where it really is: one file reached through a link in the repo is one PRD.
+    const real = ((await $.fs.stat(prd.full, { resolve: true })) as { realPath?: string }).realPath
+    const root = await realRoot($)
+    const path = real !== undefined && real.startsWith(`${root}/`) ? real.slice(root.length + 1) : relativeOf(typed)
     const previous = (await read($, live)).prdPath
     const text: string = await $.fs.read(prd.full)
     const requirements = requirementsOf(text)
     if (requirements.length === 0) return `${path} 裡找不到需求：crew 把清單項目、表格的資料列，以及沒有清單的小節裡的段落當成需求。`
     if (requirements.length > MAX_REQUIREMENTS) return `${path} 有 ${requirements.length} 條需求，crew 一次最多追 ${MAX_REQUIREMENTS} 條；請拆成幾份 PRD。`
     const today = dayOf(await $.clock.now())
+    starting.busy = true
     try {
       // The PRD's requirements crew holds the board to: what a later change of the PRD is measured against.
       // The PRD before it is kept with its requirement ids, so its features stay its own.
@@ -1190,6 +1206,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
         return { board: { ...base, crew_prd: { path, requirements: baselineFor(requirements), synced_at: today, ...before } }, value: undefined }
       })
     } catch (err) {
+      starting.busy = false
       if (err instanceof BoardRefused) return `crew 沒有開始：${err.message}`
       throw err
     }
@@ -1197,15 +1214,21 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     await update($, live, l => ({ ...l, signals: { ...l.signals, prdVersion: version, added: 0, removed: 0 } }))
     await update($, isDemo, () => false)
     await update($, live, l => ({ ...l, prdPath: path, lead: by }))
+    starting.busy = false
     await note($, { kind: 'prd', path, size: text.length, by })
-    await feed($, { type: 'start', prd: { path, size: text.length, text: text.slice(0, 4_000) }, requirements })
+    const board = await loadBoard($)
+    const checking = board !== null && board.prd_items.some(i => i.crew_dropped === undefined && refsOf(i).some(r => requirements.some(q => q.id === r)))
+    await feed($, { type: 'start', prd: { path, size: text.length, text: text.slice(0, 4_000) }, requirements, ...(board === null ? {} : { board }) })
     // The pane says how the board stands against the PRD, and when crew looked, from the first moment.
     await update($, live, l => ({ ...l, signals: { ...l.signals, checkedAt: 0 } }))
     await watch($)
     await $.ui.open({ id: PANE, title: 'Crew' })
-    const pm = (await read($, live)).roles.pm
+    const after = await read($, live)
+    const pm = after.roles.pm
     if (pm.state === 'blocked') return `crew 沒有開始：${pm.doing}`
-    return `crew 開始：PM 正在拆 ${path}（${pm.tier ?? ''} ${pm.label ?? ''}・${pm.effort ?? ''}）。進度在 /crew 面板。`
+    if (after.flow.stage === 'done') return `看板已經對準 ${path}，每條驗收條件也都有 test case，不用重拆。進度在 /crew 面板。`
+    if (pm.state !== 'working' && after.flow.stage !== 'splitting') return `看板已經對準 ${path}，接著由 QA 補 test case。進度在 /crew 面板。`
+    return `crew 開始：PM 正在${checking ? '讓看板對準' : '拆'} ${path}（${pm.tier ?? ''} ${pm.label ?? ''}・${pm.effort ?? ''}）。進度在 /crew 面板。`
   }
   if (verb === 'reset') {
     // The roles are let go, not forgotten: their late notices are still crew's, their writes are refused.
@@ -1489,8 +1512,12 @@ export const register: Register = on => {
     }
     // A drop this write took back (a requirement linked again) is taken back in memory too.
     const accepted = new Set(((board?.decisions ?? []) as Decided[]).filter(d => d.status === undefined || d.status === 'accepted').map(d => d.id))
+    const theirs = new Map((await loadMemories($)).map(m => [m.id, m]))
     for (const d of (r.tracker.decisions ?? []) as Decided[]) {
       if (typeof d.id !== 'string' || !accepted.has(d.id) || d.status !== 'superseded' || !Array.isArray(d.requirements)) continue
+      // Only a decision a role made is a role's to take back: never the person's, nor one the brain relayed.
+      const memory = theirs.get(d.id)
+      if (!/^DEC-\d+$/.test(d.id) || (memory !== undefined && (memory.type !== 'DEC' || !['pm', 'qa'].includes(memory.source)))) continue
       const refs = refsOfDecision(d)
       await remember($, { type: 'DEC', text: `PRD 需求 ${refs.join('、')} 移回範圍：有功能對應它了。`, refs, supersedes: d.id, source: role }, role === 'pm' || role === 'qa' ? role : undefined)
     }

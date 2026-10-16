@@ -363,7 +363,8 @@ describe('the PRD as the flow holds the board to it', () => {
       { stage: 'writing_tests', round: 2, retries: 1, aligning: 1 },
       { type: 'prd_changed', board: board(tied), requirements: reqs, added: [], removed: [{ id: 'R-000000', text: '舊需求', section: '' }], key: 'k' },
     )
-    expect(changed.state).toEqual({ stage: 'splitting', round: 0, retries: 0, aligning: 0, synced: 'k' })
+    // QA was at work: the flow waits for its run instead of starting another.
+    expect(changed.state).toEqual({ stage: 'splitting', round: 0, retries: 0, aligning: 0, synced: 'k', qaBusy: true })
     expect(changed.actions[0]).toMatchObject({ type: 'message', role: 'pm' })
     expect((changed.actions[0] as { text: string }).text).toMatch(/移除[\s\S]*舊需求/)
     // QA finishing meanwhile does not move the flow: the PM's sync comes first.
@@ -480,5 +481,46 @@ describe('the PRD as the flow holds the board to it', () => {
     const r = run([START_WITH, { type: 'role_done', role: 'pm', board: covered, requirements: reqs }])
     expect(r.state.stage).toBe('adding_tests')
     expect((r.actions.at(-1) as { text: string }).text).not.toMatch(/PRD 更新/)
+  })
+
+  test('waits for QA still at work after a PRD change, then asks it for what is new only', () => {
+    const now = requirementsOf('## 方案\n- 可以選月繳方案\n- 可以看到價格\n- 可以改方案')
+    const added = now.filter(r => !reqs.some(x => x.id === r.id))
+    const synced: readonly Op[] = [...tied, { op: 'add_criterion', feature: 'PRD-001', text: '可以改方案' }, { op: 'link_requirements', feature: 'PRD-001', requirements: added.map(r => r.id) }]
+    let s: FlowState = { stage: 'writing_tests', round: 0, retries: 0 }
+    s = step(s, { type: 'prd_changed', board: board(tied), requirements: now, added, removed: [], key: 'k' }).state
+    // The PM syncs while QA is still writing its first test cases: no second QA.
+    const afterPm = step(s, { type: 'role_done', role: 'pm', board: board(synced), requirements: now })
+    expect(afterPm.actions).toEqual([])
+    // QA finishes the criteria it had: it is asked for the new one, and the PM is asked nothing.
+    const afterQa = step(afterPm.state, { type: 'role_done', role: 'qa', board: board(synced, [tc(['AC-001', 'AC-002'])]), requirements: now })
+    expect(afterQa.state.stage).toBe('adding_tests')
+    expect(afterQa.actions).toHaveLength(1)
+    expect(afterQa.actions[0]).toMatchObject({ type: 'message', role: 'qa', item: 'AC-003' })
+  })
+
+  test('asks QA for what is new once it finished before the PM synced', () => {
+    const now = requirementsOf('## 方案\n- 可以選月繳方案\n- 可以看到價格\n- 可以改方案')
+    const added = now.filter(r => !reqs.some(x => x.id === r.id))
+    const synced: readonly Op[] = [...tied, { op: 'add_criterion', feature: 'PRD-001', text: '可以改方案' }, { op: 'link_requirements', feature: 'PRD-001', requirements: added.map(r => r.id) }]
+    let s: FlowState = { stage: 'writing_tests', round: 0, retries: 0 }
+    s = step(s, { type: 'prd_changed', board: board(tied), requirements: now, added, removed: [], key: 'k' }).state
+    s = step(s, { type: 'role_done', role: 'qa', board: board(tied, [tc(['AC-001', 'AC-002'])]), requirements: now }).state
+    const afterPm = step(s, { type: 'role_done', role: 'pm', board: board(synced, [tc(['AC-001', 'AC-002'])]), requirements: now })
+    expect(afterPm.state.stage).toBe('adding_tests')
+    expect(afterPm.actions[0]).toMatchObject({ type: 'message', role: 'qa', item: 'AC-003' })
+  })
+
+  test('checks a board already split for this PRD on a new start, instead of splitting it again', () => {
+    const covered = board(tied, [tc(['AC-001', 'AC-002'])])
+    const again = step({ stage: 'done', round: 1, retries: 0 }, { ...START_WITH, board: covered })
+    expect(again.state.stage).toBe('done')
+    expect(again.actions.some(a => a.type === 'spawn')).toBe(false)
+    const now = requirementsOf('## 方案\n- 可以選月繳方案\n- 可以看到價格\n- 可以改方案')
+    const short = step({ stage: 'done', round: 1, retries: 0 }, { ...START_WITH, requirements: now, board: covered })
+    expect(short.state.stage).toBe('splitting')
+    expect(short.actions[0]).toMatchObject({ type: 'message', role: 'pm' })
+    // A board that answers none of this PRD is split from the start.
+    expect(step(INITIAL, { ...START_WITH, board: board(SPLIT) }).actions[0]).toMatchObject({ type: 'spawn', role: 'pm' })
   })
 })

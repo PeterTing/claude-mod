@@ -52,14 +52,14 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 
 ## The board stays on the PRD, live
 
-- **Every requirement is numbered.** crew reads the PRD itself. Each of these is a requirement:
-  - a list item, with its wrapped lines;
-  - a table data row;
-  - a paragraph, including the summary under the title.
+- **Every requirement is numbered.** crew reads the PRD itself. These are requirements:
+  - in a section with a list: each list item, with its wrapped lines, and each table data row;
+  - in a section without one: each paragraph, except one ending with a colon (a lead-in);
+  - the text under the title, only when the rest of the PRD holds no requirement.
 
-  These are not: front matter, code, headings, breaks, a paragraph ending with a colon (it leads in to a list), and a section that keeps the PRD's revision history (修訂紀錄, Change log).
+  These are not: front matter, code, comments, quotes, headings, breaks, lines that are only an image or a link, context sections (背景, 參考, 附錄, 概述, Background, References…), and the dated or versioned entries of a revision history (修訂紀錄, Change log). So write requirements as list items; a paragraph in a section with a list is not tracked.
 
-  Each requirement gets a number from its words, such as `R-3fa2c1`. The number stays while other lines change or the spacing changes, and changes when its own words do. A paragraph that is not a requirement can be moved out of scope by the PM, with a reason. crew tracks up to 1,000 requirements per PRD.
+  Each requirement gets a number from its words, such as `R-3fa2c1`. The number stays while other lines change or the spacing changes, and changes when its own words do. Anything crew takes for a requirement that is not one can be moved out of scope by the PM, with a reason. crew tracks up to 1,000 requirements per PRD.
 - **The PM must cover every requirement.** The PM's features name the requirements they answer. Gate **G0**, checked by code against the PRD file as it stands, needs:
   - every requirement answered by a feature, or moved out of scope with a reason;
   - every feature answering a requirement that is still in the PRD.
@@ -72,7 +72,8 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 
   It also runs when Claude Code starts, so an edit made while it was closed is caught too. An added requirement is told at once. A removed one is confirmed on the next check, about 10 seconds later, so a file caught half-saved is not taken for a real edit. A PRD with no requirements left is never sent to the PM.
 - **A PRD crew cannot read is called out.** The pane and the line above the prompt say so when the PRD is deleted, moved, swapped for a link, or holds no requirement. crew then keeps holding the board to the requirements it last read. Each new version of the PRD is checked before and after crew reads it: it must still be a file in the repo, reached through no link.
-- **A board synced to another PRD is called out too.** When a teammate's board on another PRD is committed, crew says so instead of measuring this PRD against it. `/crew start` on this PRD moves the board over.
+- **A board synced to another PRD is called out too.** A teammate's board, or another branch's, may be synced to another PRD. crew then says so and holds nothing to it until you choose: `/crew start` on the board's PRD to follow it, or on yours to move the board over.
+- **Starting a PRD the board already answers checks it, without a new split.** The board is held to the PRD as it stands: the PM fills what is missing, and QA tests what has no test case.
 - **The pane says how current it is.** It shows how the board stands against the PRD, when the PRD last changed, and when crew last looked.
 - **Progress is counted per requirement.** The Progress tab lists each PRD requirement with how far each stage of its development is: spec, design, test cases, tasks, code, review, test results. Today crew fills in two stages from the board:
   - spec: every feature that answers the requirement has criteria;

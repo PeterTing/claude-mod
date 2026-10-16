@@ -38,8 +38,13 @@ const join = (before: string, line: string): string => {
 const FENCE = /^(`{3,}|~{3,})/
 const UNDERLINE = /^(?:=+|-+)$/
 const FRONT_FIELD = /^[\w-]+\s*:/
-/** A section that records the PRD's own history, not what to build. */
-const HISTORY = /(修訂|版本|變更|更新)(紀錄|記錄|歷程|歷史)|revision|change\s?log/i
+/** A section that records the PRD's own history: its dated or versioned entries are not what to build. */
+const HISTORY = /(修訂|版本|變更|更新)(紀錄|記錄|歷程|歷史)|revision\s+history|change\s?log/i
+const DATED = /^(?:\d{4}[-/.年]\d{1,2}|v?\d+(?:\.\d+)+(?!\S))/i
+/** Sections that give context, not requirements. */
+const CONTEXT = /^(?:背景|動機|參考|附錄|名詞|概述|簡介|前言|background|motivation|references?|appendix|glossary|overview|introduction)/i
+/** A line that is only an image, a link or an address: no requirement in its own words. */
+const BARE = /^(?:!?\[[^\]]*\]\([^)\s]*\)|<?https?:\/\/\S+?>?)$/
 /** How much of a requirement crew keeps: its id is taken from all of it. */
 const TEXT_KEPT = 1_000
 const ITEM_MARK = /^(?:[-*+]|\d{1,9}[.)])(?:\s+|$)/
@@ -53,13 +58,18 @@ const cellsOf = (line: string): string[] | undefined =>
 
 const isDivider = (cells: readonly string[]): boolean => cells.length > 0 && cells.every(c => DIVIDER_CELL.test(c))
 
-type Block = { text: string; section: number; title: string; list: boolean }
+type Block = { text: string; section: number; title: string; list: boolean; intro: boolean }
 
 /**
- * The PRD's requirements, in order, once each: each list item (its wrapped
- * lines with it), table data row and paragraph. Not requirements: front matter,
- * code, headings, breaks, a paragraph that ends with a colon (it leads in to
- * a list), and a section that keeps the PRD's revision history.
+ * The PRD's requirements, in order, once each:
+ * - in a section with a list, each list item (its wrapped lines with it) and table data row;
+ * - in a section without one, each paragraph, except one ending with a colon (a lead-in);
+ * - the text under the title only when the rest of the PRD holds no requirement.
+ *
+ * Not requirements: front matter, code, comments, quotes, headings, breaks,
+ * lines that are only an image or a link, context sections (背景, 參考,
+ * Background, References…), and the dated or versioned entries of a revision
+ * history.
  */
 export const requirementsOf = (markdown: string): Requirement[] => {
   const lines = markdown.split(/\r?\n/)
@@ -67,6 +77,10 @@ export const requirementsOf = (markdown: string): Requirement[] => {
   let section = 0
   let title = ''
   let fence: { char: string; length: number } | undefined
+  let comment = false
+  /** The section under the PRD's title: the one before any heading, or under a first heading of level 1. */
+  let intro = 0
+  let headings = 0
   /** The block a following line may continue: an item, or a paragraph. */
   let open: Block | undefined
   /** A blank line came after a list item: only an indented line continues it. */
@@ -74,12 +88,22 @@ export const requirementsOf = (markdown: string): Requirement[] => {
   let i = 0
   if ((lines[0] ?? '').trim() === '---') {
     const close = lines.findIndex((l, n) => n > 0 && (l.trim() === '---' || l.trim() === '...'))
-    // Front matter holds key: value lines only; anything else makes the first line a rule.
-    if (close > 0 && lines.slice(1, close).every(l => l.trim() === '' || FRONT_FIELD.test(l.trim()))) i = close + 1
+    // Front matter is YAML: key: value lines, with indented lines under a key; anything else makes the first line a rule.
+    const body = lines.slice(1, close)
+    if (close > 0 && body.some(l => FRONT_FIELD.test(l)) && body.every(l => l.trim() === '' || FRONT_FIELD.test(l) || /^\s/.test(l))) i = close + 1
   }
   for (; i < lines.length; i++) {
     const raw = lines[i] ?? ''
     const line = raw.trim()
+    if (comment) {
+      if (line.includes('-->')) comment = false
+      continue
+    }
+    if (line.startsWith('<!--')) {
+      comment = !line.includes('-->')
+      open = undefined
+      continue
+    }
     if (fence !== undefined) {
       // A fence closes only with the same mark, at least as long, and nothing after it.
       const close = FENCE.exec(line)
@@ -97,19 +121,27 @@ export const requirementsOf = (markdown: string): Requirement[] => {
       if (open?.list !== true) open = undefined
       continue
     }
-    if (HEADING_MARK.test(line)) {
+    const heading = (level: number, text: string) => {
       section += 1
-      title = squeeze(line.replace(/^#+/, '').replace(/\s#+$/, ''))
+      headings += 1
+      if (headings === 1 && level === 1) intro = section
+      title = text
       open = undefined
       gap = false
+    }
+    if (HEADING_MARK.test(line)) {
+      heading(line.length - line.replace(/^#+/, '').length, squeeze(line.replace(/^#+/, '').replace(/\s#+$/, '')))
       continue
     }
     // A paragraph underlined with = or - is a heading.
     if (UNDERLINE.test(line) && open !== undefined && !open.list && !gap && blocks.at(-1) === open) {
       blocks.pop()
-      section += 1
-      title = open.text
+      heading(line.startsWith('=') ? 1 : 2, open.text)
+      continue
+    }
+    if (line.startsWith('>')) {
       open = undefined
+      gap = false
       continue
     }
     if (BREAK.test(line)) {
@@ -121,7 +153,7 @@ export const requirementsOf = (markdown: string): Requirement[] => {
     if (mark !== null) {
       const rest = line.slice(mark[0].length)
       const text = squeeze(rest.replace(TASK_BOX, ''))
-      open = { text, section, title, list: true }
+      open = { text, section, title, list: true, intro: section === intro }
       blocks.push(open)
       gap = false
       continue
@@ -133,7 +165,7 @@ export const requirementsOf = (markdown: string): Requirement[] => {
       const next = cellsOf((lines[i + 1] ?? '').trim())
       // A row with a divider under it is the table's header; the divider itself is not a row.
       if (isDivider(cells) || (next !== undefined && isDivider(next))) continue
-      blocks.push({ text: cells.join(' | '), section, title, list: true })
+      blocks.push({ text: cells.join(' | '), section, title, list: true, intro: section === intro })
       continue
     }
     const indented = /^(?: {2,}|\t)/.test(raw)
@@ -142,14 +174,18 @@ export const requirementsOf = (markdown: string): Requirement[] => {
       gap = false
       continue
     }
-    open = { text: squeeze(line), section, title, list: false }
+    open = { text: squeeze(line), section, title, list: false, intro: section === intro }
     blocks.push(open)
     gap = false
   }
+  const kept = blocks.filter(b => b.text !== '' && !BARE.test(b.text) && !CONTEXT.test(b.title) && !(HISTORY.test(b.title) && DATED.test(b.text)))
+  const listed = new Set(kept.filter(b => b.list).map(b => b.section))
+  const chosen = kept.filter(b => b.list || (!listed.has(b.section) && !/[:：]$/.test(b.text)))
+  const beyond = chosen.some(b => !b.intro)
   const seen = new Map<string, string>()
   const out: Requirement[] = []
-  for (const b of blocks) {
-    if (b.text === '' || HISTORY.test(b.title) || (!b.list && /[:：]$/.test(b.text))) continue
+  for (const b of chosen) {
+    if (b.intro && !b.list && beyond) continue
     const key = b.text.replace(/\s+/g, '')
     let id = `R-${fingerprint(key)}`
     // Two different texts with one fingerprint: the later one takes the next free salted fingerprint.
