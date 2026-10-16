@@ -12,7 +12,7 @@ import { dayOf, emptyLive, snapshotOf } from './live'
 import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, redact, searchMemories, serializeMemories } from './memory'
 import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { ROLE_NAMES } from './model'
-import { baselineFor, baselineOf, changeKey, diffRequirements, earlierFor, fingerprint, gateG0, MAX_REQUIREMENTS, refsOf, requirementsOf } from './prd'
+import { baselineFor, baselineOf, changeKey, cut, diffRequirements, earlierFor, fingerprint, gateG0, MAX_REQUIREMENTS, refsOf, requirementsOf } from './prd'
 import type { Requirement } from './prd'
 import { composeStart, relatedOf, threadLines, wakePlan, withMemories, workingSet } from './pack'
 import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
@@ -131,8 +131,6 @@ const safe = (item: string): string => item.replace(/[^\w.-]+/g, '_')
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const firstLine = (text: string): string => (text.split('\n')[0] ?? '').slice(0, 60)
-
-const cut = (text: string, max: number): string => ([...text].length > max ? `${[...text].slice(0, max).join('')}…` : text)
 
 const who = (name: string): string => (name === 'person' ? '使用者' : (ROLE_NAMES[name as CrewRole] ?? name))
 

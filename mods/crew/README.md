@@ -52,26 +52,36 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 
 ## The board stays on the PRD, live
 
-- **Every requirement is numbered.** crew reads the PRD itself and numbers each requirement (each list item, table row, or paragraph when there are no lists) by its words: `R-3fa2c1`. A requirement keeps its number while other lines change and gets a new one when its own words change.
+- **Every requirement is numbered.** crew reads the PRD itself and finds its requirements:
+  - in a section with lists, each list item (with its wrapped lines) and each table data row;
+  - in a section without lists, each paragraph, including the summary under the title.
+
+  Each gets a number from its words, such as `R-3fa2c1`. The number stays while other lines change or the spacing changes, and changes when its own words do. A summary that is not a requirement can be moved out of scope by the PM, with a reason.
 - **The PM must cover every requirement.** The PM's features name the requirements they answer. Gate **G0**, checked by code against the PRD file as it stands, needs:
   - every requirement answered by a feature, or moved out of scope with a reason;
   - every feature answering a requirement that is still in the PRD.
 
   The split is not done until G0 passes.
-- **A changed PRD is caught within seconds.** crew checks the PRD file every 10 seconds, with no model call. When it changes:
+- **A changed PRD is caught within seconds.** crew checks the PRD file every 10 seconds; the check itself calls no model. When it changes:
   - the pane and the line above the prompt show what changed;
-  - the PM is told which requirements were added and removed;
-  - once the board answers the PRD again, QA writes tests for what is new only.
+  - the PM is told which requirements were added and removed, once per change;
+  - the flow cannot finish until the board answers the PRD again, and then QA writes tests for what is new only.
 
-  It also runs when Claude Code starts, so an edit made while it was closed is caught too.
+  It also runs when Claude Code starts, so an edit made while it was closed is caught too. A change that removes most requirements at once is confirmed on the next check, about 10 seconds later, so a file caught half-saved is not taken for a real edit. A PRD with no requirements left is never sent to the PM.
+- **A PRD crew cannot read is called out.** When the PRD is deleted, moved, swapped for a link, or holds no requirement, the pane and the line above the prompt say so, and crew keeps holding the board to the requirements it last read. Each new version of the PRD is checked again before crew reads it: it must still be a file in the repo, reached through no link.
 - **The pane says how current it is.** It shows how the board stands against the PRD, when the PRD last changed, and when crew last looked.
-- **Progress is counted per requirement.** The Progress tab lists each PRD requirement with how far each stage of its development is: spec, design, tasks, code, review, tests. The spec and tests columns come from the board; the other stages show `—` until the roles that do them are added. A requirement moved out of scope shows the reason instead.
+- **Progress is counted per requirement.** The Progress tab lists each PRD requirement with how far each stage of its development is: spec, design, test cases, tasks, code, review, test results. Today crew fills in two stages from the board:
+  - spec: every feature that answers the requirement has criteria;
+  - test cases: those criteria have test cases, counted done only once the spec is.
+
+  The other stages show `—` until the roles that do them are added, and never show as done before then. A requirement moved out of scope shows the reason instead.
+- **One board, several PRDs.** Starting another PRD keeps the earlier one's requirement numbers on the board, so its features stay its own and do not hold up the new PRD's split. A board from before crew numbered requirements is not reported as a PRD change: the PM is asked to link its features to the requirements.
 
 ## Where things live
 
 | Path | In git | What |
 | --- | --- | --- |
-| `prd-tracker.json` | yes | The board: features, acceptance criteria, test cases, decisions, and (`crew_prd`) the PRD requirements the board last answered. |
+| `prd-tracker.json` | yes | The board: features, acceptance criteria, test cases, decisions, and (`crew_prd`) the PRD requirements crew holds the board to, with secrets masked, plus the earlier PRDs' requirement numbers. |
 | `.crew/threads/*.jsonl` | yes | Messages between roles, and between you and a role. Every message is appended; the pane shows the latest 50 per item. |
 | `.crew/memory/memories.jsonl` | yes | Long-term memory: decisions (`DEC`), facts (`MEM`), lessons (`LES`), your preferences (`PREF`). |
 | `.crew/memory/consolidated.json` | yes | The days the log has been tidied. |
