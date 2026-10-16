@@ -304,13 +304,15 @@ describe('restarting at each stage', () => {
 })
 
 describe('the daily tidy-up', () => {
-  test('runs again the next day for the day before', async ($, on) => {
+  test('runs again the next day for the day before', { timeoutMs: 30_000 }, async ($, on) => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     await done($, 'a-pm-1')
     expect(w.completions).toHaveLength(0)
-    await w.clock.advance(86_400_000)
+    // A day in two halves: the kit resolves at most 10000 timer waits per advance.
+    await w.clock.advance(43_200_000)
+    await w.clock.advance(43_200_000)
     await done($, 'a-pm-1')
     expect(w.completions).toHaveLength(1)
     expect(w.completions[0]?.prompt).toMatch(/2026-10-15/)

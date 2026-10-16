@@ -217,6 +217,7 @@ function Header({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapshot;
     <Box flexDirection="column">
       {isDemo && <Text color="warning">設計稿・示意資料　/crew demo off 關閉</Text>}
       <Text bold>{prd}</Text>
+      {snap.alignment !== undefined && Alignment({ el, a: snap.alignment })}
       {isDemo && (
         <Box flexDirection="row" gap={1}>
           <Text dimColor>示意情境</Text>
@@ -231,6 +232,18 @@ function Header({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapshot;
         ))}
       </Box>
     </Box>
+  )
+}
+
+/** One line: how the board stands against the PRD as it is now, and when crew last looked. */
+function Alignment({ el, a }: { el: Elements; a: NonNullable<Snapshot['alignment']> }) {
+  const { Text } = el
+  const ok = a.gaps === 0 && a.added === 0 && a.removed === 0
+  const drift = a.added + a.removed > 0 ? ` PRD 改了：新增 ${a.added}、移除 ${a.removed}` : a.gaps > 0 ? ` ${a.gaps} 處對不上` : ''
+  return (
+    <Text color={ok ? 'success' : 'warning'}>
+      對準 PRD {a.covered}/{a.total} {ok ? '✓' : `⚠${drift}`} · PRD 更新於 {a.prdChanged} · 即時檢查 {a.checked}
+    </Text>
   )
 }
 
@@ -479,6 +492,7 @@ export function bandText(snap: Snapshot, label = 'crew（設計稿）'): string 
   const parts = [
     label,
     ...(snap.progress !== null ? [`進度 ${percentOf(snap.progress)}%（${snap.progress.done}/${snap.progress.total}）`] : []),
+    ...(snap.alignment === undefined ? [] : [snap.alignment.gaps === 0 ? '對準 PRD ✓' : `⚠ PRD 對不上 ${snap.alignment.gaps}`]),
     `待你決定 ${snap.decisions.length}`,
     ...(snap.alerts.length > 0 ? [`⚠ ${snap.alerts.length} 則提醒`] : []),
     `今日 ${tokens(snap.today)} tok`,

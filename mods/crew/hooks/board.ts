@@ -52,7 +52,10 @@ export type Tracker = {
 export type Prefixes = { feature: string; testCase: string }
 
 export type Op =
-  | { op: 'add_feature'; title: string; summary: string; priority?: 'P0' | 'P1' | 'P2' }
+  /** `sources`: the ids of the PRD requirements the feature answers (R-xxxxxx). */
+  | { op: 'add_feature'; title: string; summary: string; priority?: 'P0' | 'P1' | 'P2'; sources?: string[] }
+  | { op: 'link_requirements'; feature: string; requirements: string[] }
+  | { op: 'drop_requirement'; id: string; reason: string }
   | { op: 'add_criterion'; feature: string; text: string }
   | { op: 'drop_criterion'; id: string; reason: string }
   | { op: 'drop_feature'; id: string; reason: string }
@@ -76,7 +79,7 @@ export type ApplyResult = { ok: true; tracker: Tracker; results: OpResult[] } | 
 
 /** Which ops each role may make. */
 const ALLOWED: Record<string, readonly Op['op'][]> = {
-  pm: ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature'],
+  pm: ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement'],
   qa: ['add_test_case'],
 }
 
@@ -175,7 +178,7 @@ const apply = (t: Tracker, op: Op, ctx: OpContext): string | OpResult => {
         status: 'planned',
         priority: op.priority ?? 'P1',
         summary: op.summary.trim(),
-        source_refs: [],
+        source_refs: [...new Set(op.sources ?? [])],
         acceptance_criteria: [],
         test_case_counts: { total: 0 },
         test_cases: [],
@@ -183,6 +186,19 @@ const apply = (t: Tracker, op: Op, ctx: OpContext): string | OpResult => {
         gaps: [],
       })
       return { op: op.op, id }
+    }
+    case 'link_requirements': {
+      const item = feature(op.feature)
+      if (item === undefined) return `link_requirements：找不到功能 ${op.feature}`
+      if (op.requirements.length === 0) return `link_requirements：${op.feature} 沒有指定 PRD 需求編號`
+      const had = Array.isArray(item.source_refs) ? (item.source_refs as unknown[]).filter((r): r is string => typeof r === 'string') : []
+      item.source_refs = [...new Set([...had, ...op.requirements])]
+      return { op: op.op, id: op.feature }
+    }
+    case 'drop_requirement': {
+      if (op.id.trim() === '') return 'drop_requirement：沒有指定 PRD 需求編號'
+      recordDecision(t, ctx, { decision: `PRD 需求 ${op.id} 移出範圍：${op.reason}`, reason: op.reason, requirements: [op.id] })
+      return { op: op.op, id: op.id }
     }
     case 'add_criterion': {
       const item = feature(op.feature)
@@ -304,7 +320,7 @@ export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): strin
   return lines.join('\n')
 }
 
-const OP_NAMES = ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'add_test_case'] as const
+const OP_NAMES = ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement', 'add_test_case'] as const
 
 const isText = (v: unknown): v is string => typeof v === 'string'
 const isTextList = (v: unknown): v is string[] => Array.isArray(v) && v.every(isText)
@@ -338,6 +354,7 @@ export const parseOps = (raw: unknown): { ok: true; ops: Op[] } | { ok: false; e
           ops.push({
             op: 'add_feature',
             title: o.title,
+            ...(isTextList(o.sources) ? { sources: o.sources } : {}),
             summary: isText(o.summary) ? o.summary : '',
             ...(o.priority === undefined ? {} : { priority: o.priority as 'P0' | 'P1' | 'P2' }),
           })
@@ -349,6 +366,13 @@ export const parseOps = (raw: unknown): { ok: true; ops: Op[] } | { ok: false; e
         else ops.push({ op: 'add_criterion', feature: o.feature as string, text: o.text as string })
         return
       }
+      case 'link_requirements': {
+        if (!isText(o.feature)) errors.push(`${at} link_requirements 缺少 feature`)
+        else if (!isTextList(o.requirements)) errors.push(`${at} link_requirements 的 requirements 要是 PRD 需求編號的陣列`)
+        else ops.push({ op: 'link_requirements', feature: o.feature, requirements: o.requirements })
+        return
+      }
+      case 'drop_requirement':
       case 'drop_criterion':
       case 'drop_feature': {
         const missing = need(['id', 'reason'])

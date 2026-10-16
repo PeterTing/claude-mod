@@ -61,7 +61,8 @@ describe('crew, PM and QA', () => {
       { op: 'add_test_case', criteria: ['AC-001'], title: '選月繳，餘額不足', steps: ['s'], expected: 'e' },
     ])
     const status = await $.command.run(command('status'))
-    expect(status.text).toMatch(/進度 75%（3\/4）/)
+    // The PRD's requirement and both features (G0), two features with criteria, one criterion with a test case.
+    expect(status.text).toMatch(/進度 86%（6\/7）/)
     const ui = await $.ui.mount({
       plugin: 'crew',
       surface: 'terminal',

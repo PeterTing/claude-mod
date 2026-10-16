@@ -12,6 +12,8 @@ import { dayOf, emptyLive, snapshotOf } from './live'
 import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, redact, searchMemories, serializeMemories } from './memory'
 import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { ROLE_NAMES } from './model'
+import { diffRequirements, gateG0, requirementsOf } from './prd'
+import type { Requirement } from './prd'
 import { composeStart, relatedOf, threadLines, wakePlan, withMemories, workingSet } from './pack'
 import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
 import type { CrewRole } from './roles'
@@ -47,6 +49,22 @@ const tidy = { checked: '' }
 
 /** Settles once session.start has registered the command, the roles and the tools. */
 const boot: { ready: Promise<void> } = { ready: Promise.resolve() }
+
+/** The PRD's requirements as last read, and the file version they were read at. */
+const prdCache: { version: string; requirements: Requirement[] | undefined; path: string; full: string | undefined } = {
+  version: '',
+  requirements: undefined,
+  path: '',
+  full: undefined,
+}
+
+/** The check on the PRD and the board every few seconds: one at a time, one timer a session. */
+const watching: { busy: boolean; timer: { cancel: () => void } | undefined } = { busy: false, timer: undefined }
+
+const WATCH_MS = 10_000
+
+/** How often an unchanged PRD still updates the time crew last looked, so the pane does not redraw every check. */
+const QUIET_MS = 30_000
 
 /** How many roles' turn ends crew is handling right now. */
 const ending = { count: 0 }
@@ -927,6 +945,109 @@ const inboxOf = (l: CrewLive): { pm: string[]; qa: string[] } => {
   return { pm: unread('pm'), qa: unread('qa') }
 }
 
+/** The PRD's requirements as the file stands now; undefined with no PRD, or one crew cannot read. */
+async function prdRequirements($: any): Promise<Requirement[] | undefined> {
+  const l = await read($, live)
+  if (l.prdPath === null) return undefined
+  const full = await prdPathChecked($, l.prdPath)
+  if (full === undefined) return undefined
+  const prd = { full }
+  const version = await versionOf($, prd.full)
+  if (prdCache.requirements === undefined || version !== prdCache.version) {
+    prdCache.requirements = requirementsOf(await $.fs.read(prd.full))
+    prdCache.version = version
+  }
+  return prdCache.requirements
+}
+
+/** The PRD's full path once crew has checked it stays in the repo; checked again when the PRD path changes. */
+async function prdPathChecked($: any, path: string): Promise<string | undefined> {
+  if (prdCache.path === path && prdCache.full !== undefined) return prdCache.full
+  const prd = await prdFile($, path)
+  prdCache.path = path
+  prdCache.full = 'error' in prd ? undefined : prd.full
+  return prdCache.full
+}
+
+/** The requirements the board last answered, kept on the board beside what crew does not own. */
+const baselineOf = (board: Tracker | null): Requirement[] => {
+  const kept = (board as { crew_prd?: { requirements?: unknown } } | null)?.crew_prd?.requirements
+  if (!Array.isArray(kept)) return []
+  return kept.flatMap((r): Requirement[] => {
+    const v = r as Partial<Requirement> | null
+    return typeof v === 'object' && v !== null && typeof v.id === 'string' && typeof v.text === 'string' ? [{ id: v.id, text: v.text, section: typeof v.section === 'string' ? v.section : '' }] : []
+  })
+}
+
+/** Records the PRD's requirements as the ones the board answers, once G0 passes against them. */
+async function settleBaseline($: any, requirements: readonly Requirement[]) {
+  const l = await read($, live)
+  const today = dayOf(await $.clock.now())
+  try {
+    await changeBoard($, async board => {
+      if (board === null) return { value: undefined }
+      const same = baselineOf(board).map(r => r.id).join() === requirements.map(r => r.id).join()
+      if (same || gateG0(board, requirements).gaps.length > 0) return { value: undefined }
+      return { board: { ...board, crew_prd: { path: l.prdPath, requirements: [...requirements], synced_at: today } }, value: undefined }
+    })
+  } catch (err) {
+    if (!(err instanceof BoardRefused)) throw err
+  }
+}
+
+/**
+ * Every few seconds, and at each role's turn end: has the PRD changed under the
+ * board? A change sends the PM to sync (the flow decides how) and says so; the
+ * pane redraws with the time crew looked. No model call, no tokens.
+ */
+async function watch($: any) {
+  if (watching.busy) return
+  watching.busy = true
+  try {
+    const l = await read($, live)
+    if (l.prdPath === null) return
+    const now: number = await $.clock.now()
+    const full = await prdPathChecked($, l.prdPath)
+    const version = full === undefined ? 'missing' : await versionOf($, full)
+    // Nothing moved: a single stat, and the time crew looked kept fresh every half minute.
+    if (version === l.signals.prdVersion && l.signals.added + l.signals.removed === 0 && now - l.signals.checkedAt < QUIET_MS) return
+    const requirements = await prdRequirements($)
+    let board = await loadBoard($)
+    let drift = { added: [] as Requirement[], removed: [] as Requirement[] }
+    if (requirements !== undefined && board !== null) {
+      drift = diffRequirements(baselineOf(board), requirements)
+      const moved = drift.added.length + drift.removed.length > 0
+      if (moved && version !== l.signals.prdVersion && baselineOf(board).length > 0) {
+        const text = `PRD 改了（新增 ${drift.added.length}、移除 ${drift.removed.length} 條需求），PM 會同步看板。`
+        $.ui.toast(`crew：${text}`)
+        if (l.lead === 'brain') tellBrain(text)
+        await note($, { kind: 'prd_changed', added: drift.added.map(r => r.id), removed: drift.removed.map(r => r.id) })
+        await feed($, { type: 'prd_changed', board, requirements, added: drift.added, removed: drift.removed })
+      }
+      if (moved) {
+        await settleBaseline($, requirements)
+        board = await loadBoard($)
+        drift = diffRequirements(baselineOf(board), requirements)
+      }
+    }
+    const modified = Number(version.split(':')[0])
+    await update($, live, s => ({
+      ...s,
+      signals: {
+        prdVersion: version,
+        prdChangedAt: Number.isFinite(modified) ? modified : s.signals.prdChangedAt,
+        checkedAt: now,
+        added: drift.added.length,
+        removed: drift.removed.length,
+      },
+    }))
+  } catch (err) {
+    $.ui.log(`crew: could not check the PRD: ${String(err)}`)
+  } finally {
+    watching.busy = false
+  }
+}
+
 /**
  * Who called a crew tool: a role crew runs, the main conversation (the brain),
  * or someone crew does not know (another agent, or one a reset retired).
@@ -964,16 +1085,24 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     const prd = await prdFile($, path)
     if ('error' in prd) return prd.error
     const text: string = await $.fs.read(prd.full)
+    const requirements = requirementsOf(text)
+    const today = dayOf(await $.clock.now())
     try {
-      await changeBoard($, async board => (board === null ? { board: newTracker(files.root.split('/').pop() ?? 'project'), value: undefined } : { value: undefined }))
+      // The PRD's requirements as the board will answer them: what a later change of the PRD is measured against.
+      await changeBoard($, async board => ({
+        board: { ...(board ?? newTracker(files.root.split('/').pop() ?? 'project')), crew_prd: { path, requirements, synced_at: today } },
+        value: undefined,
+      }))
     } catch (err) {
       if (err instanceof BoardRefused) return `crew 沒有開始：${err.message}`
       throw err
     }
+    const version = await versionOf($, prd.full)
+    await update($, live, l => ({ ...l, signals: { ...l.signals, prdVersion: version, added: 0, removed: 0 } }))
     await update($, isDemo, () => false)
     await update($, live, l => ({ ...l, prdPath: path, lead: by }))
     await note($, { kind: 'prd', path, size: text.length, by })
-    await feed($, { type: 'start', prd: { path, size: text.length, text: text.slice(0, 4_000) } })
+    await feed($, { type: 'start', prd: { path, size: text.length, text: text.slice(0, 4_000) }, requirements })
     await $.ui.open({ id: PANE, title: 'Crew' })
     const pm = (await read($, live)).roles.pm
     if (pm.state === 'blocked') return `crew 沒有開始：${pm.doing}`
@@ -1071,7 +1200,8 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
   if (verb === 'status') {
     const board = await loadBoard($)
     const l = await read($, live)
-    const s = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($) })
+    const requirements = await prdRequirements($)
+    const s = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), ...(requirements === undefined ? {} : { requirements }) })
     return bandText(s, `crew（${l.flow.stage}）`)
   }
   await $.ui.open({ id: PANE, title: 'Crew' })
@@ -1118,7 +1248,8 @@ async function roleEnded($: any, e: any, next: any, role: CrewRole, before: Crew
   // A turn that answered the person is not the flow's work: it moves a running flow on only once it is done or idle.
   const flowWork = before.roles[role].run !== 'person' || !RUNNING.includes(l.flow.stage)
   const board = await loadBoard($)
-  if (board !== null && flowWork) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l) })
+  const requirements = await prdRequirements($)
+  if (board !== null && flowWork) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l), ...(requirements === undefined ? {} : { requirements }) })
   else if (board === null && boardProblem() !== undefined) $.ui.toast(`crew：流程停在這裡。${boardProblem() ?? ''}`)
   // Work the flow gave the role while it was busy, now that it is free.
   const waiting = (await read($, live)).pending[role] ?? []
@@ -1126,6 +1257,8 @@ async function roleEnded($: any, e: any, next: any, role: CrewRole, before: Crew
     await update($, live, s => ({ ...s, pending: Object.fromEntries(Object.entries(s.pending).filter(([r]) => r !== role)) }))
     await handOver($, role, waiting)
   }
+  // The board may answer the PRD now; and the PRD may have changed during the run.
+  await watch($)
   // A running flow with nobody at work and nothing waiting would stay stopped unseen: say so.
   // Only the last of several turn ends looks: another may be about to hand the flow on.
   const now = await read($, live)
@@ -1185,6 +1318,13 @@ export const register: Register = on => {
       booted()
     }
     await resumeOnStart($)
+    // The PRD may have changed while Claude Code was closed; from now on crew looks every few seconds.
+    prdCache.requirements = undefined
+    prdCache.full = undefined
+    await update($, live, l => ({ ...l, signals: { ...l.signals, prdVersion: '' } }))
+    await watch($)
+    watching.timer?.cancel()
+    watching.timer = $.clock.every(WATCH_MS, () => void watch($))
     // Notes no role notice came for go out on their own after a minute. One timer per session, even after a reload.
     brain.timer?.cancel()
     brain.timer = $.clock.every(BRAIN_TICK_MS, () => {
@@ -1464,7 +1604,10 @@ export const register: Register = on => {
       reply: id => $.ui.toast(`用 /crew answer ${id} <你的回答> 回覆`),
     }
     const view = { tab: await read($, tab), scenario: await read($, scenario), thread: await read($, thread), gate: await read($, gate) }
-    const snap = demo ? DEMO[view.scenario] : snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($) })
+    const requirements = demo ? undefined : await prdRequirements($)
+    const snap = demo
+      ? DEMO[view.scenario]
+      : snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), ...(requirements === undefined ? {} : { requirements }) })
     return CrewPane({ el, snap, view, act, isDemo: demo })
   })
 
@@ -1480,7 +1623,8 @@ export const register: Register = on => {
     }
     const l = await read($, live)
     if (l.prdPath === null) return next(e)
-    const snap = snapshotOf({ board: await loadBoard($), live: l, now: await $.clock.now() })
+    const requirements = await prdRequirements($)
+    const snap = snapshotOf({ board: await loadBoard($), live: l, now: await $.clock.now(), ...(requirements === undefined ? {} : { requirements }) })
     return (
       <Text dimColor wrap="truncate-end">
         {bandText(snap, 'crew')}

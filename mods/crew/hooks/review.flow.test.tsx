@@ -4,6 +4,7 @@ import type { Engine } from 'claude-code/testing'
 import { applyOps, newTracker } from './board'
 import type { Op } from './board'
 import { parseMemories } from './memory'
+import { requirementsOf } from './prd'
 import { AGENT_SPECS, TOOLS } from './roles'
 import { command, done, ROOT, SPLIT, start, world, write } from './world'
 
@@ -186,7 +187,9 @@ describe('a role at work', () => {
   test('gets new work in its inbox instead of a second agent of its kind', async ($, on) => {
     const w = world($, on)
     // Long enough for an Opus split, so the answer's Sonnet route would otherwise mean a new agent.
-    w.disk.set(`${ROOT}/docs/PRD.md`, `# 會員訂閱\n\n${'使用者可以選月繳方案。'.repeat(150)}`)
+    const long = `# 會員訂閱\n\n${'使用者可以選月繳方案。'.repeat(150)}`
+    w.disk.set(`${ROOT}/docs/PRD.md`, long)
+    const req = requirementsOf(long)[0]?.id ?? ''
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     await call($, 'ask_person', { question: '年繳要不要做？' }, 'a-pm-1')
@@ -195,7 +198,7 @@ describe('a role at work', () => {
     expect(w.spawned).toHaveLength(1)
     expect(w.sent.at(-1)).toMatchObject({ to: 'a-pm-1' })
     // The answer joined the PM's split: that run is still the flow's, and finishing it moves the flow on.
-    await write($, 'a-pm-1', SPLIT)
+    await write($, 'a-pm-1', SPLIT.map(op => (op.op === 'add_feature' ? { ...op, sources: [req] } : op)))
     await done($, 'a-pm-1')
     expect(w.spawned.at(-1)?.subagentType).toBe('crew:qa')
   })
@@ -267,12 +270,14 @@ describe('housekeeping', () => {
     expect(w.disk.get(`${ROOT}/.crew/memory/consolidated.json`) ?? '').not.toMatch(/2026-10-15/)
   })
 
-  test('starts each day’s token count from zero', async ($, on) => {
+  test('starts each day’s token count from zero', { timeoutMs: 30_000 }, async ($, on) => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     await $.command.run(command('consolidate'))
-    await w.clock.advance(86_400_000)
+    // A day in two halves: the kit resolves at most 10000 timer waits per advance.
+    await w.clock.advance(43_200_000)
+    await w.clock.advance(43_200_000)
     w.disk.set(`${ROOT}/.crew/log/2026-10-16.jsonl`, '{"kind":"x"}\n')
     await $.command.run(command('consolidate'))
     const day2 = JSON.parse(w.disk.get(`${ROOT}/.crew/usage/2026-10-16.json`) ?? '{}') as { usage?: { memory?: { input: number } } }

@@ -96,6 +96,20 @@ export type CrewLive = {
   usageDay: string
   /** Role → work waiting for its current turn to end. */
   pending: Record<string, CrewWork[]>
+  /** What crew last saw of the PRD and the board, checked every few seconds: the board is held to the PRD as it stands. */
+  signals: CrewSignals
+}
+
+export type CrewSignals = {
+  /** The PRD file's version (time and size) when last checked; '' before the first check. */
+  prdVersion: string
+  /** When crew last saw the PRD change; 0 before it has. */
+  prdChangedAt: number
+  /** When crew last looked. */
+  checkedAt: number
+  /** Requirements the PRD added and removed that the board has not caught up with. */
+  added: number
+  removed: number
 }
 
 declare module 'claude-code' {

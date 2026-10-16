@@ -3,6 +3,7 @@ import { mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import type { Tracker } from './board'
+import { requirementsOf } from './prd'
 
 /**
  * crew end to end inside the kit: a repo on an in-memory disk, the PM and QA
@@ -154,9 +155,12 @@ export const write = ($: Engine, agentId: string, ops: unknown[]) =>
 export const done = ($: Engine, agentId: string, answer = '完成') =>
   $.turn.complete({ answer, durationMs: 5, isAborted: false, turnId: `turn-${agentId}`, reason: 'answer', agentId } as TurnCompleteInput)
 
+/** The world PRD's one requirement (a paragraph: it has no lists), which every feature of the split answers. */
+export const REQ = requirementsOf(PRD)[0]?.id ?? ''
+
 export const SPLIT = [
-  { op: 'add_feature', title: '方案選擇', summary: '選月繳' },
-  { op: 'add_feature', title: '取消訂閱', summary: '用到期末' },
+  { op: 'add_feature', title: '方案選擇', summary: '選月繳', sources: [REQ] },
+  { op: 'add_feature', title: '取消訂閱', summary: '用到期末', sources: [REQ] },
   { op: 'add_criterion', feature: 'PRD-001', text: '可以選月繳方案' },
   { op: 'add_criterion', feature: 'PRD-002', text: '取消後仍可使用到期末' },
 ]

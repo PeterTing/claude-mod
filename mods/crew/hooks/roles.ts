@@ -29,6 +29,7 @@ const SHARED = [
 const PM_CARD = [
   '你是 PM。',
   '職責：把 PRD 拆成功能（add_feature）和驗收條件（add_criterion）；QA 寫完 test case 後，決定沒有 test case 的驗收條件要移出範圍（drop_criterion，附理由）還是要做（用 thread_post 告訴 QA 怎麼測）。',
+  '看板要對準 PRD：crew 會從 PRD 找出每一條需求並給編號（R-…）。每個功能的 sources 寫它對應的需求編號，每條需求都要有功能對應；不做的需求用 drop_requirement 寫理由。PRD 改了，crew 會告訴你新增和移除的需求，照著更新看板（link_requirements 可以把需求掛到既有功能）。',
   '原則：一個功能對應使用者能感受到的一件事；一條驗收條件只講一件可以驗證的事，寫成「使用者可以…」「系統會…」；範圍外的事明確移出並寫理由。',
   SHARED,
 ].join('\n\n')
@@ -67,13 +68,15 @@ const OPS_SCHEMA = {
   items: {
     type: 'object',
     properties: {
-      op: { enum: ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'add_test_case'] },
+      op: { enum: ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement', 'add_test_case'] },
       title: { type: 'string' },
       summary: { type: 'string' },
       priority: { enum: ['P0', 'P1', 'P2'] },
-      feature: { type: 'string', description: '功能編號（add_criterion）' },
+      feature: { type: 'string', description: '功能編號（add_criterion、link_requirements）' },
+      sources: { type: 'array', items: { type: 'string' }, description: '功能對應的 PRD 需求編號 R-…（add_feature）' },
+      requirements: { type: 'array', items: { type: 'string' }, description: 'PRD 需求編號 R-…（link_requirements）' },
       text: { type: 'string', description: '驗收條件內容（add_criterion）' },
-      id: { type: 'string', description: '要移出的編號（drop_criterion、drop_feature）' },
+      id: { type: 'string', description: '要移出的編號（drop_criterion、drop_feature、drop_requirement）' },
       reason: { type: 'string' },
       criteria: { type: 'array', items: { type: 'string' }, description: '覆蓋的驗收條件編號（add_test_case）' },
       steps: { type: 'array', items: { type: 'string' } },
@@ -96,7 +99,7 @@ export const TOOL_SPECS = [
   {
     name: 'board_write',
     description:
-      '寫 crew 看板，一次送出多筆操作，全部成功或全部不生效。PM：add_feature(title, summary)、add_criterion(feature, text)、drop_criterion(id, reason)、drop_feature(id, reason)。QA：add_test_case(criteria, title, steps, expected)。',
+      '寫 crew 看板，一次送出多筆操作，全部成功或全部不生效。PM：add_feature(title, summary, sources)、add_criterion(feature, text)、drop_criterion(id, reason)、drop_feature(id, reason)、link_requirements(feature, requirements)、drop_requirement(id, reason)。QA：add_test_case(criteria, title, steps, expected)。',
     inputSchema: { type: 'object', properties: { ops: OPS_SCHEMA }, required: ['ops'] },
   },
   {

@@ -49,6 +49,7 @@ const NORMAL: Snapshot = {
     { id: 'techlead', state: 'rotating', doing: '閒置後換新對話，帶記憶重開', route: XL, context: 58_000, limit: 256_000, today: 35_000 },
   ],
   gates: [
+    { id: 'G0', state: 'pass', name: 'PRD 每條需求都有對應的功能', fill: 'PM 補', confirm: 'crew 對照 PRD 檔案', covered: 14, total: 14, gaps: [], note: 'R-7c21e0 年繳方案用 drop_requirement 移出 v1', checked: '即時' },
     { id: 'G1', state: 'pass', name: '每個功能都有驗收條件', fill: 'PM 補', confirm: 'PM 自查', covered: 4, total: 4, gaps: [], note: 'F-04 年繳方案已移出 v1，不列入計算', checked: '2 分鐘前' },
     { id: 'G2', state: 'pass', name: '每個有介面的功能都有畫面和各種狀態', fill: 'UI/UX 補', confirm: 'PM 確認，再給你確認 UX', covered: 9, total: 9, gaps: [], checked: '2 分鐘前' },
     {
@@ -170,6 +171,7 @@ const NORMAL: Snapshot = {
   brainShare: 0.09,
   alerts: [],
   actions: ['DEC-15 TASK-12 拆成 12a／12b，全端門檻 100K → 80K'],
+  alignment: { covered: 14, total: 14, gaps: 0, added: 0, removed: 0, prdChanged: '2 小時前', checked: '剛剛' },
 }
 
 const ATTENTION: Snapshot = {
@@ -183,9 +185,27 @@ const ATTENTION: Snapshot = {
     i.id === 'TASK-15' ? { ...i, status: 'blocked', note: '測試失敗 2 次：從 L 升級到 XL（Opus・xhigh），等 Tech lead 看 ADR-02' } : i,
   ),
   alerts: [
+    'PRD 剛改了：新增「可以暫停訂閱」，移除「取消要客服確認」；PM 正在同步看板',
     '全端今日佔 46%，快取命中率 52%（喚醒間隔太長，對話整份重寫快取）',
     'TASK-15 升到 XL 後改用 Opus・xhigh，這個項目已用 64K tok',
   ],
+  gates: NORMAL.gates.map(g =>
+    g.id === 'G0'
+      ? {
+          ...g,
+          state: 'active',
+          detail: '14/16',
+          covered: 14,
+          total: 16,
+          note: 'PRD 2 分鐘前改了',
+          gaps: [
+            { id: 'R-3a90f2', title: 'PRD 需求沒有對應的功能：可以暫停訂閱，暫停期間不扣款', status: 'PM 同步中' },
+            { id: 'PRD-005', title: '功能對應的 PRD 需求已經不在 PRD 裡：取消要客服確認', status: 'PM 同步中' },
+          ],
+        }
+      : g,
+  ),
+  alignment: { covered: 14, total: 16, gaps: 2, added: 1, removed: 1, prdChanged: '2 分鐘前', checked: '剛剛' },
 }
 
 const EMPTY: Snapshot = {

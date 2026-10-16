@@ -50,11 +50,27 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 
 **After a restart.** When Claude Code starts on a PRD crew left unfinished on this machine, the roles start again by themselves, and crew says how many questions are waiting for you.
 
+## The board stays on the PRD, live
+
+- **Every requirement is numbered.** crew reads the PRD itself and numbers each requirement (each list item, table row, or paragraph when there are no lists) by its words: `R-3fa2c1`. A requirement keeps its number while other lines change and gets a new one when its own words change.
+- **The PM must cover every requirement.** The PM's features name the requirements they answer. Gate **G0**, checked by code against the PRD file as it stands, needs:
+  - every requirement answered by a feature, or moved out of scope with a reason;
+  - every feature answering a requirement that is still in the PRD.
+
+  The split is not done until G0 passes.
+- **A changed PRD is caught within seconds.** crew checks the PRD file every 10 seconds, with no model call. When it changes:
+  - the pane and the line above the prompt show what changed;
+  - the PM is told which requirements were added and removed;
+  - once the board answers the PRD again, QA writes tests for what is new only.
+
+  It also runs when Claude Code starts, so an edit made while it was closed is caught too.
+- **The pane says how current it is.** It shows how the board stands against the PRD, when the PRD last changed, and when crew last looked.
+
 ## Where things live
 
 | Path | In git | What |
 | --- | --- | --- |
-| `prd-tracker.json` | yes | The board: features, acceptance criteria, test cases, decisions. |
+| `prd-tracker.json` | yes | The board: features, acceptance criteria, test cases, decisions, and (`crew_prd`) the PRD requirements the board last answered. |
 | `.crew/threads/*.jsonl` | yes | Messages between roles, and between you and a role. Every message is appended; the pane shows the latest 50 per item. |
 | `.crew/memory/memories.jsonl` | yes | Long-term memory: decisions (`DEC`), facts (`MEM`), lessons (`LES`), your preferences (`PREF`). |
 | `.crew/memory/consolidated.json` | yes | The days the log has been tidied. |

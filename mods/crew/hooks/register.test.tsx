@@ -243,7 +243,7 @@ describe('/crew demo', () => {
     await ui.unmount()
     const line = await shown(await $.ui.mount(band('terminal')))
     expect(line.indexOf('待你決定 1')).toBeLessThan(line.indexOf('PM'))
-    expect(line).toMatch(/⚠ 2 則提醒/)
+    expect(line).toMatch(/⚠ PRD 對不上 2[\s\S]*⚠ 3 則提醒/)
   })
 
   test('shows one line above the prompt while the preview is on, and none after', async ($, on) => {

@@ -1,5 +1,7 @@
 import { gateG1, gateG4 } from './board'
 import type { GateGap, Tracker } from './board'
+import { gateG0, requirementList } from './prd'
+import type { Requirement } from './prd'
 import { routeFor, tierFor } from './router'
 import type { Route } from './router'
 
@@ -27,10 +29,13 @@ export const INITIAL: FlowState = { stage: 'idle', round: 0, retries: 0 }
 /** The stages in which a role is at work on the PRD: a new start waits, a restart resumes. */
 export const RUNNING: readonly FlowStage[] = ['splitting', 'writing_tests', 'confirming', 'adding_tests']
 
+/** `requirements`: the PRD's requirements as it stands now, which G0 holds the board to; absent, G0 is not checked. */
 export type FlowEvent =
-  | { type: 'start'; prd: { path: string; size: number; text?: string } }
+  | { type: 'start'; prd: { path: string; size: number; text?: string }; requirements?: readonly Requirement[] }
   /** `inbox`: items whose threads hold messages to that role it has not been woken for yet. */
-  | { type: 'role_done'; role: 'pm' | 'qa'; board: Tracker; inbox?: Inbox }
+  | { type: 'role_done'; role: 'pm' | 'qa'; board: Tracker; inbox?: Inbox; requirements?: readonly Requirement[] }
+  /** The PRD file changed: what it added and removed since the board last answered it. */
+  | { type: 'prd_changed'; board: Tracker; requirements: readonly Requirement[]; added: readonly Requirement[]; removed: readonly Requirement[] }
   /** The person answered a question: the flow's own (`escalation`), or one a role asked with ask_person. */
   | { type: 'answered'; question: string; answer: string; role?: 'pm' | 'qa'; escalation?: boolean }
   /** Claude Code started again on a flow the last session left running: its roles are gone. */
@@ -57,13 +62,26 @@ const ids = (gaps: readonly GateGap[]): string => gaps.map(g => g.id).join('、'
 
 const criteriaCount = (board: Tracker): number => gateG4(board).total
 
-const splitPrompt = (path: string): string =>
+const SOURCES =
+  '每個 add_feature 的 sources 寫它對應的 PRD 需求編號（R-…），每一條需求都要有功能對應；不做的需求用 drop_requirement（id 填需求編號，reason 寫理由）。'
+
+const splitPrompt = (path: string, requirements: readonly Requirement[] = []): string =>
   [
     `請把 ${path} 這份 PRD 拆成功能與驗收條件，寫進看板。`,
     '1. 先用 Read 讀 PRD。',
     '2. 用 board_write 一次送出：每個功能一個 add_feature，每個功能底下至少一條 add_criterion。驗收條件要可以驗證、一條只講一件事。',
+    ...(requirements.length > 0 ? [`   ${SOURCES}`, `   crew 從 PRD 找出的需求：\n${requirementList(requirements)}`] : []),
     '3. PRD 沒寫清楚、需要產品決定的地方，用 ask_person 問，不要自己猜。',
     '4. 完成後用一句話回報拆了幾個功能、幾條驗收條件。',
+  ].join('\n')
+
+const syncPrompt = (added: readonly Requirement[], removed: readonly Requirement[], gaps: readonly { id: string; title: string }[]): string =>
+  [
+    'PRD 改了，請讓看板跟上。',
+    ...(added.length > 0 ? [`新增的需求：\n${requirementList(added)}`] : []),
+    ...(removed.length > 0 ? [`移除的需求：\n${requirementList(removed)}`] : []),
+    ...(gaps.length > 0 ? [`看板現在對不上 PRD 的地方：\n${list(gaps)}`] : []),
+    `新需求：加功能和驗收條件（${SOURCES}），或用 link_requirements 掛到既有功能。已移除的需求：對應的功能用 drop_feature，或用 link_requirements 改掛到其他需求。做完用一句話回報。`,
   ].join('\n')
 
 const testsPrompt = (count: number): string =>
@@ -107,13 +125,41 @@ const escalate = (state: FlowState, question: string, item: string | undefined, 
   actions: [{ type: 'ask_person', question, ...(item === undefined ? {} : { item }) }],
 })
 
-const afterSplit = (state: FlowState, board: Tracker): StepResult => {
+const afterSplit = (state: FlowState, board: Tracker, requirements?: readonly Requirement[]): StepResult => {
   const g1 = gateG1(board)
-  if (g1.total > 0 && g1.gaps.length === 0) {
+  const g0 = requirements === undefined ? { gaps: [] } : gateG0(board, requirements)
+  if (g1.total > 0 && g1.gaps.length === 0 && g0.gaps.length === 0) {
+    const g4 = gateG4(board)
+    // A board QA has tested before (the PRD changed) needs tests for what is new only.
+    if (g4.covered > 0) {
+      if (g4.gaps.length === 0) return finish({ ...state, retries: 0 }, board)
+      return {
+        state: { ...state, stage: 'adding_tests', retries: 0 },
+        actions: [{ type: 'message', role: 'qa', item: g4.gaps[0]?.id, text: newCriteria(g4.gaps), route: routeFor('qa', tierFor({ kind: 'add_tests', size: g4.gaps.length })) }],
+      }
+    }
     const count = criteriaCount(board)
     return {
       state: { ...state, stage: 'writing_tests' },
       actions: [{ type: 'spawn', role: 'qa', route: routeFor('qa', tierFor({ kind: 'write_tests', size: count })), prompt: testsPrompt(count) }],
+    }
+  }
+  if (g1.total > 0 && g1.gaps.length === 0) {
+    // Every feature has criteria, but the board does not answer the PRD yet.
+    if (state.retries >= MAX_RETRIES - 1) {
+      return escalate({ ...state, retries: state.retries + 1 }, `看板還對不上 PRD：${ids(g0.gaps)}。要怎麼處理？`, g0.gaps[0]?.id, 'splitting')
+    }
+    return {
+      state: { ...state, retries: state.retries + 1 },
+      actions: [
+        {
+          type: 'message',
+          role: 'pm',
+          item: g0.gaps[0]?.id,
+          text: `看板還對不上 PRD，請補上：\n${list(g0.gaps)}\n${SOURCES} 已有的功能可以用 link_requirements 掛上需求編號。`,
+          route: routeFor('pm', tierFor({ kind: 'confirm_gaps', size: g0.gaps.length })),
+        },
+      ],
     }
   }
   if (state.retries >= MAX_RETRIES - 1) {
@@ -197,6 +243,9 @@ const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered'
   }
 }
 
+const newCriteria = (gaps: readonly GateGap[]): string =>
+  [`PRD 更新後，以下 ${gaps.length} 條驗收條件還沒有 test case，請補上（先用 board_read 看已經寫好的，不要重複）：`, list(gaps)].join('\n')
+
 const resumeSplit = (path: string): string =>
   `${splitPrompt(path)}\n\nClaude Code 重開過，這份 PRD 之前拆到一半：先用 board_read 看看板，已經在看板上的不要重複，把還沒拆的拆完；已經拆完就直接回報。`
 
@@ -235,6 +284,25 @@ const resume = (state: FlowState, event: Extract<FlowEvent, { type: 'resume' }>)
   }
 }
 
+/**
+ * The PRD file changed. A finished board goes back to the PM to sync, and the
+ * flow runs again from the split; a running flow keeps its stage and the PM is
+ * told; before any PRD was started there is nothing to sync.
+ */
+const prdChanged = (state: FlowState, event: Extract<FlowEvent, { type: 'prd_changed' }>): StepResult => {
+  if (state.stage === 'idle') return { state, actions: [] }
+  const gaps = gateG0(event.board, event.requirements).gaps
+  const message: FlowAction = {
+    type: 'message',
+    role: 'pm',
+    item: event.added[0]?.id ?? gaps[0]?.id ?? 'crew',
+    text: syncPrompt(event.added, event.removed, gaps),
+    route: routeFor('pm', tierFor({ kind: 'confirm_gaps', size: Math.max(1, event.added.length + event.removed.length) })),
+  }
+  if (state.stage === 'done') return { state: { stage: 'splitting', round: 0, retries: 0 }, actions: [message] }
+  return { state, actions: [message] }
+}
+
 /** One event in, the next state and what to do out. */
 export const step = (state: FlowState, event: FlowEvent): StepResult => {
   if (event.type === 'answered') return answered(state, event)
@@ -246,12 +314,13 @@ export const step = (state: FlowState, event: FlowEvent): StepResult => {
     const tier = tierFor({ kind: 'split_prd', size: event.prd.size, ...(event.prd.text === undefined ? {} : { text: event.prd.text }) })
     return {
       state: { stage: 'splitting', round: 0, retries: 0 },
-      actions: [{ type: 'spawn', role: 'pm', route: routeFor('pm', tier), prompt: splitPrompt(event.prd.path) }],
+      actions: [{ type: 'spawn', role: 'pm', route: routeFor('pm', tier), prompt: splitPrompt(event.prd.path, event.requirements) }],
     }
   }
+  if (event.type === 'prd_changed') return prdChanged(state, event)
   const { role, board } = event
   const inbox = event.inbox ?? {}
-  if (role === 'pm' && state.stage === 'splitting') return afterSplit(state, board)
+  if (role === 'pm' && state.stage === 'splitting') return afterSplit(state, board, event.requirements)
   if (role === 'qa' && (state.stage === 'writing_tests' || state.stage === 'adding_tests')) return afterTests(state, board, inbox)
   if (role === 'pm' && state.stage === 'confirming') return afterConfirm(state, board, inbox)
   // A finished board can open again: the PM adds criteria after an answer, or one role writes to the other.

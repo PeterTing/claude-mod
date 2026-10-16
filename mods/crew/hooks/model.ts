@@ -165,6 +165,8 @@ export type Snapshot = {
   actions: readonly string[]
   /** Memories attached to starts and wakes: how many times, and their average size. */
   injected?: { count: number; average: number }
+  /** How the board stands against the PRD as it is now, and when crew last looked. */
+  alignment?: { covered: number; total: number; gaps: number; added: number; removed: number; prdChanged: string; checked: string }
   /** Tokens the small model spent tidying memory today. */
   chores?: number
 }

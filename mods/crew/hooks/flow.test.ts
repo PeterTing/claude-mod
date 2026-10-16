@@ -3,6 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { applyOps, newTracker } from './board'
 import type { Op, Tracker } from './board'
 import { INITIAL, step } from './flow'
+import { requirementsOf } from './prd'
 import type { FlowEvent, FlowState } from './flow'
 
 const ctx = (by: string) => ({ by, today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } })
@@ -311,5 +312,60 @@ describe('resume', () => {
     for (const stage of ['idle', 'done', 'escalated'] as const) {
       expect(resume(at(stage), board(SPLIT)).actions).toEqual([])
     }
+  })
+})
+
+describe('the PRD as the flow holds the board to it', () => {
+  const reqs = requirementsOf('## 方案\n- 可以選月繳方案\n- 可以看到價格')
+  const [r1, r2] = reqs.map(r => r.id)
+  const START_WITH: FlowEvent = { type: 'start', prd: { path: 'docs/PRD.md', size: 600, text: '會員訂閱' }, requirements: reqs }
+  const tied: readonly Op[] = [
+    { op: 'add_feature', title: '方案選擇', summary: '', sources: [r1 ?? '', r2 ?? ''] },
+    { op: 'add_criterion', feature: 'PRD-001', text: '可以選月繳方案' },
+    { op: 'add_criterion', feature: 'PRD-001', text: '可以看到價格' },
+  ]
+
+  test('gives the PM the PRD’s requirements with their ids to split', () => {
+    const { actions } = run([START_WITH])
+    expect((actions[0] as { prompt: string }).prompt).toMatch(new RegExp(`sources[\\s\\S]*${r1}（方案）可以選月繳方案`))
+  })
+
+  test('sends the PM back to requirements no feature covers before QA starts', () => {
+    const half: readonly Op[] = [{ op: 'add_feature', title: '方案選擇', summary: '', sources: [r1 ?? ''] }, { op: 'add_criterion', feature: 'PRD-001', text: '可以選月繳方案' }]
+    const { state, actions } = run([START_WITH, { type: 'role_done', role: 'pm', board: board(half), requirements: reqs }])
+    expect(state.stage).toBe('splitting')
+    expect(actions.at(-1)).toMatchObject({ type: 'message', role: 'pm', item: r2 })
+    expect((actions.at(-1) as { text: string }).text).toMatch(/PRD 需求沒有對應的功能：可以看到價格/)
+  })
+
+  test('hands over to QA once the board answers the whole PRD', () => {
+    const { state } = run([START_WITH, { type: 'role_done', role: 'pm', board: board(tied), requirements: reqs }])
+    expect(state.stage).toBe('writing_tests')
+  })
+
+  test('takes a finished board back to the PM when the PRD changes, then sends QA only what is new', () => {
+    const covered = board(tied, [tc(['AC-001', 'AC-002'])])
+    const now = requirementsOf('## 方案\n- 可以選月繳方案\n- 可以看到價格\n- 可以改方案')
+    const added = now.filter(r => !reqs.some(x => x.id === r.id))
+    const done: FlowState = { stage: 'done', round: 1, retries: 0 }
+    const changed = step(done, { type: 'prd_changed', board: covered, requirements: now, added, removed: [] })
+    expect(changed.state.stage).toBe('splitting')
+    expect((changed.actions[0] as { text: string }).text).toMatch(/PRD 改了[\s\S]*新增[\s\S]*可以改方案/)
+    const synced = board([...tied, { op: 'add_criterion', feature: 'PRD-001', text: '可以改方案' }, { op: 'link_requirements', feature: 'PRD-001', requirements: added.map(r => r.id) }], [tc(['AC-001', 'AC-002'])])
+    const after = step(changed.state, { type: 'role_done', role: 'pm', board: synced, requirements: now })
+    // QA, who tested the board before, gets the new criterion only.
+    expect(after.state.stage).toBe('adding_tests')
+    expect(after.actions[0]).toMatchObject({ type: 'message', role: 'qa', item: 'AC-003' })
+  })
+
+  test('tells a PM at work about a PRD change without moving the flow', () => {
+    const changed = step({ stage: 'writing_tests', round: 0, retries: 0 }, { type: 'prd_changed', board: board(tied), requirements: reqs, added: [], removed: [{ id: 'R-000000', text: '舊需求', section: '' }] })
+    expect(changed.state.stage).toBe('writing_tests')
+    expect(changed.actions[0]).toMatchObject({ type: 'message', role: 'pm' })
+    expect((changed.actions[0] as { text: string }).text).toMatch(/移除[\s\S]*舊需求/)
+  })
+
+  test('does nothing for a PRD change before any PRD was started', () => {
+    expect(step(INITIAL, { type: 'prd_changed', board: board(tied), requirements: reqs, added: [], removed: [] }).actions).toEqual([])
   })
 })

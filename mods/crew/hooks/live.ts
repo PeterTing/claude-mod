@@ -3,6 +3,8 @@ import { criteriaOf, gateG1, gateG4 } from './board'
 import type { GateResult, Tracker } from './board'
 import { estimateTokens } from './memory'
 import type { MemoryEntry } from './memory'
+import { gateG0 } from './prd'
+import type { Requirement } from './prd'
 import { ROLE_NAMES } from './model'
 import type { Feature, Gate, Item, RoleId, RoleRow, Snapshot, Stage, Tier, UsageRow } from './model'
 
@@ -29,6 +31,7 @@ export const emptyLive = (): CrewLive => ({
   retired: [],
   usageDay: '',
   pending: {},
+  signals: { prdVersion: '', prdChangedAt: 0, checkedAt: 0, added: 0, removed: 0 },
 })
 
 const DAY = 86_400_000
@@ -98,7 +101,21 @@ const name = (who: string): string => (who === 'crew' ? 'crew' : (ROLE_NAMES[who
 const MEMORY_ROWS = 40
 
 /** Everything the pane draws, from the board and memories on disk and the team this session runs. */
-export const snapshotOf = ({ board, live, now, memories = [] }: { board: Tracker | null; live: CrewLive; now: number; memories?: readonly MemoryEntry[] }): Snapshot => {
+export const snapshotOf = ({
+  board,
+  live,
+  now,
+  memories = [],
+  requirements,
+}: {
+  board: Tracker | null
+  live: CrewLive
+  now: number
+  memories?: readonly MemoryEntry[]
+  /** The PRD's requirements as the file stands now; absent, G0 is not shown. */
+  requirements?: readonly Requirement[]
+}): Snapshot => {
+  const g0 = board === null || requirements === undefined ? undefined : gateG0(board, requirements)
   const g1 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG1(board)
   const g4 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG4(board)
   const stage = live.flow.stage
@@ -123,8 +140,8 @@ export const snapshotOf = ({ board, live, now, memories = [] }: { board: Tracker
     board === null
       ? null
       : {
-          done: g1.covered + g4.covered,
-          total: g1.total + g4.total,
+          done: (g0?.covered ?? 0) + g1.covered + g4.covered,
+          total: (g0?.total ?? 0) + g1.total + g4.total,
           stages: [
             stageOf('拆解', g1, stage === 'splitting'),
             pendingStage('設計'),
@@ -200,6 +217,7 @@ export const snapshotOf = ({ board, live, now, memories = [] }: { board: Tracker
       board === null
         ? []
         : [
+            ...(g0 === undefined ? [] : [gate('G0', g0, stage === 'splitting', { name: 'PRD 每條需求都有對應的功能', fill: 'PM 補', confirm: 'crew 對照 PRD 檔案' }, live.threads)]),
             gate('G1', g1, stage === 'splitting', { name: '每個功能都有驗收條件', fill: 'PM 補', confirm: 'PM 自查' }, live.threads),
             later('G2', '每個有介面的功能都有畫面和各種狀態'),
             later('G3', '每個功能都拆好 task'),
@@ -236,5 +254,18 @@ export const snapshotOf = ({ board, live, now, memories = [] }: { board: Tracker
     actions: [],
     injected: { count: live.injected.count, average: live.injected.count === 0 ? 0 : Math.round(live.injected.tokens / live.injected.count) },
     chores: total(live.usage.memory),
+    ...(g0 === undefined
+      ? {}
+      : {
+          alignment: {
+            covered: g0.covered,
+            total: g0.total,
+            gaps: g0.gaps.length,
+            added: live.signals.added,
+            removed: live.signals.removed,
+            prdChanged: live.signals.prdChangedAt > 0 ? ageOf(live.signals.prdChangedAt, now) : '—',
+            checked: live.signals.checkedAt > 0 ? ageOf(live.signals.checkedAt, now) : '—',
+          },
+        }),
   }
 }
