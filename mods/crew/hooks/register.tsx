@@ -6,7 +6,7 @@ import { applyOps, criteriaOf, gateG1, gateG4, newTracker, parseOps, prefixesFro
 import type { Tracker } from './board'
 import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './consolidate'
 import { DEMO } from './demo'
-import { RUNNING, step } from './flow'
+import { answeredOf, RUNNING, step } from './flow'
 import type { FlowAction, FlowEvent } from './flow'
 import { dayOf, emptyLive, snapshotOf } from './live'
 import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, redact, searchMemories, serializeMemories } from './memory'
@@ -330,6 +330,10 @@ const relativeOf = (path: string): string => {
   return full.startsWith(`${files.root}/`) ? full.slice(files.root.length + 1) : path
 }
 
+/** A file crew may take for a PRD by its name: Markdown or text, outside hidden folders such as .git. Its text goes on the board. */
+const prdName = (full: string): boolean =>
+  full.startsWith(`${files.root}/`) && /\.(?:md|markdown|txt)$/i.test(full) && !full.slice(files.root.length + 1).split('/').some(part => part.startsWith('.'))
+
 async function prdFile($: any, path: string): Promise<{ full: string } | { error: string }> {
   const full = fullPathOf(path)
   if (!full.startsWith(`${files.root}/`)) return { error: `PRD 要在這個 repo 裡（${files.root}）。` }
@@ -341,6 +345,7 @@ async function prdFile($: any, path: string): Promise<{ full: string } | { error
   }
   if (!(await staysIn($, full))) return { error: `PRD 要在這個 repo 裡（${files.root}）：${path} 是連結，或指到 repo 外。` }
   if (stat.kind !== 'file') return { error: `${path} 不是檔案。` }
+  if (!prdName(full)) return { error: `PRD 要是 .md、.markdown 或 .txt 檔，而且不在隱藏資料夾裡：${path}` }
   return { full }
 }
 
@@ -992,7 +997,9 @@ async function prdView($: any): Promise<PrdView | undefined> {
   const kept = (await loadBoard($)) as { crew_prd?: { path?: unknown } } | null
   if (!starting.busy && view.problem === undefined && typeof kept?.crew_prd?.path === 'string' && relativeOf(kept.crew_prd.path) !== path) {
     const theirs = cut(squeeze(kept.crew_prd.path), 80)
-    view = { problem: `看板對準的是另一份 PRD「${theirs}」，crew 追的是「${path}」：要跟看板走用 /crew start ${theirs}，要讓看板改對準這一份用 /crew start ${path}` }
+    // Following the board is suggested only for a path crew could start: the board is anyone's to commit.
+    const follow = prdName(fullPathOf(theirs)) && !/\s/.test(theirs) ? `要跟看板走用 /crew start ${theirs}，` : ''
+    view = { problem: `看板對準的是另一份 PRD${quoted(theirs)}，crew 追的是「${path}」：${follow}要讓看板改對準這一份用 /crew start ${path}` }
   }
   if (view.problem !== undefined) warnOnce($, view.problem)
   return view
@@ -1084,6 +1091,8 @@ async function watch($: any) {
 const NO_DRIFT = { added: [] as Requirement[], removed: [] as Requirement[] }
 
 async function look($: any) {
+  // A /crew start is moving the board to a PRD: its own look follows.
+  if (starting.busy) return
   const l = await read($, live)
   if (l.prdPath === null) return
   const path = relativeOf(l.prdPath)
@@ -1187,7 +1196,12 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     const prd = await prdFile($, typed)
     if ('error' in prd) return prd.error
     // The PRD is known by where it really is: one file reached through a link in the repo is one PRD.
-    const real = ((await $.fs.stat(prd.full, { resolve: true })) as { realPath?: string }).realPath
+    let real: string | undefined
+    try {
+      real = ((await $.fs.stat(prd.full, { resolve: true })) as { realPath?: string }).realPath
+    } catch {
+      return `找不到 ${typed}。`
+    }
     const root = await realRoot($)
     const path = real !== undefined && real.startsWith(`${root}/`) ? real.slice(root.length + 1) : relativeOf(typed)
     const previous = (await read($, live)).prdPath
@@ -1196,28 +1210,32 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     if (requirements.length === 0) return `${path} 裡找不到需求：crew 把清單項目、表格的資料列，以及沒有清單的小節裡的段落當成需求。`
     if (requirements.length > MAX_REQUIREMENTS) return `${path} 有 ${requirements.length} 條需求，crew 一次最多追 ${MAX_REQUIREMENTS} 條；請拆成幾份 PRD。`
     const today = dayOf(await $.clock.now())
+    // Until the board and the session both name this PRD, no look runs and no view calls them apart.
     starting.busy = true
     try {
-      // The PRD's requirements crew holds the board to: what a later change of the PRD is measured against.
-      // The PRD before it is kept with its requirement ids, so its features stay its own.
-      await changeBoard($, async board => {
-        const base = board ?? newTracker(files.root.split('/').pop() ?? 'project')
-        const before = earlierFor(base, path, previous === null ? undefined : relativeOf(previous))
-        return { board: { ...base, crew_prd: { path, requirements: baselineFor(requirements), synced_at: today, ...before } }, value: undefined }
-      })
-    } catch (err) {
+      try {
+        // The PRD's requirements crew holds the board to: what a later change of the PRD is measured against.
+        // The PRD before it is kept with its requirement ids, so its features stay its own.
+        await changeBoard($, async board => {
+          const base = board ?? newTracker(files.root.split('/').pop() ?? 'project')
+          const before = earlierFor(base, path, previous === null ? undefined : relativeOf(previous))
+          return { board: { ...base, crew_prd: { path, requirements: baselineFor(requirements), synced_at: today, ...before } }, value: undefined }
+        })
+      } catch (err) {
+        if (err instanceof BoardRefused) return `crew 沒有開始：${err.message}`
+        throw err
+      }
+      const version = await versionOf($, prd.full)
+      await update($, live, l => ({ ...l, signals: { ...l.signals, prdVersion: version, added: 0, removed: 0 } }))
+      await update($, isDemo, () => false)
+      await update($, live, l => ({ ...l, prdPath: path, lead: by }))
+    } finally {
       starting.busy = false
-      if (err instanceof BoardRefused) return `crew 沒有開始：${err.message}`
-      throw err
     }
-    const version = await versionOf($, prd.full)
-    await update($, live, l => ({ ...l, signals: { ...l.signals, prdVersion: version, added: 0, removed: 0 } }))
-    await update($, isDemo, () => false)
-    await update($, live, l => ({ ...l, prdPath: path, lead: by }))
-    starting.busy = false
     await note($, { kind: 'prd', path, size: text.length, by })
     const board = await loadBoard($)
-    const checking = board !== null && board.prd_items.some(i => i.crew_dropped === undefined && refsOf(i).some(r => requirements.some(q => q.id === r)))
+    const answered = board === null ? 0 : answeredOf(board, requirements).length
+    const checking = answered > 0 && answered * 2 >= requirements.length
     await feed($, { type: 'start', prd: { path, size: text.length, text: text.slice(0, 4_000) }, requirements, ...(board === null ? {} : { board }) })
     // The pane says how the board stands against the PRD, and when crew looked, from the first moment.
     await update($, live, l => ({ ...l, signals: { ...l.signals, checkedAt: 0 } }))
@@ -1370,7 +1388,11 @@ async function roleEnded($: any, e: any, next: any, role: CrewRole, before: Crew
   const flowWork = before.roles[role].run !== 'person' || !RUNNING.includes(l.flow.stage)
   const board = await loadBoard($)
   const requirements = (await prdView($))?.requirements
-  if (board !== null && flowWork) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l), ...(requirements === undefined ? {} : { requirements }) })
+  // Whether QA has a run of the flow's under way now: a PM sync then waits for it rather than starting another.
+  // A run answering the person is not the flow's: its end does not reach the flow, and work for QA waits behind it.
+  const qa = (await read($, live)).roles.qa
+  const qaWorking = role === 'pm' && qa.state === 'working' && qa.run !== 'person'
+  if (board !== null && flowWork) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l), ...(requirements === undefined ? {} : { requirements }), ...(qaWorking ? { qaWorking } : {}) })
   else if (board === null && boardProblem() !== undefined) $.ui.toast(`crew：流程停在這裡。${boardProblem() ?? ''}`)
   // Work the flow gave the role while it was busy, now that it is free.
   const waiting = (await read($, live)).pending[role] ?? []

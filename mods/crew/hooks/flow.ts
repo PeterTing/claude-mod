@@ -24,8 +24,8 @@ export type FlowState = {
   aligning?: number
   /** The PRD change the PM was last told about, so a change is told once. */
   synced?: string
-  /** QA was writing test cases when the PRD changed: the flow waits for that run instead of starting another. */
-  qaBusy?: boolean
+  /** The PM synced while QA was still at work: the flow waits for QA's run to end, then gives it what is new. */
+  awaitingQa?: boolean
   /** Where an escalated flow picks up once the person answers. */
   resumeAt?: 'splitting' | 'confirming'
 }
@@ -40,7 +40,8 @@ export type FlowEvent =
   /** `board`: the board as it stands; one that already answers this PRD is checked, not split again. */
   | { type: 'start'; prd: { path: string; size: number; text?: string }; requirements?: readonly Requirement[]; board?: Tracker }
   /** `inbox`: items whose threads hold messages to that role it has not been woken for yet. */
-  | { type: 'role_done'; role: 'pm' | 'qa'; board: Tracker; inbox?: Inbox; requirements?: readonly Requirement[] }
+  /** `qaWorking`: QA has a run under way right now, as crew sees its agents. */
+  | { type: 'role_done'; role: 'pm' | 'qa'; board: Tracker; inbox?: Inbox; requirements?: readonly Requirement[]; qaWorking?: boolean }
   /**
    * The PRD file changed: what it added and removed since the board last
    * answered it. `key` names the change, told to the PM once; `unlinked`: the
@@ -84,12 +85,13 @@ const criteriaCount = (board: Tracker): number => gateG4(board).total
 const SOURCES =
   '每個 add_feature 的 sources 寫它對應的 PRD 需求編號（R-…），每一條需求都要有功能對應；不做的需求用 drop_requirement（id 填需求編號，reason 寫理由）。'
 
-const splitPrompt = (path: string, requirements: readonly Requirement[] = []): string =>
+const splitPrompt = (path: string, requirements: readonly Requirement[] = [], answered: readonly string[] = []): string =>
   [
     `請把 ${path} 這份 PRD 拆成功能與驗收條件，寫進看板。`,
     '1. 先用 Read 讀 PRD。',
     '2. 用 board_write 一次送出：每個功能一個 add_feature，每個功能底下至少一條 add_criterion。驗收條件要可以驗證、一條只講一件事。',
     ...(requirements.length > 0 ? [`   ${SOURCES}`, `   crew 從 PRD 找出的需求：\n${requirementList(requirements)}`] : []),
+    ...(answered.length > 0 ? [`   看板上已經有功能對應這些需求，不用重複：${answered.join('、')}`] : []),
     '3. PRD 沒寫清楚、需要產品決定的地方，用 ask_person 問，不要自己猜。',
     '4. 完成後用一句話回報拆了幾個功能、幾條驗收條件。',
   ].join('\n')
@@ -175,12 +177,12 @@ const escalate = (state: FlowState, question: string, item: string | undefined, 
   actions: [{ type: 'ask_person', question, ...(item === undefined ? {} : { item }) }],
 })
 
-const afterSplit = (state: FlowState, board: Tracker, requirements?: readonly Requirement[]): StepResult => {
+const afterSplit = (state: FlowState, board: Tracker, requirements?: readonly Requirement[], qaWorking = false): StepResult => {
   const g1 = gateG1(board)
   const g0 = requirements === undefined ? { gaps: [] } : gateG0(board, requirements)
   if (g1.total > 0 && g1.gaps.length === 0 && g0.gaps.length === 0) {
     // QA is still writing the test cases it was given: its run ends first, and then it gets what is new.
-    if (state.qaBusy === true) return { state: { ...state, stage: 'adding_tests', retries: 0, aligning: 0 }, actions: [] }
+    if (qaWorking) return { state: { ...state, stage: 'adding_tests', retries: 0, aligning: 0, awaitingQa: true }, actions: [] }
     const g4 = gateG4(board)
     // A board QA has tested before needs tests for what is new only.
     if (g4.covered > 0) {
@@ -217,8 +219,8 @@ const afterTests = (state: FlowState, board: Tracker, inbox: Inbox = {}, require
   const g4 = gateG4(board)
   const forPm = inbox.pm ?? []
   // A run QA started before the PRD changed: what the PM added since is QA's to test, not the PM's to explain.
-  if (state.qaBusy === true) {
-    const { qaBusy: _, ...rest } = state
+  if (state.awaitingQa === true) {
+    const { awaitingQa: _, ...rest } = state
     if (g4.gaps.length > 0) {
       return {
         state: { ...rest, stage: 'adding_tests' },
@@ -297,7 +299,9 @@ const resumeSplit = (path: string, requirements: readonly Requirement[] = []): s
   `${splitPrompt(path, requirements)}\n\nClaude Code 重開過，這份 PRD 之前拆到一半：先用 board_read 看看板，已經在看板上的不要重複，把還沒拆的拆完；已經拆完就直接回報。`
 
 /** Picks up a flow whose roles went away with the last session, from what the board shows. */
-const resume = (state: FlowState, event: Extract<FlowEvent, { type: 'resume' }>): StepResult => {
+const resume = (was: FlowState, event: Extract<FlowEvent, { type: 'resume' }>): StepResult => {
+  // A QA run the flow waited for went with the last session: QA is asked afresh below.
+  const { awaitingQa: _, ...state } = was
   const g4 = gateG4(event.board)
   switch (state.stage) {
     case 'splitting':
@@ -349,15 +353,13 @@ const prdChanged = (state: FlowState, event: Extract<FlowEvent, { type: 'prd_cha
     route: routeFor('pm', tierFor({ kind: 'confirm_gaps', size: Math.max(1, event.added.length + event.removed.length) })),
   }
   if (state.stage === 'escalated') return { state: { ...state, synced: event.key }, actions: [message] }
-  // QA mid-run keeps working; the flow takes its run's end in, once the PM has synced or before.
-  const qaBusy = state.stage === 'writing_tests' || state.stage === 'adding_tests' || (state.stage === 'splitting' && state.qaBusy === true)
-  return { state: { stage: 'splitting', round: 0, retries: 0, aligning: 0, synced: event.key, ...(qaBusy ? { qaBusy: true } : {}) }, actions: [message] }
+  return { state: { stage: 'splitting', round: 0, retries: 0, aligning: 0, synced: event.key }, actions: [message] }
 }
 
-/** Whether any feature in scope on the board answers one of the PRD's requirements. */
-const answersAny = (board: Tracker, requirements: readonly Requirement[]): boolean => {
-  const ids = new Set(requirements.map(r => r.id))
-  return board.prd_items.some(i => i.crew_dropped === undefined && refsOf(i).some(r => ids.has(r)))
+/** The PRD's requirements some feature in scope on the board already answers. */
+export const answeredOf = (board: Tracker, requirements: readonly Requirement[]): string[] => {
+  const linked = new Set(board.prd_items.filter(i => i.crew_dropped === undefined).flatMap(refsOf))
+  return requirements.filter(r => linked.has(r.id)).map(r => r.id)
 }
 
 /** One event in, the next state and what to do out. */
@@ -368,24 +370,23 @@ export const step = (state: FlowState, event: FlowEvent): StepResult => {
     if (RUNNING.includes(state.stage)) {
       return { state, actions: [{ type: 'status', text: 'PM＋QA 正在進行，等這一輪完成再開始新的。' }] }
     }
-    // A board that already answers this PRD is checked and brought up to date, not split again.
-    const answers = event.board !== undefined && event.requirements !== undefined && answersAny(event.board, event.requirements)
-    if (answers && event.board !== undefined) return afterSplit({ stage: 'splitting', round: 0, retries: 0 }, event.board, event.requirements)
+    // A board that already answers most of this PRD is checked and brought up to date, not split again;
+    // that check is not one of the PM's retries.
+    const answered = event.board === undefined || event.requirements === undefined ? [] : answeredOf(event.board, event.requirements)
+    if (event.board !== undefined && event.requirements !== undefined && answered.length > 0 && answered.length * 2 >= event.requirements.length) {
+      const r = afterSplit({ stage: 'splitting', round: 0, retries: 0 }, event.board, event.requirements)
+      return r.state.stage === 'splitting' ? { ...r, state: { ...r.state, aligning: 0 } } : r
+    }
     const tier = tierFor({ kind: 'split_prd', size: event.prd.size, ...(event.prd.text === undefined ? {} : { text: event.prd.text }) })
     return {
       state: { stage: 'splitting', round: 0, retries: 0 },
-      actions: [{ type: 'spawn', role: 'pm', route: routeFor('pm', tier), prompt: splitPrompt(event.prd.path, event.requirements) }],
+      actions: [{ type: 'spawn', role: 'pm', route: routeFor('pm', tier), prompt: splitPrompt(event.prd.path, event.requirements, answered) }],
     }
   }
   if (event.type === 'prd_changed') return prdChanged(state, event)
   const { role, board } = event
   const inbox = event.inbox ?? {}
-  // QA's run that the PRD change caught ended before the PM synced: QA is free again.
-  if (role === 'qa' && state.stage === 'splitting' && state.qaBusy === true) {
-    const { qaBusy: _, ...rest } = state
-    return { state: rest, actions: [] }
-  }
-  if (role === 'pm' && state.stage === 'splitting') return afterSplit(state, board, event.requirements)
+  if (role === 'pm' && state.stage === 'splitting') return afterSplit(state, board, event.requirements, event.qaWorking === true)
   const { requirements } = event
   if (role === 'qa' && (state.stage === 'writing_tests' || state.stage === 'adding_tests')) return afterTests(state, board, inbox, requirements)
   if (role === 'pm' && state.stage === 'confirming') return afterConfirm(state, board, inbox, requirements)

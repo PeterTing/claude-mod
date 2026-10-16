@@ -41,8 +41,9 @@ const FRONT_FIELD = /^[\w-]+\s*:/
 /** A section that records the PRD's own history: its dated or versioned entries are not what to build. */
 const HISTORY = /(修訂|版本|變更|更新)(紀錄|記錄|歷程|歷史)|revision\s+history|change\s?log/i
 const DATED = /^(?:\d{4}[-/.年]\d{1,2}|v?\d+(?:\.\d+)+(?!\S))/i
-/** Sections that give context, not requirements. */
-const CONTEXT = /^(?:背景|動機|參考|附錄|名詞|概述|簡介|前言|background|motivation|references?|appendix|glossary|overview|introduction)/i
+/** Sections that give context, not requirements: the whole title, numbered or not (一、背景, 1. Background, 背景說明). */
+const CONTEXT =
+  /^(?:(?:\d+(?:\.\d+)*|[一二三四五六七八九十]+)[、.．)）]?\s*)?(?:背景|動機|參考資料|參考|附錄|名詞解釋|名詞定義|概述|簡介|前言|background|motivation|references?|appendix|glossary|overview|introduction)(?:說明|介紹|資料)?$/i
 /** A line that is only an image, a link or an address: no requirement in its own words. */
 const BARE = /^(?:!?\[[^\]]*\]\([^)\s]*\)|<?https?:\/\/\S+?>?)$/
 /** How much of a requirement crew keeps: its id is taken from all of it. */

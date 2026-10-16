@@ -153,6 +153,24 @@ describe('requirementsOf', () => {
     expect(requirementsOf(md).map(r => r.text)).toEqual(['使用者可以選月繳方案'])
   })
 
+  test('skips a context section by its whole title, numbered or not, and keeps a feature that only starts like one', () => {
+    const md = [
+      '## 一、背景',
+      '使用者反映離開 App 就停止播放。',
+      '## 1. Background',
+      'Users asked for it.',
+      '## 背景說明',
+      '這是說明。',
+      '## 背景同步',
+      '- 歌單在背景自動同步到雲端',
+      '## Background refresh',
+      '- The app refreshes playlists every hour',
+      '### 3.1 背景播放',
+      '- 離開 App 後繼續播放',
+    ].join('\n')
+    expect(requirementsOf(md).map(r => r.text)).toEqual(['歌單在背景自動同步到雲端', 'The app refreshes playlists every hour', '離開 App 後繼續播放'])
+  })
+
   test('finds the real requirements of a realistic PRD, and few others', () => {
     const md = [
       '---',

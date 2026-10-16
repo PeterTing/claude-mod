@@ -363,8 +363,7 @@ describe('the PRD as the flow holds the board to it', () => {
       { stage: 'writing_tests', round: 2, retries: 1, aligning: 1 },
       { type: 'prd_changed', board: board(tied), requirements: reqs, added: [], removed: [{ id: 'R-000000', text: '舊需求', section: '' }], key: 'k' },
     )
-    // QA was at work: the flow waits for its run instead of starting another.
-    expect(changed.state).toEqual({ stage: 'splitting', round: 0, retries: 0, aligning: 0, synced: 'k', qaBusy: true })
+    expect(changed.state).toEqual({ stage: 'splitting', round: 0, retries: 0, aligning: 0, synced: 'k' })
     expect(changed.actions[0]).toMatchObject({ type: 'message', role: 'pm' })
     expect((changed.actions[0] as { text: string }).text).toMatch(/移除[\s\S]*舊需求/)
     // QA finishing meanwhile does not move the flow: the PM's sync comes first.
@@ -490,8 +489,9 @@ describe('the PRD as the flow holds the board to it', () => {
     let s: FlowState = { stage: 'writing_tests', round: 0, retries: 0 }
     s = step(s, { type: 'prd_changed', board: board(tied), requirements: now, added, removed: [], key: 'k' }).state
     // The PM syncs while QA is still writing its first test cases: no second QA.
-    const afterPm = step(s, { type: 'role_done', role: 'pm', board: board(synced), requirements: now })
+    const afterPm = step(s, { type: 'role_done', role: 'pm', board: board(synced), requirements: now, qaWorking: true })
     expect(afterPm.actions).toEqual([])
+    expect(afterPm.state.awaitingQa).toBe(true)
     // QA finishes the criteria it had: it is asked for the new one, and the PM is asked nothing.
     const afterQa = step(afterPm.state, { type: 'role_done', role: 'qa', board: board(synced, [tc(['AC-001', 'AC-002'])]), requirements: now })
     expect(afterQa.state.stage).toBe('adding_tests')
@@ -506,9 +506,37 @@ describe('the PRD as the flow holds the board to it', () => {
     let s: FlowState = { stage: 'writing_tests', round: 0, retries: 0 }
     s = step(s, { type: 'prd_changed', board: board(tied), requirements: now, added, removed: [], key: 'k' }).state
     s = step(s, { type: 'role_done', role: 'qa', board: board(tied, [tc(['AC-001', 'AC-002'])]), requirements: now }).state
-    const afterPm = step(s, { type: 'role_done', role: 'pm', board: board(synced, [tc(['AC-001', 'AC-002'])]), requirements: now })
+    const afterPm = step(s, { type: 'role_done', role: 'pm', board: board(synced, [tc(['AC-001', 'AC-002'])]), requirements: now, qaWorking: false })
     expect(afterPm.state.stage).toBe('adding_tests')
     expect(afterPm.actions[0]).toMatchObject({ type: 'message', role: 'qa', item: 'AC-003' })
+  })
+
+  test('does not wait for a QA run that is gone: a restart sends QA what is new', () => {
+    const now = requirementsOf('## 方案\n- 可以選月繳方案\n- 可以看到價格\n- 可以改方案')
+    const added = now.filter(r => !reqs.some(x => x.id === r.id))
+    const synced: readonly Op[] = [...tied, { op: 'add_criterion', feature: 'PRD-001', text: '可以改方案' }, { op: 'link_requirements', feature: 'PRD-001', requirements: added.map(r => r.id) }]
+    // The flow waited for QA's run when Claude Code closed; on resume, QA is told what has no test case.
+    const s = step({ stage: 'splitting', round: 0, retries: 0 }, { type: 'role_done', role: 'pm', board: board(synced), requirements: now, qaWorking: true }).state
+    const resumed = step(s, { type: 'resume', board: board(synced, [tc(['AC-001', 'AC-002'])]), prd: { path: 'docs/PRD.md', size: 600 }, requirements: now })
+    expect(resumed.actions[0]).toMatchObject({ type: 'message', role: 'qa', item: 'AC-003' })
+    expect(resumed.state.awaitingQa).toBeUndefined()
+  })
+
+  test('splits a new PRD that shares only a few requirements with the board, naming the ones already answered', () => {
+    const covered = board(tied, [tc(['AC-001', 'AC-002'])])
+    const many = requirementsOf(['## 方案', '- 可以選月繳方案', ...Array.from({ length: 5 }, (_, i) => `- 新需求 ${i}`)].join('\n'))
+    const r = step({ stage: 'done', round: 1, retries: 0 }, { ...START_WITH, requirements: many, board: covered })
+    expect(r.actions[0]).toMatchObject({ type: 'spawn', role: 'pm' })
+    expect((r.actions[0] as { prompt: string }).prompt).toMatch(new RegExp(`已經有功能對應[\\s\\S]*${r1}`))
+  })
+
+  test('does not count the check a start makes against the PM’s retry', () => {
+    const covered = board(tied, [tc(['AC-001', 'AC-002'])])
+    const now = requirementsOf('## 方案\n- 可以選月繳方案\n- 可以看到價格\n- 可以改方案')
+    const checked = step({ stage: 'done', round: 1, retries: 0 }, { ...START_WITH, requirements: now, board: covered })
+    expect(checked.state.stage).toBe('splitting')
+    // The PM's first pass after the check still leaves a gap: it is sent back once more before the person is asked.
+    expect(step(checked.state, { type: 'role_done', role: 'pm', board: covered, requirements: now }).state.stage).toBe('splitting')
   })
 
   test('checks a board already split for this PRD on a new start, instead of splitting it again', () => {
