@@ -112,29 +112,35 @@ const STAGE_MARK: Record<StageCell['state'], string> = { done: '✓', doing: '�
 const STAGE_NAMES: [keyof RequirementRow['layers'], string][] = [
   ['spec', '規格'],
   ['design', '設計'],
+  ['cases', '測試案例'],
   ['tasks', '任務'],
   ['code', '實作'],
   ['review', 'Review'],
-  ['tests', '測試'],
+  ['runs', '測試結果'],
 ]
 
-/** Each PRD requirement and how far each stage of its development is. */
+/** Each PRD requirement and how far each stage of its development is, one row each under the stage names. */
 function RequirementList({ el, rows }: { el: Elements; rows: readonly RequirementRow[] }) {
   const { Box, Text } = el
   return (
     <Box flexDirection="column">
-      <Text bold>PRD 需求（✓ 完成 ◐ 進行中 ○ 還沒開始 ⟳ 過期 — 之後的階段）</Text>
+      <Text bold>PRD 需求（✓ 完成 ◐ 進行中 ○ 還沒開始 ⟳ 過期 — 還沒追蹤）</Text>
+      {Row({ el, cells: [['10%', '需求', { dimColor: true }], ['27%', '內容', { dimColor: true }], ...STAGE_NAMES.map(([, name]): [string, string, Record<string, unknown>] => ['9%', name, { dimColor: true }])] })}
       {rows.map(r =>
         r.dropped !== undefined
-          ? Row({ el, cells: [['12%', r.id, { dimColor: true }], ['28%', r.text, { dimColor: true, strikethrough: true }], ['60%', `移出範圍：${r.dropped}`, { dimColor: true }]] })
+          ? Row({ el, cells: [['10%', r.id, { dimColor: true }], ['27%', r.text, { dimColor: true, strikethrough: true }], ['63%', `移出範圍：${r.dropped}`, { dimColor: true }]] })
           : Row({
               el,
               cells: [
-                ['12%', r.id, { color: 'suggestion' }],
-                ['28%', r.text],
-                ...STAGE_NAMES.map(([key, name]): [string, string, Record<string, unknown>] => {
+                ['10%', r.id, { color: 'suggestion' }],
+                ['27%', r.text],
+                ...STAGE_NAMES.map(([key]): [string, string, Record<string, unknown>] => {
                   const cell = r.layers[key]
-                  return ['10%', `${name} ${STAGE_MARK[cell.state]}${cell.note === undefined ? '' : ` ${cell.note}`}`, { color: cell.state === 'done' ? 'success' : cell.state === 'stale' ? 'warning' : undefined, dimColor: cell.state === 'later' || cell.state === 'todo' }]
+                  return [
+                    '9%',
+                    `${STAGE_MARK[cell.state]}${cell.note === undefined ? '' : ` ${cell.note}`}`,
+                    { color: cell.state === 'done' ? 'success' : cell.state === 'stale' ? 'warning' : undefined, dimColor: cell.state === 'later' || cell.state === 'todo' },
+                  ]
                 }),
               ],
             }),
@@ -272,11 +278,21 @@ function Header({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapshot;
   )
 }
 
+/** Whether the board answers the PRD as it stands: one rule for the pane and the line above the prompt. */
+const aligned = (a: NonNullable<Snapshot['alignment']>): boolean => a.problem === undefined && a.gaps === 0 && a.added === 0 && a.removed === 0
+
 /** One line: how the board stands against the PRD as it is now, and when crew last looked. */
 function Alignment({ el, a }: { el: Elements; a: NonNullable<Snapshot['alignment']> }) {
   const { Text } = el
-  const ok = a.gaps === 0 && a.added === 0 && a.removed === 0
-  const drift = a.added + a.removed > 0 ? ` PRD 改了：新增 ${a.added}、移除 ${a.removed}` : a.gaps > 0 ? ` ${a.gaps} 處對不上` : ''
+  const ok = aligned(a)
+  const drift =
+    a.problem !== undefined
+      ? ` ${a.problem}`
+      : a.added + a.removed > 0
+        ? ` PRD 改了：新增 ${a.added}、移除 ${a.removed}`
+        : a.gaps > 0
+          ? ` ${a.gaps} 處對不上`
+          : ''
   return (
     <Text color={ok ? 'success' : 'warning'}>
       對準 PRD {a.covered}/{a.total} {ok ? '✓' : `⚠${drift}`} · PRD 更新於 {a.prdChanged} · 即時檢查 {a.checked}
@@ -521,6 +537,9 @@ export function CrewPane({ el, snap, view, act, isDemo = true }: { el: Elements;
   )
 }
 
+const alignmentWord = (a: NonNullable<Snapshot['alignment']>): string =>
+  aligned(a) ? '對準 PRD ✓' : a.problem !== undefined ? `⚠ ${a.problem}` : a.gaps > 0 ? `⚠ PRD 對不上 ${a.gaps}` : '⚠ PRD 改了'
+
 /** The one line above the prompt: what needs the person first, then the roles. */
 export function bandText(snap: Snapshot, label = 'crew（設計稿）'): string {
   const roles = snap.roles
@@ -529,7 +548,7 @@ export function bandText(snap: Snapshot, label = 'crew（設計稿）'): string 
   const parts = [
     label,
     ...(snap.progress !== null ? [`進度 ${percentOf(snap.progress)}%（${snap.progress.done}/${snap.progress.total}）`] : []),
-    ...(snap.alignment === undefined ? [] : [snap.alignment.gaps === 0 ? '對準 PRD ✓' : `⚠ PRD 對不上 ${snap.alignment.gaps}`]),
+    ...(snap.alignment === undefined ? [] : [alignmentWord(snap.alignment)]),
     `待你決定 ${snap.decisions.length}`,
     ...(snap.alerts.length > 0 ? [`⚠ ${snap.alerts.length} 則提醒`] : []),
     `今日 ${tokens(snap.today)} tok`,

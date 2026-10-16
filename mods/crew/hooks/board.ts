@@ -4,6 +4,8 @@
  * field it does not know.
  */
 
+import { droppedRequirements, refsOf, REQUIREMENT_ID } from './prd'
+
 export type TestCase = {
   id: string
   title?: string
@@ -191,12 +193,20 @@ const apply = (t: Tracker, op: Op, ctx: OpContext): string | OpResult => {
       const item = feature(op.feature)
       if (item === undefined) return `link_requirements：找不到功能 ${op.feature}`
       if (op.requirements.length === 0) return `link_requirements：${op.feature} 沒有指定 PRD 需求編號`
+      const bad = op.requirements.find(r => !REQUIREMENT_ID.test(r))
+      if (bad !== undefined) return `link_requirements：${bad} 不是 PRD 需求編號（R-…）`
       const had = Array.isArray(item.source_refs) ? (item.source_refs as unknown[]).filter((r): r is string => typeof r === 'string') : []
       item.source_refs = [...new Set([...had, ...op.requirements])]
+      // A requirement now answered is back in scope: its drop is taken back.
+      for (const d of t.decisions ?? []) {
+        const v = d as { requirements?: unknown; status?: unknown }
+        if (Array.isArray(v.requirements) && v.requirements.some(r => op.requirements.includes(r as string))) v.status = 'superseded'
+      }
       return { op: op.op, id: op.feature }
     }
     case 'drop_requirement': {
       if (op.id.trim() === '') return 'drop_requirement：沒有指定 PRD 需求編號'
+      if (!REQUIREMENT_ID.test(op.id)) return `drop_requirement：${op.id} 不是 PRD 需求編號（R-…）`
       recordDecision(t, ctx, { decision: `PRD 需求 ${op.id} 移出範圍：${op.reason}`, reason: op.reason, requirements: [op.id] })
       return { op: op.op, id: op.id }
     }
@@ -309,7 +319,8 @@ export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): strin
       lines.push(`${item.id} ${item.title} — 移出範圍：${item.crew_dropped}`)
       continue
     }
-    lines.push(`${item.id} ${item.title} [${item.status}]`)
+    const refs = refsOf(item)
+    lines.push(`${item.id} ${item.title} [${item.status}] ← ${refs.length === 0 ? '還沒有對應的 PRD 需求' : refs.join('、')}`)
     const criteria = criteriaOf(item)
     if (criteria.length === 0) lines.push('  （還沒有驗收條件）')
     for (const c of criteria) {
@@ -317,6 +328,8 @@ export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): strin
       lines.push(`  ${c.id} ${c.text} ← ${cases.length === 0 ? '沒有 test case' : cases.map(tc => tc.id).join(', ')}`)
     }
   }
+  const dropped = [...droppedRequirements(t)]
+  if (scope.feature === undefined && dropped.length > 0) lines.push(`移出範圍的 PRD 需求：${dropped.map(([id, reason]) => `${id}（${reason}）`).join('、')}`)
   return lines.join('\n')
 }
 
@@ -350,6 +363,7 @@ export const parseOps = (raw: unknown): { ok: true; ops: Op[] } | { ok: false; e
       case 'add_feature': {
         if (!isText(o.title)) errors.push(`${at} add_feature 缺少 title`)
         else if (o.priority !== undefined && !['P0', 'P1', 'P2'].includes(String(o.priority))) errors.push(`${at} add_feature 的 priority 要是 P0、P1 或 P2`)
+        else if (o.sources !== undefined && !isTextList(o.sources)) errors.push(`${at} add_feature 的 sources 要是 PRD 需求編號的陣列`)
         else
           ops.push({
             op: 'add_feature',

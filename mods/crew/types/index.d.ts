@@ -52,6 +52,10 @@ export type CrewFlow = {
   stage: 'idle' | 'splitting' | 'writing_tests' | 'confirming' | 'adding_tests' | 'done' | 'escalated'
   round: number
   retries: number
+  /** Times the PM was sent back because the board did not answer the PRD (G0). */
+  aligning?: number
+  /** The PRD change the PM was last told about. */
+  synced?: string
   resumeAt?: 'splitting' | 'confirming'
 }
 
@@ -101,9 +105,13 @@ export type CrewLive = {
 }
 
 export type CrewSignals = {
-  /** The PRD file's version (time and size) when last checked; '' before the first check. */
+  /** The PRD file's version (time and size) crew last took in; '' before the first look. */
   prdVersion: string
-  /** When crew last saw the PRD change; 0 before it has. */
+  /** The board file's version at the last look: a board change brings the next look on. */
+  boardVersion: string
+  /** A PRD version that removed most requirements at once, waiting for a second look to confirm it; '' with none. */
+  doubt: string
+  /** When the PRD file was last modified, as of the last look; 0 before the first. */
   prdChangedAt: number
   /** When crew last looked. */
   checkedAt: number

@@ -130,8 +130,9 @@ describe('/crew demo', () => {
       await ui.press({ key: 'tab-progress' })
       const text = await shown(ui)
       expect(text).toMatch(/PRD 需求/)
-      expect(text).toMatch(/R-9b3c12[\s\S]*實作 ◐ 3\/5[\s\S]*測試 ◐ 2\/6/)
-      expect(text).toMatch(/R-07d4e9[\s\S]*Review ⟳/)
+      expect(text).toMatch(/\n規格\n設計\n測試案例\n任務\n實作\nReview\n測試結果\n/)
+      expect(text).toMatch(/R-9b3c12\n[^\n]*\n✓\n✓\n✓ 6\/6\n✓\n◐ 3\/5\n○\n◐ 2\/6\n/)
+      expect(text).toMatch(/R-07d4e9\n[^\n]*\n✓\n✓\n✓ 5\/5\n✓\n◐ 1\/3\n⟳\n/)
       expect(text).toMatch(/R-2f6b55[\s\S]*移出範圍：移出 v1/)
       await ui.unmount()
     }

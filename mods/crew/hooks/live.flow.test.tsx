@@ -62,7 +62,7 @@ describe('crew, PM and QA', () => {
     ])
     const status = await $.command.run(command('status'))
     // The PRD's requirement and both features (G0), two features with criteria, one criterion with a test case.
-    expect(status.text).toMatch(/進度 86%（6\/7）/)
+    expect(status.text).toMatch(/進度 80%（4\/5）/)
     const ui = await $.ui.mount({
       plugin: 'crew',
       surface: 'terminal',

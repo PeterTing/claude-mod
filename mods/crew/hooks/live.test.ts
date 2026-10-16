@@ -163,9 +163,9 @@ describe('development status by PRD requirement', () => {
     'qa',
   )
 
-  test('says, for each requirement, how far its spec and tests are, from the board', () => {
-    const rows = snapshotOf({ board, live: emptyLive(), now: NOW, requirements: reqs }).requirements ?? []
-    expect(rows.map(r => [r.id, r.features, r.layers.spec.state, r.layers.tests.state, r.layers.tests.note])).toEqual([
+  test('says, for each requirement, how far its spec and test cases are, from the board', () => {
+    const rows = snapshotOf({ board, live: emptyLive(), now: NOW, prd: { requirements: reqs } }).requirements ?? []
+    expect(rows.map(r => [r.id, r.features, r.layers.spec.state, r.layers.cases.state, r.layers.cases.note])).toEqual([
       [r1, ['PRD-001'], 'done', 'done', '1/1'],
       [r2, ['PRD-002'], 'done', 'doing', '1/2'],
       [r3, ['PRD-003'], 'todo', 'todo', '0/0'],
@@ -175,8 +175,38 @@ describe('development status by PRD requirement', () => {
   })
 
   test('marks the stages crew does not track yet as later, never as done', () => {
-    const rows = snapshotOf({ board, live: emptyLive(), now: NOW, requirements: reqs }).requirements ?? []
+    const rows = snapshotOf({ board, live: emptyLive(), now: NOW, prd: { requirements: reqs } }).requirements ?? []
     expect(rows).toHaveLength(4)
-    expect(rows.every(r => ['design', 'tasks', 'code', 'review'].every(k => r.layers[k as 'design'].state === 'later'))).toBe(true)
+    expect(rows.every(r => (['design', 'tasks', 'code', 'review', 'runs'] as const).every(k => r.layers[k].state === 'later'))).toBe(true)
+  })
+
+  test('does not call test cases done while a feature that answers the requirement has no criteria', () => {
+    const more = apply(board, [{ op: 'link_requirements', feature: 'PRD-003', requirements: [r1 ?? ''] }], 'pm')
+    const row = (snapshotOf({ board: more, live: emptyLive(), now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]
+    expect([row?.layers.spec.state, row?.layers.cases.state, row?.layers.cases.note]).toEqual(['doing', 'doing', '1/1'])
+  })
+
+  test('leaves a dropped feature out of the requirement it answered', () => {
+    const less = apply(board, [{ op: 'drop_feature', id: 'PRD-002', reason: '不做' }], 'pm')
+    const row = (snapshotOf({ board: less, live: emptyLive(), now: NOW, prd: { requirements: reqs } }).requirements ?? [])[1]
+    expect([row?.features, row?.layers.spec.state, row?.layers.cases.note]).toEqual([[], 'todo', '0/0'])
+  })
+
+  test('shows a requirement a feature answers again as in scope, though it was dropped once', () => {
+    const back = apply(board, [{ op: 'link_requirements', feature: 'PRD-001', requirements: [r4 ?? ''] }], 'pm')
+    const row = (snapshotOf({ board: back, live: emptyLive(), now: NOW, prd: { requirements: reqs } }).requirements ?? [])[3]
+    expect(row?.dropped).toBeUndefined()
+    expect(row?.features).toEqual(['PRD-001'])
+  })
+
+  test('says the PRD cannot be read, and holds the board to what it last answered', () => {
+    const snap = snapshotOf({ board, live: emptyLive(), now: NOW, prd: { requirements: reqs, problem: '讀不到 PRD：找不到 docs/PRD.md' } })
+    expect(snap.alignment?.problem).toBe('讀不到 PRD：找不到 docs/PRD.md')
+    expect(snap.requirements).toHaveLength(4)
+  })
+
+  test('counts the split done only once the board answers the PRD', () => {
+    const snap = snapshotOf({ board, live: emptyLive(), now: NOW, prd: { requirements: [...reqs, { id: 'R-000001', text: '新需求', section: '' }] } })
+    expect(snap.progress?.stages[0]?.state).not.toBe('done')
   })
 })

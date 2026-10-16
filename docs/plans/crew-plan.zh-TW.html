@@ -708,6 +708,49 @@ flowchart LR
   </ul>
 </section>
 
+<section id="phase4a">
+  <h2>第 4a 階段：開發狀態對準 PRD、即時更新（2026-10-16）</h2>
+  <p class="prose">你要求開發狀態一定要對準 PRD、即時更新，不然就沒有意義。做法是 crew 自己讀 PRD 檔案、自己算，不靠角色回報。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>項目</th><th>做法</th><th>實測</th></tr></thead>
+      <tbody>
+        <tr><td>PRD 需求編號</td><td>PRD 的每個清單項目都算一條需求；沒有清單時改用段落，表格則取資料列。編號由這一條的文字算出來，例如 <code>R-3fa2c1</code>：別行改了編號不變，這一條自己的文字改了就換新編號。</td><td><span class="tag ok">通過</span> 單元測試</td></tr>
+        <tr><td>G0：看板對準 PRD</td><td>每條需求都要有功能對應，或由 PM 記下理由、移出範圍；每個功能都要對應到目前 PRD 裡還在的需求。由程式計算，G0 沒過，拆解就不算完成。</td><td><span class="tag ok">通過</span> 單元與整合測試</td></tr>
+        <tr><td>即時偵測 PRD 改動</td><td>每 10 秒看一次 PRD 檔案，只看檔案、不呼叫模型；開 Claude Code 時也會看一次。PRD 一改，就會：
+          <ul>
+            <li>跳出通知；</li>
+            <li>面板和提示列顯示新增、移除了幾條；</li>
+            <li>PM 收到同步的工作；</li>
+            <li>如果是大腦帶的工作，也會告訴大腦。</li>
+          </ul>
+          看板重新對準後，QA 只替新的條件寫 test case。</td><td><span class="tag ok">通過</span> 實跑：在 PRD 加一行，10 秒內偵測到（11:02:09 → 11:02:19）。PM 新增 PRD-004，對應到這條新需求，補了 3 條驗收條件；QA 補了 8 個 test case。面板回到「對準 PRD 8/8 ✓」。</td></tr>
+        <tr><td>面板標出狀態有多新</td><td>頁首顯示三件事：對準 PRD 幾條（覆蓋數／總數）、PRD 何時更新、上次即時檢查的時間。</td><td><span class="tag ok">通過</span></td></tr>
+        <tr><td>以 PRD 需求為單位的進度</td><td>進度分頁新增「PRD 需求」，每條需求一列，依序列出每個階段：規格、設計、測試案例、任務、實作、Review、測試結果。
+          <ul>
+            <li>規格和測試案例現在就能從看板算出來。</li>
+            <li>其他欄位顯示「—」，等第 4 階段的角色上線、有真實訊號才會亮；在那之前不會先顯示完成。</li>
+            <li>移出範圍的需求改為顯示理由。</li>
+          </ul></td><td><span class="tag ok">通過</span> 介面測試；示意資料見 <code>/crew demo</code> 的進度分頁</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>接下來：每一欄都接上真實訊號（等你確認）</h3>
+  <p class="prose">每一欄的狀態都從真實訊號算出來，角色自己說「做完了」不算數。實作前，會先在 <code>/crew demo</code> 把每一欄的樣子做成設計稿，請你確認。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>階段</th><th>欄位</th><th>誰做</th><th>狀態從哪裡來</th><th>關卡</th></tr></thead>
+      <tbody>
+        <tr><td>4b</td><td>任務</td><td>Tech lead</td><td>Tech lead 把驗收條件拆成任務，每個任務都要對應到驗收條件。</td><td>G3：每條驗收條件都有任務</td></tr>
+        <tr><td>4c</td><td>實作</td><td>全端</td><td>git commit 訊息裡寫的 TASK 編號；只算真的進了分支的 commit。</td><td>—</td></tr>
+        <tr><td>4d</td><td>Review</td><td>Tech lead</td><td>review 結果釘在某個 commit sha 上；之後又有新的 commit，就標成「過期」，要重新 review。</td><td>G5：最新的 commit 都 review 過</td></tr>
+        <tr><td>4e</td><td>測試結果</td><td>QA</td><td>crew 跑你指定的測試指令，把結果對應到 TC 編號，並保留證據。指令只存在本機，不放進 repo，避免 clone 下來的 repo 讓 crew 跑任意指令。</td><td>G6：每個 test case 都有通過的結果</td></tr>
+        <tr><td>4f</td><td>設計</td><td>UI/UX</td><td>設計稿要由你核准；只有 UI/UX 自己說完成的不算。</td><td>G2：每個畫面都有你核准的設計稿</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
 <section id="phases">
   <h2>開發階段</h2>
   <p class="prose">先驗證風險最高的 API，再做設計稿給你確認，然後一次完成一條端到端流程。</p>
@@ -716,7 +759,8 @@ flowchart LR
     <div class="phase"><span class="pn">1</span><div class="body"><h3>UIX 設計稿 <span class="tag ok">完成</span></h3><p class="meta"><code>/crew demo</code> 用示意資料畫出輸入框上方那一行和面板五個分頁的所有狀態，每個畫面都標明「設計稿」。</p><p class="meta">驗證：你在終端機實際操作後確認。</p></div></div>
     <div class="phase"><span class="pn">2</span><div class="body"><h3>切片 A：PM＋QA <span class="tag ok">完成</span></h3><p class="meta">看板工具、讀寫 prd-tracker.json、G1／G4、討論串、token 顯示。用一份小 PRD 跑通「QA 列 test case → 程式算缺口 → PM 確認」。</p><p class="meta">驗證：單元測試，加上真實 session 走一遍。</p></div></div>
     <div class="phase"><span class="pn">3</span><div class="body"><h3>切片 B：記憶與輪替 <span class="tag ok">完成</span></h3><p class="meta">記憶分層、檢索、輪替、壓縮 hook、每日整理、你直接問角色的指令。大腦摘要移到第 5 階段。</p><p class="meta">驗證：記憶抽考、長時間 context 上限測試、開與不開記憶的 token 比較。</p></div></div>
-    <div class="phase"><span class="pn">4</span><div class="body"><h3>切片 C：UI/UX、Tech lead、全端</h3><p class="meta">G2、G3、G5、G6，以及 code review 流程。用一個小功能從 PRD 走到驗收。</p><p class="meta">驗證：端到端實跑，附證據。</p></div></div>
+    <div class="phase"><span class="pn">4a</span><div class="body"><h3>開發狀態對準 PRD、即時更新 <span class="tag ok">完成</span></h3><p class="meta">PRD 需求編號、G0、每 10 秒檢查 PRD、以 PRD 需求為單位的進度。</p><p class="meta">驗證：單元與整合測試，加上實跑改 PRD。</p></div></div>
+    <div class="phase"><span class="pn">4b–f</span><div class="body"><h3>切片 C：Tech lead、全端、Review、測試執行、UI/UX</h3><p class="meta">G3、G2、G5、G6，以及 code review 流程。進度表的每一欄都要接上真實訊號：commit、review 對應的 sha、測試結果、你的核准。用一個小功能從 PRD 走到驗收。</p><p class="meta">驗證：先做設計稿請你確認，再端到端實跑，附證據。</p></div></div>
     <div class="phase"><span class="pn">5</span><div class="body"><h3>常駐與優化</h3><p class="meta">心跳、重開接續、token 提醒和大腦的處置流程。</p><p class="meta">驗證：關掉再開 Claude Code 後接續工作；製造用量異常，確認提醒和處置都有出現。</p></div></div>
     <div class="phase"><span class="pn">6</span><div class="body"><h3>上架</h3><p class="meta">請沒有參與實作的 agent 做獨立的安全、品質、測試 review，critical 和 important 清零後，收進 marketplace 的自製 mod。</p></div></div>
     <div class="phase opt"><span class="pn">之後</span><div class="body"><h3>選用</h3><p class="meta">向量檢索（抽考不達標才做）、雲端排程、Notion 同步（會連網，審查等級變 L3）。</p></div></div>

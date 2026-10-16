@@ -15,32 +15,32 @@ const REQUIREMENTS: RequirementRow[] = [
     id: 'R-5e01a7',
     text: '方案頁列出月繳方案與價格',
     features: ['F-01'],
-    layers: { spec: done, design: done, tasks: done, code: { state: 'done', note: '2/2' }, review: done, tests: { state: 'done', note: '4/4' } },
+    layers: { spec: done, design: done, cases: { state: 'done', note: '4/4' }, tasks: done, code: { state: 'done', note: '2/2' }, review: done, runs: { state: 'done', note: '4/4' } },
   },
   {
     id: 'R-9b3c12',
     text: '用信用卡結帳，失敗時說明原因',
     features: ['F-02'],
-    layers: { spec: done, design: done, tasks: done, code: { state: 'doing', note: '3/5' }, review: todo, tests: { state: 'doing', note: '2/6' } },
+    layers: { spec: done, design: done, cases: { state: 'done', note: '6/6' }, tasks: done, code: { state: 'doing', note: '3/5' }, review: todo, runs: { state: 'doing', note: '2/6' } },
   },
   {
     id: 'R-07d4e9',
     text: '可以隨時取消，到期前仍可使用',
     features: ['F-03'],
-    layers: { spec: done, design: done, tasks: done, code: { state: 'doing', note: '1/3' }, review: { state: 'stale' }, tests: { state: 'doing', note: '3/5' } },
+    layers: { spec: done, design: done, cases: { state: 'done', note: '5/5' }, tasks: done, code: { state: 'doing', note: '1/3' }, review: { state: 'stale' }, runs: { state: 'doing', note: '3/5' } },
   },
   {
     id: 'R-c84a10',
     text: '每月寄出電子發票',
     features: ['F-05'],
-    layers: { spec: done, design: { state: 'doing' }, tasks: todo, code: todo, review: todo, tests: { state: 'todo', note: '0/3' } },
+    layers: { spec: done, design: { state: 'doing' }, cases: { state: 'doing', note: '1/3' }, tasks: todo, code: todo, review: todo, runs: { state: 'todo', note: '0/3' } },
   },
   {
     id: 'R-2f6b55',
     text: '提供年繳方案，打 85 折',
     features: [],
     dropped: '移出 v1（DEC-14），v1.1 再做',
-    layers: { spec: todo, design: todo, tasks: todo, code: todo, review: todo, tests: todo },
+    layers: { spec: todo, design: todo, cases: todo, tasks: todo, code: todo, review: todo, runs: todo },
   },
 ]
 
@@ -86,7 +86,7 @@ const NORMAL: Snapshot = {
     { id: 'techlead', state: 'rotating', doing: '閒置後換新對話，帶記憶重開', route: XL, context: 58_000, limit: 256_000, today: 35_000 },
   ],
   gates: [
-    { id: 'G0', state: 'pass', name: 'PRD 每條需求都有對應的功能', fill: 'PM 補', confirm: 'crew 對照 PRD 檔案', covered: 14, total: 14, gaps: [], note: 'R-7c21e0 年繳方案用 drop_requirement 移出 v1', checked: '即時' },
+    { id: 'G0', state: 'pass', name: 'PRD 每條需求都有對應的功能', fill: 'PM 補', confirm: 'crew 對照 PRD 檔案', covered: 14, total: 14, gaps: [], note: 'R-2f6b55 年繳方案用 drop_requirement 移出 v1', checked: '即時' },
     { id: 'G1', state: 'pass', name: '每個功能都有驗收條件', fill: 'PM 補', confirm: 'PM 自查', covered: 4, total: 4, gaps: [], note: 'F-04 年繳方案已移出 v1，不列入計算', checked: '2 分鐘前' },
     { id: 'G2', state: 'pass', name: '每個有介面的功能都有畫面和各種狀態', fill: 'UI/UX 補', confirm: 'PM 確認，再給你確認 UX', covered: 9, total: 9, gaps: [], checked: '2 分鐘前' },
     {
@@ -249,7 +249,7 @@ const ATTENTION: Snapshot = {
       id: 'R-3a90f2',
       text: '可以暫停訂閱，暫停期間不扣款',
       features: [],
-      layers: { spec: todo, design: todo, tasks: todo, code: todo, review: todo, tests: { state: 'todo', note: '0/0' } },
+      layers: { spec: todo, design: todo, cases: { state: 'todo', note: '0/0' }, tasks: todo, code: todo, review: todo, runs: todo },
     },
   ],
   alignment: { covered: 14, total: 16, gaps: 2, added: 1, removed: 1, prdChanged: '2 分鐘前', checked: '剛剛' },

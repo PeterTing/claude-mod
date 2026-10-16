@@ -27,7 +27,17 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     store.set(key, JSON.parse(JSON.stringify(value)))
     return { value: undefined }
   })
-  const disk = new Map<string, string>([[`${ROOT}/docs/PRD.md`, PRD]])
+  /** When each file was last written, by the test's clock: a file's modified time. */
+  const written = new Map<string, number>()
+  let writes = 0
+  const disk = new (class extends Map<string, string> {
+    override set(path: string, text: string) {
+      // A thousandth of a millisecond apart, so two writes at one clock time are still two versions.
+      writes += 1
+      written.set(path, clock.now() + writes / 1000)
+      return super.set(path, text)
+    }
+  })([[`${ROOT}/docs/PRD.md`, PRD]])
   /** Paths that are symbolic links, and where they lead. */
   const links = new Map<string, string>()
   /** Every prompt that reached the bottom, as the hooks left it. */
@@ -62,9 +72,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     // A link to nothing is still there: a link, with nowhere it leads.
     if (links.has(e.path) && !disk.has(real) && !isDir(real)) return { value: { kind: 'other' as const, size: 0, mtimeMs: 0, isLink: true } }
     if (!disk.has(real) && !isDir(real)) return { deny: `ENOENT ${e.path}` }
-    // A file's version follows its content, as a modified time follows a write.
     const text = disk.get(real) ?? ''
-    const mtimeMs = [...text].reduce((h, c) => (h * 31 + (c.codePointAt(0) ?? 0)) % 1_000_000_007, text.length)
+    const mtimeMs = written.get(real) ?? 0
     return { value: { kind: isDir(real) ? ('dir' as const) : ('file' as const), size: text.length, mtimeMs, isLink: links.has(e.path), ...(e.resolve ? { realPath: real } : {}) } }
   })
   on('fs.list', (_$, e) => {

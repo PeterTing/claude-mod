@@ -125,7 +125,7 @@ export type Stage = { label: string; done: number; total: number; state: StageSt
 
 export type LayerState = 'done' | 'doing' | 'todo'
 
-/** One stage of a requirement's development: `stale`, done once but out of date (a review before newer commits); `later`, a stage crew does not track yet. */
+/** One stage of a requirement's development: `stale`, done once but out of date (a review before newer commits, from phase 4); `later`, a stage crew does not track yet. */
 export type StageCell = { state: LayerState | 'stale' | 'later'; note?: string }
 
 /** A PRD requirement and how far each stage of its development is, from the board and the repo. */
@@ -136,7 +136,8 @@ export type RequirementRow = {
   features: readonly string[]
   /** Why it was moved out of scope, when it was. */
   dropped?: string
-  layers: Readonly<Record<'spec' | 'design' | 'tasks' | 'code' | 'review' | 'tests', StageCell>>
+  /** Spec (criteria), design, test cases written, tasks, code, review, and test runs, in the order the work goes. */
+  layers: Readonly<Record<'spec' | 'design' | 'cases' | 'tasks' | 'code' | 'review' | 'runs', StageCell>>
 }
 
 /** One feature of the PRD (a prd_items entry) and how far each layer of it is. */
@@ -182,7 +183,17 @@ export type Snapshot = {
   /** The PRD's requirements, each with how far its development is. */
   requirements?: readonly RequirementRow[]
   /** How the board stands against the PRD as it is now, and when crew last looked. */
-  alignment?: { covered: number; total: number; gaps: number; added: number; removed: number; prdChanged: string; checked: string }
+  alignment?: {
+    covered: number
+    total: number
+    gaps: number
+    added: number
+    removed: number
+    prdChanged: string
+    checked: string
+    /** Why crew cannot read the PRD now; the board is then held to the requirements it last answered. */
+    problem?: string
+  }
   /** Tokens the small model spent tidying memory today. */
   chores?: number
 }

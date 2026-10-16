@@ -12,7 +12,7 @@ import { dayOf, emptyLive, snapshotOf } from './live'
 import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, redact, searchMemories, serializeMemories } from './memory'
 import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { ROLE_NAMES } from './model'
-import { diffRequirements, gateG0, requirementsOf } from './prd'
+import { baselineFor, baselineOf, changeKey, diffRequirements, earlierFor, fingerprint, gateG0, MAX_REQUIREMENTS, refsOf, requirementsOf } from './prd'
 import type { Requirement } from './prd'
 import { composeStart, relatedOf, threadLines, wakePlan, withMemories, workingSet } from './pack'
 import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
@@ -51,15 +51,17 @@ const tidy = { checked: '' }
 const boot: { ready: Promise<void> } = { ready: Promise.resolve() }
 
 /** The PRD's requirements as last read, and the file version they were read at. */
-const prdCache: { version: string; requirements: Requirement[] | undefined; path: string; full: string | undefined } = {
-  version: '',
-  requirements: undefined,
-  path: '',
-  full: undefined,
-}
+const prdCache: { path: string; version: string; view: PrdView | undefined } = { path: '', version: '', view: undefined }
+
+/**
+ * The PRD as crew can read it now. With a `problem` (crew cannot read the
+ * file, or finds no requirement in it), the requirements are the ones the
+ * board last answered, or none.
+ */
+type PrdView = { requirements?: Requirement[]; problem?: string }
 
 /** The check on the PRD and the board every few seconds: one at a time, one timer a session. */
-const watching: { busy: boolean; timer: { cancel: () => void } | undefined } = { busy: false, timer: undefined }
+const watching: { busy: boolean; again: boolean; timer: { cancel: () => void } | undefined } = { busy: false, again: false, timer: undefined }
 
 const WATCH_MS = 10_000
 
@@ -114,7 +116,7 @@ function serial<T>(key: string, job: () => Promise<T>): Promise<T> {
 }
 
 /** Ids a thread can be about: a board item, a question, an ASK, or crew's own. */
-const ITEM = /^(?:crew|[A-Z][A-Z0-9_]{0,15}-\d+(?:#\d+)?)$/
+const ITEM = /^(?:crew|R-[0-9a-f]{6}|[A-Z][A-Z0-9_]{0,15}-\d+(?:#\d+)?)$/
 
 /** Write tools are for crew's roles and the main conversation: not for other agents, nor ones a reset retired. */
 const NOT_YOURS = '這個工具只給 crew 的角色和主對話用。'
@@ -305,14 +307,19 @@ async function writeCrew($: any, path: string, text: string): Promise<boolean> {
  * The PRD's full path when it is a file inside the repo, following links:
  * crew reads it and has a role read it, so it must not lead elsewhere.
  */
-async function prdFile($: any, path: string): Promise<{ full: string } | { error: string }> {
+/** A PRD path as a full path, `..` folded; nothing is checked. */
+const fullPathOf = (path: string): string => {
   const parts: string[] = []
   for (const part of (path.startsWith('/') ? path : `${files.root}/${path}`).split('/')) {
     if (part === '' || part === '.') continue
     if (part === '..') parts.pop()
     else parts.push(part)
   }
-  const full = `/${parts.join('/')}`
+  return `/${parts.join('/')}`
+}
+
+async function prdFile($: any, path: string): Promise<{ full: string } | { error: string }> {
+  const full = fullPathOf(path)
   if (!full.startsWith(`${files.root}/`)) return { error: `PRD 要在這個 repo 裡（${files.root}）。` }
   let stat: { kind: string }
   try {
@@ -320,7 +327,7 @@ async function prdFile($: any, path: string): Promise<{ full: string } | { error
   } catch {
     return { error: `找不到 ${path}。` }
   }
-  if (!(await staysIn($, full))) return { error: `PRD 要在這個 repo 裡（${files.root}），${path} 是連結或指到外面。` }
+  if (!(await staysIn($, full))) return { error: `PRD 要在這個 repo 裡（${files.root}）：${path} 是連結，或指到 repo 外。` }
   if (stat.kind !== 'file') return { error: `${path} 不是檔案。` }
   return { full }
 }
@@ -926,7 +933,8 @@ async function resumeFlow($: any): Promise<string> {
   await update($, live, s => ({ ...s, roles: { pm: { ...s.roles.pm, rotate: true }, qa: { ...s.roles.qa, rotate: true } } }))
   $.ui.toast(`crew：接續 ${l.prdPath}（${l.flow.stage}）`)
   await note($, { kind: 'resume', path: l.prdPath, stage: l.flow.stage })
-  await feed($, { type: 'resume', board, prd: { path: l.prdPath, size: text.length, text: text.slice(0, 4_000) } })
+  const requirements = (await prdView($))?.requirements
+  await feed($, { type: 'resume', board, prd: { path: l.prdPath, size: text.length, text: text.slice(0, 4_000) }, ...(requirements === undefined ? {} : { requirements }) })
   return `接續 ${l.prdPath}（${l.flow.stage}）。`
 }
 
@@ -945,50 +953,69 @@ const inboxOf = (l: CrewLive): { pm: string[]; qa: string[] } => {
   return { pm: unread('pm'), qa: unread('qa') }
 }
 
-/** The PRD's requirements as the file stands now; undefined with no PRD, or one crew cannot read. */
-async function prdRequirements($: any): Promise<Requirement[] | undefined> {
+/**
+ * The PRD's requirements as the file stands now. Each new version of the file
+ * is checked again before crew reads it: it must still be a file in the repo,
+ * reached through no link, so a pull that swaps it for a link is not followed.
+ */
+async function prdView($: any): Promise<PrdView | undefined> {
   const l = await read($, live)
   if (l.prdPath === null) return undefined
-  const full = await prdPathChecked($, l.prdPath)
-  if (full === undefined) return undefined
-  const prd = { full }
-  const version = await versionOf($, prd.full)
-  if (prdCache.requirements === undefined || version !== prdCache.version) {
-    prdCache.requirements = requirementsOf(await $.fs.read(prd.full))
-    prdCache.version = version
+  const path = l.prdPath
+  const version = await versionOf($, fullPathOf(path))
+  if (prdCache.view !== undefined && prdCache.path === path && prdCache.version === version) return prdCache.view
+  const view = await readPrd($, path)
+  Object.assign(prdCache, { path, version, view })
+  if (view.problem !== undefined) warnOnce($, view.problem)
+  return view
+}
+
+async function readPrd($: any, path: string): Promise<PrdView> {
+  // What the board last answered stands in, so the flow still holds the board to the PRD crew last read.
+  const instead = async (problem: string): Promise<PrdView> => {
+    const kept = baselineOf(await loadBoard($))
+    return { problem, ...(kept.length === 0 ? {} : { requirements: kept }) }
   }
-  return prdCache.requirements
-}
-
-/** The PRD's full path once crew has checked it stays in the repo; checked again when the PRD path changes. */
-async function prdPathChecked($: any, path: string): Promise<string | undefined> {
-  if (prdCache.path === path && prdCache.full !== undefined) return prdCache.full
   const prd = await prdFile($, path)
-  prdCache.path = path
-  prdCache.full = 'error' in prd ? undefined : prd.full
-  return prdCache.full
+  if ('error' in prd) return instead(`讀不到 PRD：${prd.error.replace(/。$/, '')}`)
+  let text: string
+  try {
+    text = await $.fs.read(prd.full)
+  } catch {
+    return instead(`讀不到 PRD：${path}`)
+  }
+  const requirements = requirementsOf(text)
+  if (requirements.length === 0) return instead('PRD 裡找不到需求（清單項目、表格列或段落）')
+  if (requirements.length > MAX_REQUIREMENTS) return instead(`PRD 有 ${requirements.length} 條需求，超過 crew 一次能追的 ${MAX_REQUIREMENTS} 條`)
+  return { requirements }
 }
 
-/** The requirements the board last answered, kept on the board beside what crew does not own. */
-const baselineOf = (board: Tracker | null): Requirement[] => {
-  const kept = (board as { crew_prd?: { requirements?: unknown } } | null)?.crew_prd?.requirements
-  if (!Array.isArray(kept)) return []
-  return kept.flatMap((r): Requirement[] => {
-    const v = r as Partial<Requirement> | null
-    return typeof v === 'object' && v !== null && typeof v.id === 'string' && typeof v.text === 'string' ? [{ id: v.id, text: v.text, section: typeof v.section === 'string' ? v.section : '' }] : []
-  })
+/** Says a problem once in a toast; the log has it every time. */
+function warnOnce($: any, text: string) {
+  $.ui.log(`crew: ${text}`)
+  if (warned.has(text)) return
+  warned.add(text)
+  $.ui.toast(`crew：${text}`)
 }
 
-/** Records the PRD's requirements as the ones the board answers, once G0 passes against them. */
-async function settleBaseline($: any, requirements: readonly Requirement[]) {
-  const l = await read($, live)
+/** A board whose features name no PRD requirement: made before crew numbered requirements. */
+const unnumbered = (board: Tracker): boolean => {
+  const features = board.prd_items.filter(i => i.crew_dropped === undefined)
+  return features.length > 0 && features.every(f => refsOf(f).length === 0)
+}
+
+/** Records the PRD's requirements as the ones the board answers, once G0 passes against them, for the PRD this look was about. */
+async function settleBaseline($: any, path: string, requirements: readonly Requirement[]) {
   const today = dayOf(await $.clock.now())
   try {
     await changeBoard($, async board => {
       if (board === null) return { value: undefined }
+      const kept = (board as { crew_prd?: { path?: unknown } }).crew_prd
+      // A /crew start on another PRD came in while crew looked: that PRD's baseline stands.
+      if (kept?.path !== undefined && kept.path !== path) return { value: undefined }
       const same = baselineOf(board).map(r => r.id).join() === requirements.map(r => r.id).join()
       if (same || gateG0(board, requirements).gaps.length > 0) return { value: undefined }
-      return { board: { ...board, crew_prd: { path: l.prdPath, requirements: [...requirements], synced_at: today } }, value: undefined }
+      return { board: { ...board, crew_prd: { ...kept, path, requirements: baselineFor(requirements), synced_at: today } }, value: undefined }
     })
   } catch (err) {
     if (!(err instanceof BoardRefused)) throw err
@@ -997,55 +1024,89 @@ async function settleBaseline($: any, requirements: readonly Requirement[]) {
 
 /**
  * Every few seconds, and at each role's turn end: has the PRD changed under the
- * board? A change sends the PM to sync (the flow decides how) and says so; the
- * pane redraws with the time crew looked. No model call, no tokens.
+ * board? The look itself calls no model: a change goes to the flow, which sends
+ * the PM to sync, and the pane redraws with the time crew looked. One look at a
+ * time; one asked for during a look runs right after it.
  */
 async function watch($: any) {
-  if (watching.busy) return
+  if (watching.busy) {
+    watching.again = true
+    return
+  }
   watching.busy = true
   try {
-    const l = await read($, live)
-    if (l.prdPath === null) return
-    const now: number = await $.clock.now()
-    const full = await prdPathChecked($, l.prdPath)
-    const version = full === undefined ? 'missing' : await versionOf($, full)
-    // Nothing moved: a single stat, and the time crew looked kept fresh every half minute.
-    if (version === l.signals.prdVersion && l.signals.added + l.signals.removed === 0 && now - l.signals.checkedAt < QUIET_MS) return
-    const requirements = await prdRequirements($)
-    let board = await loadBoard($)
-    let drift = { added: [] as Requirement[], removed: [] as Requirement[] }
-    if (requirements !== undefined && board !== null) {
-      drift = diffRequirements(baselineOf(board), requirements)
-      const moved = drift.added.length + drift.removed.length > 0
-      if (moved && version !== l.signals.prdVersion && baselineOf(board).length > 0) {
-        const text = `PRD 改了（新增 ${drift.added.length}、移除 ${drift.removed.length} 條需求），PM 會同步看板。`
-        $.ui.toast(`crew：${text}`)
-        if (l.lead === 'brain') tellBrain(text)
-        await note($, { kind: 'prd_changed', added: drift.added.map(r => r.id), removed: drift.removed.map(r => r.id) })
-        await feed($, { type: 'prd_changed', board, requirements, added: drift.added, removed: drift.removed })
-      }
-      if (moved) {
-        await settleBaseline($, requirements)
-        board = await loadBoard($)
-        drift = diffRequirements(baselineOf(board), requirements)
-      }
-    }
-    const modified = Number(version.split(':')[0])
-    await update($, live, s => ({
-      ...s,
-      signals: {
-        prdVersion: version,
-        prdChangedAt: Number.isFinite(modified) ? modified : s.signals.prdChangedAt,
-        checkedAt: now,
-        added: drift.added.length,
-        removed: drift.removed.length,
-      },
-    }))
+    do {
+      watching.again = false
+      await look($)
+    } while (watching.again)
   } catch (err) {
     $.ui.log(`crew: could not check the PRD: ${String(err)}`)
   } finally {
     watching.busy = false
   }
+}
+
+const NO_DRIFT = { added: [] as Requirement[], removed: [] as Requirement[] }
+
+async function look($: any) {
+  const l = await read($, live)
+  if (l.prdPath === null) return
+  const path = l.prdPath
+  const now: number = await $.clock.now()
+  const version = await versionOf($, fullPathOf(path))
+  const s = l.signals
+  // Nothing moved: two stats, and the time crew looked kept fresh every half minute.
+  if (version === s.prdVersion && (await versionOf($, files.board)) === s.boardVersion && now - s.checkedAt < QUIET_MS) return
+  const view = await prdView($)
+  let board = await loadBoard($)
+  // The PRD version this look takes as seen: a board crew cannot read, or a removal not yet confirmed, leaves it for the next look.
+  let seen = board === null ? s.prdVersion : version
+  let doubt = ''
+  let drift = NO_DRIFT
+  const requirements = view?.problem === undefined ? view?.requirements : undefined
+  if (requirements !== undefined && board !== null) {
+    const baseline = baselineOf(board)
+    const unlinked = baseline.length === 0 && unnumbered(board)
+    drift = baseline.length === 0 ? NO_DRIFT : diffRequirements(baseline, requirements)
+    const moved = drift.added.length + drift.removed.length > 0
+    if (moved && drift.removed.length * 2 > baseline.length && s.doubt !== version) {
+      // Most of the PRD gone at once may be a file caught half-written: it counts once the next look finds the same file.
+      doubt = version
+      seen = s.prdVersion
+    } else if (moved || unlinked) {
+      const key = unlinked ? `link:${fingerprint(requirements.map(r => r.id).join())}` : changeKey(baseline, drift.added, drift.removed)
+      const flow = (await read($, live)).flow
+      if (flow.stage !== 'idle' && flow.synced !== key) {
+        const text = unlinked
+          ? '看板上的功能還沒有對應到 PRD 需求，PM 會補上對應。'
+          : `PRD 改了（新增 ${drift.added.length}、移除 ${drift.removed.length} 條需求），PM 會同步看板。`
+        $.ui.toast(`crew：${text}`)
+        if (l.lead === 'brain') tellBrain(text)
+        await note($, { kind: 'prd_changed', added: drift.added.map(r => r.id), removed: drift.removed.map(r => r.id), ...(unlinked ? { unlinked } : {}) })
+      }
+      await feed($, { type: 'prd_changed', board, requirements, added: drift.added, removed: drift.removed, key, ...(unlinked ? { unlinked } : {}) })
+    }
+    if (doubt === '' && (moved || baseline.length === 0)) {
+      await settleBaseline($, path, requirements)
+      board = await loadBoard($)
+      const settled = baselineOf(board)
+      drift = settled.length === 0 ? NO_DRIFT : diffRequirements(settled, requirements)
+    }
+  }
+  const modified = Number(version.split(':')[0])
+  const boardVersion = board === null ? '' : await versionOf($, files.board)
+  await update($, live, x => ({
+    ...x,
+    signals: {
+      prdVersion: seen,
+      boardVersion,
+      doubt,
+      prdChangedAt: Number.isFinite(modified) ? modified : x.signals.prdChangedAt,
+      checkedAt: now,
+      added: drift.added.length,
+      removed: drift.removed.length,
+    },
+  }))
 }
 
 /**
@@ -1086,13 +1147,16 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     if ('error' in prd) return prd.error
     const text: string = await $.fs.read(prd.full)
     const requirements = requirementsOf(text)
+    if (requirements.length === 0) return `${path} 裡找不到需求：crew 把清單項目、表格的資料列，以及沒有清單的小節裡的段落當成需求。`
+    if (requirements.length > MAX_REQUIREMENTS) return `${path} 有 ${requirements.length} 條需求，crew 一次最多追 ${MAX_REQUIREMENTS} 條；請拆成幾份 PRD。`
     const today = dayOf(await $.clock.now())
     try {
-      // The PRD's requirements as the board will answer them: what a later change of the PRD is measured against.
-      await changeBoard($, async board => ({
-        board: { ...(board ?? newTracker(files.root.split('/').pop() ?? 'project')), crew_prd: { path, requirements, synced_at: today } },
-        value: undefined,
-      }))
+      // The PRD's requirements crew holds the board to: what a later change of the PRD is measured against.
+      // The PRD before it is kept with its requirement ids, so its features stay its own.
+      await changeBoard($, async board => {
+        const base = board ?? newTracker(files.root.split('/').pop() ?? 'project')
+        return { board: { ...base, crew_prd: { path, requirements: baselineFor(requirements), synced_at: today, ...earlierFor(base, path) } }, value: undefined }
+      })
     } catch (err) {
       if (err instanceof BoardRefused) return `crew 沒有開始：${err.message}`
       throw err
@@ -1203,8 +1267,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
   if (verb === 'status') {
     const board = await loadBoard($)
     const l = await read($, live)
-    const requirements = await prdRequirements($)
-    const s = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), ...(requirements === undefined ? {} : { requirements }) })
+    const s = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), prd: await prdView($) })
     return bandText(s, `crew（${l.flow.stage}）`)
   }
   await $.ui.open({ id: PANE, title: 'Crew' })
@@ -1251,7 +1314,7 @@ async function roleEnded($: any, e: any, next: any, role: CrewRole, before: Crew
   // A turn that answered the person is not the flow's work: it moves a running flow on only once it is done or idle.
   const flowWork = before.roles[role].run !== 'person' || !RUNNING.includes(l.flow.stage)
   const board = await loadBoard($)
-  const requirements = await prdRequirements($)
+  const requirements = (await prdView($))?.requirements
   if (board !== null && flowWork) await feed($, { type: 'role_done', role, board, inbox: inboxOf(l), ...(requirements === undefined ? {} : { requirements }) })
   else if (board === null && boardProblem() !== undefined) $.ui.toast(`crew：流程停在這裡。${boardProblem() ?? ''}`)
   // Work the flow gave the role while it was busy, now that it is free.
@@ -1322,8 +1385,7 @@ export const register: Register = on => {
     }
     await resumeOnStart($)
     // The PRD may have changed while Claude Code was closed; from now on crew looks every few seconds.
-    prdCache.requirements = undefined
-    prdCache.full = undefined
+    prdCache.view = undefined
     await update($, live, l => ({ ...l, signals: { ...l.signals, prdVersion: '' } }))
     await watch($)
     watching.timer?.cancel()
@@ -1607,10 +1669,7 @@ export const register: Register = on => {
       reply: id => $.ui.toast(`用 /crew answer ${id} <你的回答> 回覆`),
     }
     const view = { tab: await read($, tab), scenario: await read($, scenario), thread: await read($, thread), gate: await read($, gate) }
-    const requirements = demo ? undefined : await prdRequirements($)
-    const snap = demo
-      ? DEMO[view.scenario]
-      : snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), ...(requirements === undefined ? {} : { requirements }) })
+    const snap = demo ? DEMO[view.scenario] : snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), prd: await prdView($) })
     return CrewPane({ el, snap, view, act, isDemo: demo })
   })
 
@@ -1626,8 +1685,7 @@ export const register: Register = on => {
     }
     const l = await read($, live)
     if (l.prdPath === null) return next(e)
-    const requirements = await prdRequirements($)
-    const snap = snapshotOf({ board: await loadBoard($), live: l, now: await $.clock.now(), ...(requirements === undefined ? {} : { requirements }) })
+    const snap = snapshotOf({ board: await loadBoard($), live: l, now: await $.clock.now(), prd: await prdView($) })
     return (
       <Text dimColor wrap="truncate-end">
         {bandText(snap, 'crew')}

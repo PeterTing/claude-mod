@@ -3,7 +3,7 @@ import { criteriaOf, gateG1, gateG4 } from './board'
 import type { GateResult, Tracker } from './board'
 import { estimateTokens } from './memory'
 import type { MemoryEntry } from './memory'
-import { gateG0 } from './prd'
+import { droppedRequirements, gateG0, refsOf } from './prd'
 import type { Requirement } from './prd'
 import { ROLE_NAMES } from './model'
 import type { Feature, Gate, Item, RequirementRow, RoleId, RoleRow, Snapshot, Stage, StageCell, Tier, UsageRow } from './model'
@@ -31,7 +31,7 @@ export const emptyLive = (): CrewLive => ({
   retired: [],
   usageDay: '',
   pending: {},
-  signals: { prdVersion: '', prdChangedAt: 0, checkedAt: 0, added: 0, removed: 0 },
+  signals: { prdVersion: '', boardVersion: '', doubt: '', prdChangedAt: 0, checkedAt: 0, added: 0, removed: 0 },
 })
 
 const DAY = 86_400_000
@@ -102,37 +102,43 @@ const MEMORY_ROWS = 40
 
 const NOT_YET: StageCell = { state: 'later' }
 
+/** Criteria ids some test case covers. */
+const coveredCriteria = (board: Tracker): Set<string> => new Set(board.prd_items.flatMap(i => i.test_cases.flatMap(c => c.acceptance_criteria ?? [])))
+
 /**
- * Each PRD requirement with how far its development is: the spec (its features
- * have criteria) and the tests written for them, from the board; the stages
- * later phases add are marked later, never done.
+ * Each PRD requirement with how far its development is, from the board: the
+ * spec (every feature that answers it has criteria) and the test cases written
+ * for those criteria, which count as done only once the spec is. Stages crew
+ * does not track yet (design, tasks, code, review, test runs) are marked later,
+ * never done. A requirement a feature answers is in scope, even if it was
+ * dropped once.
  */
 const requirementRows = (board: Tracker, requirements: readonly Requirement[]): RequirementRow[] => {
   const features = board.prd_items.filter(i => i.crew_dropped === undefined)
-  const linked = new Set(board.prd_items.flatMap(i => i.test_cases.flatMap(c => c.acceptance_criteria ?? [])))
-  const dropped = new Map<string, string>()
-  for (const d of board.decisions ?? []) {
-    const v = d as { requirements?: unknown; reason?: unknown }
-    if (Array.isArray(v.requirements)) for (const r of v.requirements) if (typeof r === 'string') dropped.set(r, typeof v.reason === 'string' ? v.reason : '')
-  }
+  const covered = coveredCriteria(board)
+  const dropped = droppedRequirements(board)
   return requirements.map(r => {
-    const answering = features.filter(f => Array.isArray(f.source_refs) && (f.source_refs as unknown[]).includes(r.id))
+    const answering = features.filter(f => refsOf(f).includes(r.id))
     const criteria = answering.flatMap(criteriaOf)
     const specced = answering.filter(f => criteriaOf(f).length > 0).length
-    const tested = criteria.filter(c => linked.has(c.id)).length
+    const tested = criteria.filter(c => covered.has(c.id)).length
     const state = (done: number, all: number): StageCell['state'] => (all > 0 && done === all ? 'done' : done > 0 ? 'doing' : 'todo')
+    const spec = state(specced, answering.length)
+    const cases = state(tested, criteria.length)
+    const out = answering.length === 0 ? dropped.get(r.id) : undefined
     return {
       id: r.id,
       text: r.text,
       features: answering.map(f => f.id),
-      ...(dropped.has(r.id) ? { dropped: dropped.get(r.id) ?? '' } : {}),
+      ...(out === undefined ? {} : { dropped: out }),
       layers: {
-        spec: { state: state(specced, answering.length) },
+        spec: { state: spec },
         design: NOT_YET,
+        cases: { state: cases === 'done' && spec !== 'done' ? 'doing' : cases, note: `${tested}/${criteria.length}` },
         tasks: NOT_YET,
         code: NOT_YET,
         review: NOT_YET,
-        tests: { state: state(tested, criteria.length), note: `${tested}/${criteria.length}` },
+        runs: NOT_YET,
       },
     }
   })
@@ -144,22 +150,25 @@ export const snapshotOf = ({
   live,
   now,
   memories = [],
-  requirements,
+  prd,
 }: {
   board: Tracker | null
   live: CrewLive
   now: number
   memories?: readonly MemoryEntry[]
-  /** The PRD's requirements as the file stands now; absent, G0 is not shown. */
-  requirements?: readonly Requirement[]
+  /** The PRD as crew can read it now; absent (no PRD started), G0 is not shown. */
+  prd?: { requirements?: readonly Requirement[]; problem?: string } | undefined
 }): Snapshot => {
+  const requirements = prd?.requirements
   const g0 = board === null || requirements === undefined ? undefined : gateG0(board, requirements)
   const g1 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG1(board)
   const g4 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG4(board)
   const stage = live.flow.stage
   const testing = TESTING.includes(stage)
 
-  const linked = new Set(board === null ? [] : board.prd_items.flatMap(i => i.test_cases.flatMap(c => c.acceptance_criteria ?? [])))
+  const linked = board === null ? new Set<string>() : coveredCriteria(board)
+  // The split is done once every feature has criteria and the board answers the PRD.
+  const split: GateResult = g0 === undefined ? g1 : { covered: g1.covered + g0.requirements.covered, total: g1.total + g0.requirements.total, gaps: [...g1.gaps, ...g0.gaps] }
   const features: Feature[] = (board?.prd_items ?? []).map(item => {
     const criteria = criteriaOf(item)
     const covered = criteria.filter(c => linked.has(c.id)).length
@@ -178,10 +187,10 @@ export const snapshotOf = ({
     board === null
       ? null
       : {
-          done: (g0?.covered ?? 0) + g1.covered + g4.covered,
-          total: (g0?.total ?? 0) + g1.total + g4.total,
+          done: (g0?.requirements.covered ?? 0) + g1.covered + g4.covered,
+          total: (g0?.requirements.total ?? 0) + g1.total + g4.total,
           stages: [
-            stageOf('拆解', g1, stage === 'splitting'),
+            stageOf('拆解', split, stage === 'splitting'),
             pendingStage('設計'),
             pendingStage('架構'),
             pendingStage('實作'),
@@ -292,18 +301,19 @@ export const snapshotOf = ({
     actions: [],
     injected: { count: live.injected.count, average: live.injected.count === 0 ? 0 : Math.round(live.injected.tokens / live.injected.count) },
     chores: total(live.usage.memory),
-    ...(g0 === undefined || board === null || requirements === undefined
+    ...(board === null || prd === undefined
       ? {}
       : {
-          requirements: requirementRows(board, requirements),
+          ...(requirements === undefined ? {} : { requirements: requirementRows(board, requirements) }),
           alignment: {
-            covered: g0.covered,
-            total: g0.total,
-            gaps: g0.gaps.length,
+            covered: g0?.covered ?? 0,
+            total: g0?.total ?? 0,
+            gaps: g0?.gaps.length ?? 0,
             added: live.signals.added,
             removed: live.signals.removed,
             prdChanged: live.signals.prdChangedAt > 0 ? ageOf(live.signals.prdChangedAt, now) : '—',
             checked: live.signals.checkedAt > 0 ? ageOf(live.signals.checkedAt, now) : '—',
+            ...(prd.problem === undefined ? {} : { problem: prd.problem }),
           },
         }),
   }

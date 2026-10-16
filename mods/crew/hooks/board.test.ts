@@ -163,12 +163,36 @@ describe('applyOps errors', () => {
       [{ op: 'add_feature', title: ' ', summary: '' }, /標題是空白/],
       [{ op: 'drop_criterion', id: 'AC-404', reason: 'x' }, /找不到驗收條件 AC-404/],
       [{ op: 'drop_feature', id: 'PRD-404', reason: 'x' }, /找不到功能 PRD-404/],
+      [{ op: 'link_requirements', feature: 'PRD-404', requirements: ['R-abc123'] }, /找不到功能 PRD-404/],
+      [{ op: 'link_requirements', feature: 'PRD-001', requirements: [] }, /沒有指定 PRD 需求編號/],
+      [{ op: 'link_requirements', feature: 'PRD-001', requirements: ['登入'] }, /不是 PRD 需求編號/],
+      [{ op: 'drop_requirement', id: ' ', reason: 'x' }, /沒有指定 PRD 需求編號/],
+      [{ op: 'drop_requirement', id: 'PRD-001', reason: 'x' }, /不是 PRD 需求編號/],
     ]
     for (const [op, message] of cases) {
       const r = run(t, [op])
       expect(r.ok).toBe(false)
       if (!r.ok) expect(r.errors[0]).toMatch(message)
     }
+  })
+
+  test('lets only the PM link or drop PRD requirements', () => {
+    for (const op of [
+      { op: 'link_requirements', feature: 'PRD-001', requirements: ['R-abc123'] },
+      { op: 'drop_requirement', id: 'R-abc123', reason: 'x' },
+    ] as Op[]) {
+      const r = run(withTwoFeatures(), [op], 'qa')
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.errors[0]).toMatch(new RegExp(`QA 不能做 ${op.op}`))
+    }
+  })
+
+  test('linking a requirement the PM dropped takes the drop back', () => {
+    const r = run(withTwoFeatures(), [
+      { op: 'drop_requirement', id: 'R-abc123', reason: '下一版' },
+      { op: 'link_requirements', feature: 'PRD-001', requirements: ['R-abc123'] },
+    ])
+    expect(r.ok && (r.tracker.decisions?.at(-1) as { status: string }).status).toBe('superseded')
   })
 
   test('refuses every op from a role it does not know', () => {
@@ -329,7 +353,7 @@ describe('renderBoard, edges', () => {
     if (!r.ok) return
     const text = renderBoard(r.tracker)
     expect(text).toMatch(/PRD-001 方案選擇 — 移出範圍：下一版/)
-    expect(text).toMatch(/PRD-003 帳單 \[planned\]\n  （還沒有驗收條件）/)
+    expect(text).toMatch(/PRD-003 帳單 \[planned\] ← 還沒有對應的 PRD 需求\n  （還沒有驗收條件）/)
   })
 })
 
@@ -342,6 +366,19 @@ describe('renderBoard', () => {
     expect(text).toMatch(/PRD-002 取消訂閱/)
     expect(text).toMatch(/AC-002 取消後仍可使用到期末 ← TC-001/)
     expect(text).toMatch(/AC-003 到期當天取消立即生效 ← 沒有 test case/)
+  })
+
+  test('shows the PRD requirements each feature answers, and the ones moved out of scope', () => {
+    const r = run(withTwoFeatures(), [
+      { op: 'link_requirements', feature: 'PRD-001', requirements: ['R-abc123', 'R-def456'] },
+      { op: 'drop_requirement', id: 'R-0a0b0c', reason: '下一版' },
+    ])
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const text = renderBoard(r.tracker)
+    expect(text).toMatch(/PRD-001 .*\[[^\]]+\] ← R-abc123、R-def456/)
+    expect(text).toMatch(/PRD-002 .*← 還沒有對應的 PRD 需求/)
+    expect(text).toMatch(/移出範圍的 PRD 需求：R-0a0b0c（下一版）/)
   })
 
   test('narrows to one feature', () => {
@@ -360,10 +397,14 @@ describe('parseOps', () => {
       { op: 'drop_criterion', id: 'AC-001', reason: 'r' },
       { op: 'drop_feature', id: 'PRD-001', reason: 'r' },
       { op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e', types: ['manual'], role: 'u', fixture: 'f' },
+      { op: 'link_requirements', feature: 'PRD-001', requirements: ['R-abc123'] },
+      { op: 'drop_requirement', id: 'R-abc123', reason: 'r' },
+      { op: 'add_feature', title: 'c', sources: ['R-abc123'] },
     ])
     expect(r.ok).toBe(true)
     if (r.ok) {
-      expect(r.ops).toHaveLength(6)
+      expect(r.ops).toHaveLength(9)
+      expect(r.ops[8]).toEqual({ op: 'add_feature', title: 'c', summary: '', sources: ['R-abc123'] })
       expect(r.ops[1]).toEqual({ op: 'add_feature', title: 'b', summary: '' })
     }
   })
@@ -376,6 +417,10 @@ describe('parseOps', () => {
       'not an op',
       { op: 'drop_feature', id: 'PRD-001' },
       { op: 'add_feature', title: 'x', priority: 'P9' },
+      { op: 'link_requirements', requirements: ['R-abc123'] },
+      { op: 'link_requirements', feature: 'PRD-001', requirements: 'R-abc123' },
+      { op: 'drop_requirement', id: 'R-abc123' },
+      { op: 'add_feature', title: 'y', sources: 'R-abc123' },
     ])
     expect(r.ok).toBe(false)
     if (r.ok) return
@@ -385,6 +430,10 @@ describe('parseOps', () => {
     expect(r.error).toMatch(/第 4 筆/)
     expect(r.error).toMatch(/第 5 筆 drop_feature 缺少 reason/)
     expect(r.error).toMatch(/第 6 筆 add_feature 的 priority/)
+    expect(r.error).toMatch(/第 7 筆 link_requirements 缺少 feature/)
+    expect(r.error).toMatch(/第 8 筆 link_requirements 的 requirements/)
+    expect(r.error).toMatch(/第 9 筆 drop_requirement 缺少 reason/)
+    expect(r.error).toMatch(/第 10 筆 add_feature 的 sources/)
   })
 
   test('needs a list', () => {
