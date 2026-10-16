@@ -758,7 +758,12 @@ describe('the board held to the PRD', () => {
     for (const path of ['.env', '.git/config', 'config.json', 'notes/prod.txt']) expect((await $.command.run(command(`start ${path}`))).text).toMatch(/PRD 要是文件檔/)
     expect(w.spawned).toEqual([])
     expect(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '').not.toMatch(/JWT/)
-    // A spec folder that only starts with a dot is fine.
+    w.disk.set(`${ROOT}/.Secrets/prod.txt`, '- JWT_SIGNING_KEY=k9f8a7s6d5f4g3h2j1')
+    expect((await $.command.run(command('start .Secrets/prod.txt'))).text).toMatch(/PRD 要是文件檔/)
+    // A spec folder that only starts with a dot is fine, as is one whose name only starts like .env.
+    w.disk.set(`${ROOT}/.environment/PRD.md`, '- 可以登出')
+    expect((await $.command.run(command('start .environment/PRD.md'))).text).toMatch(/PM 正在拆/)
+    await $.command.run(command('reset'))
     w.disk.set(`${ROOT}/.kiro/specs/requirements.mdx`, '- 可以登入')
     expect((await $.command.run(command('start .kiro/specs/requirements.mdx'))).text).toMatch(/PM 正在拆/)
   })
