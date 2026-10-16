@@ -788,4 +788,83 @@ describe('the board held to the PRD', () => {
     await w.clock.advance(10_000)
     expect(w.sent.at(-1)?.text).toMatch(/移除的需求/)
   })
+
+  test('keeps one QA through two PRD changes during its run', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    const one = `${PRD}\n\n使用者可以改成年繳方案。`
+    const two = `${one}\n\n使用者可以暫停訂閱。`
+    const [r1, r2] = [requirementsOf(two).find(r => r.text.includes('年繳'))?.id ?? '', requirementsOf(two).find(r => r.text.includes('暫停'))?.id ?? '']
+    w.disk.set(PRD_PATH, one)
+    await w.clock.advance(10_000)
+    w.disk.set(PRD_PATH, two)
+    await w.clock.advance(10_000)
+    await write($, 'a-pm-1', [
+      { op: 'add_criterion', feature: 'PRD-001', text: '可以改成年繳' },
+      { op: 'add_criterion', feature: 'PRD-002', text: '可以暫停' },
+      { op: 'link_requirements', feature: 'PRD-001', requirements: [r1] },
+      { op: 'link_requirements', feature: 'PRD-002', requirements: [r2] },
+    ])
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
+    await done($, 'a-qa-2')
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa'])
+    expect(w.sent.at(-1)?.to).toBe('a-qa-2')
+    expect(w.sent.at(-1)?.text).toMatch(/AC-003[\s\S]*AC-004/)
+  })
+
+  test('holds nothing to another PRD’s board at a turn end, even when the board misses this PRD', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string; requirements: unknown[] } }
+    board.crew_prd = { path: 'docs/OTHER.md', requirements: [{ id: 'R-aaaaaa', text: '隊友的需求', section: '' }] }
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    await $.command.run(command('ask pm 先把兩個功能都拿掉'))
+    await write($, 'a-pm-1', [
+      { op: 'drop_feature', id: 'PRD-001', reason: 'x' },
+      { op: 'drop_feature', id: 'PRD-002', reason: 'x' },
+    ])
+    await done($, 'a-pm-1', '拿掉了')
+    expect(w.sent.some(m => /看板還對不上 PRD/.test(m.text))).toBe(false)
+  })
+
+  test('does not let a role take back a decision the person made, numbered like the roles’ own', async ($, on) => {
+    const w = world($, on)
+    w.disk.set(`${ROOT}/.crew/memory/memories.jsonl`, `${JSON.stringify({ id: 'DEC-001', type: 'DEC', text: '年繳不做', refs: [], roles: [], source: 'person', t: 1 })}\n`)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { decisions?: unknown[] }
+    board.decisions = [{ id: 'DEC-001', status: 'accepted', requirements: [REQ], decision: 'x' }]
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    await write($, 'a-pm-1', [...SPLIT, { op: 'link_requirements', feature: 'PRD-001', requirements: [REQ] }])
+    const dec = parseMemories(w.disk.get(`${ROOT}/.crew/memory/memories.jsonl`) ?? '').find(m => m.id === 'DEC-001')
+    expect(dec?.supersededBy).toBeUndefined()
+  })
+
+  test('still says the board follows another PRD after a start that was refused', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    const good = w.disk.get(`${ROOT}/prd-tracker.json`) ?? ''
+    w.disk.set(`${ROOT}/docs/BILLING.md`, '# 帳單\n\n每月寄出電子發票。')
+    w.disk.set(`${ROOT}/prd-tracker.json`, '{ broken')
+    expect((await $.command.run(command('start docs/BILLING.md'))).text).toMatch(/沒有開始/)
+    const board = JSON.parse(good) as { crew_prd: { path: string } }
+    board.crew_prd.path = 'docs/OTHER.md'
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    expect((await $.command.run(command('status'))).text).toMatch(/另一份 PRD/)
+  })
+
+  test('does not call testing done on the progress tab while the board does not answer the PRD', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    w.disk.set(PRD_PATH, CHANGED)
+    await w.clock.advance(10_000)
+    expect(await paneText($, 'progress')).not.toMatch(/測試 ✓/)
+  })
 })

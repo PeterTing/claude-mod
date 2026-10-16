@@ -194,7 +194,8 @@ export const snapshotOf = ({
             pendingStage('設計'),
             pendingStage('架構'),
             pendingStage('實作'),
-            stageOf('測試', g4, testing),
+            // Testing is done only once the split is: a requirement still without features has nothing tested yet.
+            { ...stageOf('測試', g4, testing), ...(split.gaps.length > 0 && g4.total > 0 && g4.gaps.length === 0 ? { state: testing ? ('active' as const) : ('pending' as const) } : {}) },
             pendingStage('驗收'),
           ],
           features,

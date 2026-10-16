@@ -171,6 +171,10 @@ describe('requirementsOf', () => {
     expect(requirementsOf(md).map(r => r.text)).toEqual(['歌單在背景自動同步到雲端', 'The app refreshes playlists every hour', '離開 App 後繼續播放'])
   })
 
+  test('takes the requirements after a comment that spans lines', () => {
+    expect(requirementsOf('## 帳號\n<!--\n寫給作者的說明\n-->\n- 可以登入').map(r => r.text)).toEqual(['可以登入'])
+  })
+
   test('finds the real requirements of a realistic PRD, and few others', () => {
     const md = [
       '---',
