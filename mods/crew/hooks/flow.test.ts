@@ -129,6 +129,11 @@ describe('step', () => {
     expect(step({ stage: 'planning', round: 3, retries: 1 }, { type: 'role_done', role: 'techlead', board: half, inbox: { pm: ['AC-002'] } }).state.stage).toBe('escalated')
   })
 
+  test('still starts a role that is free while another is busy', () => {
+    const out = step({ stage: 'splitting', round: 0, retries: 0 }, { type: 'role_done', role: 'pm', board: board(SPLIT), working: ['techlead'] })
+    expect(out.actions.map(a => [a.type, 'role' in a ? a.role : ''])).toEqual([['spawn', 'qa']])
+  })
+
   test('starts planning with fresh rounds, so the tech lead’s questions reach the PM after a long test phase', () => {
     const covered = board(SPLIT, [tc(['AC-001', 'AC-002'])])
     const planning = step({ stage: 'confirming', round: 3, retries: 0 }, { type: 'role_done', role: 'pm', board: covered })
