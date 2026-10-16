@@ -530,6 +530,13 @@ describe('the PRD as the flow holds the board to it', () => {
     expect((r.actions[0] as { prompt: string }).prompt).toMatch(new RegExp(`已經有功能對應[\\s\\S]*${r1}`))
   })
 
+  test('does not count the check a start makes against the split’s retry either', () => {
+    // A board that answers the PRD with a feature that has no criteria yet.
+    const noCriteria = board([{ op: 'add_feature', title: '方案選擇', summary: '', sources: [r1 ?? '', r2 ?? ''] }])
+    const checked = step({ stage: 'done', round: 1, retries: 0 }, { ...START_WITH, board: noCriteria })
+    expect(checked.state).toMatchObject({ stage: 'splitting', retries: 0 })
+  })
+
   test('does not count the check a start makes against the PM’s retry', () => {
     const covered = board(tied, [tc(['AC-001', 'AC-002'])])
     const now = requirementsOf('## 方案\n- 可以選月繳方案\n- 可以看到價格\n- 可以改方案')

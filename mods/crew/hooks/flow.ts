@@ -375,7 +375,7 @@ export const step = (state: FlowState, event: FlowEvent): StepResult => {
     const answered = event.board === undefined || event.requirements === undefined ? [] : answeredOf(event.board, event.requirements)
     if (event.board !== undefined && event.requirements !== undefined && answered.length > 0 && answered.length * 2 >= event.requirements.length) {
       const r = afterSplit({ stage: 'splitting', round: 0, retries: 0 }, event.board, event.requirements)
-      return r.state.stage === 'splitting' ? { ...r, state: { ...r.state, aligning: 0 } } : r
+      return r.state.stage === 'splitting' ? { ...r, state: { ...r.state, aligning: 0, retries: 0 } } : r
     }
     const tier = tierFor({ kind: 'split_prd', size: event.prd.size, ...(event.prd.text === undefined ? {} : { text: event.prd.text }) })
     return {

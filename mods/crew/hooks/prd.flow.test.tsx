@@ -747,15 +747,20 @@ describe('the board held to the PRD', () => {
     expect(status).not.toMatch(/跟看板走/)
   })
 
-  test('starts only a Markdown or text file, outside hidden folders', async ($, on) => {
+  test('starts only a document, outside private places, wherever a link in the repo leads', async ($, on) => {
     const w = world($, on)
     w.disk.set(`${ROOT}/.env`, '- JWT_SIGNING_KEY=k9f8a7s6d5f4g3h2j1')
     w.disk.set(`${ROOT}/.git/config`, '- url = x')
     w.disk.set(`${ROOT}/config.json`, '- a')
+    w.disk.set(`${ROOT}/.env.local/prod.txt`, '- JWT_SIGNING_KEY=k9f8a7s6d5f4g3h2j1')
+    w.links.set(`${ROOT}/notes`, `${ROOT}/.env.local`)
     await start($)
-    for (const path of ['.env', '.git/config', 'config.json']) expect((await $.command.run(command(`start ${path}`))).text).toMatch(/PRD 要是 \.md、\.markdown 或 \.txt/)
+    for (const path of ['.env', '.git/config', 'config.json', 'notes/prod.txt']) expect((await $.command.run(command(`start ${path}`))).text).toMatch(/PRD 要是文件檔/)
     expect(w.spawned).toEqual([])
     expect(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '').not.toMatch(/JWT/)
+    // A spec folder that only starts with a dot is fine.
+    w.disk.set(`${ROOT}/.kiro/specs/requirements.mdx`, '- 可以登入')
+    expect((await $.command.run(command('start .kiro/specs/requirements.mdx'))).text).toMatch(/PM 正在拆/)
   })
 
   test('does not let a role take back a memory of the person’s through a planted board decision', async ($, on) => {

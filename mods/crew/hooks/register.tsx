@@ -330,14 +330,19 @@ const relativeOf = (path: string): string => {
   return full.startsWith(`${files.root}/`) ? full.slice(files.root.length + 1) : path
 }
 
-/** A file crew may take for a PRD by its name: Markdown or text, outside hidden folders such as .git. Its text goes on the board. */
-const prdName = (full: string): boolean =>
-  full.startsWith(`${files.root}/`) && /\.(?:md|markdown|txt)$/i.test(full) && !full.slice(files.root.length + 1).split('/').some(part => part.startsWith('.'))
+/** Folders and files no PRD lives in: their text would go on the board, which is in git. */
+const PRIVATE = /^(?:\.git|\.crew|\.ssh|\.aws|\.gnupg|\.env.*)$/i
+
+/** A file crew may take for a PRD by its name: a document, outside private folders such as .git. Its text goes on the board. */
+const prdName = (full: string, root: string = files.root): boolean =>
+  full.startsWith(`${root}/`) && /\.(?:md|markdown|mdx|txt|rst|adoc|org)$/i.test(full) && !full.slice(root.length + 1).split('/').some(part => PRIVATE.test(part))
+
+const PRD_NAME_RULE = 'PRD 要是文件檔（.md、.markdown、.mdx、.txt、.rst、.adoc、.org），而且不在 .git、.crew、.ssh、.env 這類私密的地方'
 
 async function prdFile($: any, path: string): Promise<{ full: string } | { error: string }> {
   const full = fullPathOf(path)
   if (!full.startsWith(`${files.root}/`)) return { error: `PRD 要在這個 repo 裡（${files.root}）。` }
-  let stat: { kind: string }
+  let stat: { kind: string; realPath?: string }
   try {
     stat = await $.fs.stat(full, { resolve: true })
   } catch {
@@ -345,7 +350,8 @@ async function prdFile($: any, path: string): Promise<{ full: string } | { error
   }
   if (!(await staysIn($, full))) return { error: `PRD 要在這個 repo 裡（${files.root}）：${path} 是連結，或指到 repo 外。` }
   if (stat.kind !== 'file') return { error: `${path} 不是檔案。` }
-  if (!prdName(full)) return { error: `PRD 要是 .md、.markdown 或 .txt 檔，而且不在隱藏資料夾裡：${path}` }
+  // Both the name typed and where it really leads: a folder link in the repo does not reach a private file.
+  if (!prdName(full) || (stat.realPath !== undefined && !prdName(stat.realPath, await realRoot($)))) return { error: `${PRD_NAME_RULE}：${path}` }
   return { full }
 }
 
@@ -998,7 +1004,7 @@ async function prdView($: any): Promise<PrdView | undefined> {
   if (!starting.busy && view.problem === undefined && typeof kept?.crew_prd?.path === 'string' && relativeOf(kept.crew_prd.path) !== path) {
     const theirs = cut(squeeze(kept.crew_prd.path), 80)
     // Following the board is suggested only for a path crew could start: the board is anyone's to commit.
-    const follow = prdName(fullPathOf(theirs)) && !/\s/.test(theirs) ? `要跟看板走用 /crew start ${theirs}，` : ''
+    const follow = prdName(fullPathOf(theirs)) && /^[\p{L}\p{N}._/-]+$/u.test(theirs) ? `要跟看板走用 /crew start ${theirs}，` : ''
     view = { problem: `看板對準的是另一份 PRD${quoted(theirs)}，crew 追的是「${path}」：${follow}要讓看板改對準這一份用 /crew start ${path}` }
   }
   if (view.problem !== undefined) warnOnce($, view.problem)
@@ -1189,30 +1195,35 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
   if (verb === 'start') {
     const typed = rest.join(' ')
     if (typed === '') return '用法：/crew start <PRD 檔案路徑>'
-    // A look under way finishes first, so it cannot move the flow under this start.
-    await watching.running
-    const stage = (await read($, live)).flow.stage
-    if (RUNNING.includes(stage)) return `crew 正在進行（${stage}），等這一輪完成再開始新的；卡住的話用 /crew resume 接續，或 /crew reset。`
-    const prd = await prdFile($, typed)
-    if ('error' in prd) return prd.error
-    // The PRD is known by where it really is: one file reached through a link in the repo is one PRD.
-    let real: string | undefined
-    try {
-      real = ((await $.fs.stat(prd.full, { resolve: true })) as { realPath?: string }).realPath
-    } catch {
-      return `找不到 ${typed}。`
-    }
-    const root = await realRoot($)
-    const path = real !== undefined && real.startsWith(`${root}/`) ? real.slice(root.length + 1) : relativeOf(typed)
-    const previous = (await read($, live)).prdPath
-    const text: string = await $.fs.read(prd.full)
-    const requirements = requirementsOf(text)
-    if (requirements.length === 0) return `${path} 裡找不到需求：crew 把清單項目、表格的資料列，以及沒有清單的小節裡的段落當成需求。`
-    if (requirements.length > MAX_REQUIREMENTS) return `${path} 有 ${requirements.length} 條需求，crew 一次最多追 ${MAX_REQUIREMENTS} 條；請拆成幾份 PRD。`
-    const today = dayOf(await $.clock.now())
-    // Until the board and the session both name this PRD, no look runs and no view calls them apart.
+    // From here until the board and the session both name this PRD, no look starts and no view calls them apart;
+    // a look already under way finishes first, so it cannot move the flow under this start.
     starting.busy = true
+    let path = ''
+    let text = ''
+    let requirements: Requirement[] = []
+    let full = ''
     try {
+      await watching.running
+      const stage = (await read($, live)).flow.stage
+      if (RUNNING.includes(stage)) return `crew 正在進行（${stage}），等這一輪完成再開始新的；卡住的話用 /crew resume 接續，或 /crew reset。`
+      const prd = await prdFile($, typed)
+      if ('error' in prd) return prd.error
+      full = prd.full
+      // The PRD is known by where it really is: one file reached through a link in the repo is one PRD.
+      let real: string | undefined
+      try {
+        real = ((await $.fs.stat(prd.full, { resolve: true })) as { realPath?: string }).realPath
+      } catch {
+        return `找不到 ${typed}。`
+      }
+      const root = await realRoot($)
+      path = real !== undefined && real.startsWith(`${root}/`) ? real.slice(root.length + 1) : relativeOf(typed)
+      const previous = (await read($, live)).prdPath
+      text = await $.fs.read(prd.full)
+      requirements = requirementsOf(text)
+      if (requirements.length === 0) return `${path} 裡找不到需求：crew 把清單項目、表格的資料列，以及沒有清單的小節裡的段落當成需求。`
+      if (requirements.length > MAX_REQUIREMENTS) return `${path} 有 ${requirements.length} 條需求，crew 一次最多追 ${MAX_REQUIREMENTS} 條；請拆成幾份 PRD。`
+      const today = dayOf(await $.clock.now())
       try {
         // The PRD's requirements crew holds the board to: what a later change of the PRD is measured against.
         // The PRD before it is kept with its requirement ids, so its features stay its own.
@@ -1225,7 +1236,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
         if (err instanceof BoardRefused) return `crew 沒有開始：${err.message}`
         throw err
       }
-      const version = await versionOf($, prd.full)
+      const version = await versionOf($, full)
       await update($, live, l => ({ ...l, signals: { ...l.signals, prdVersion: version, added: 0, removed: 0 } }))
       await update($, isDemo, () => false)
       await update($, live, l => ({ ...l, prdPath: path, lead: by }))
