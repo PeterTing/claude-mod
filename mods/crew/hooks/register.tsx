@@ -1103,6 +1103,9 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     await update($, live, l => ({ ...l, prdPath: path, lead: by }))
     await note($, { kind: 'prd', path, size: text.length, by })
     await feed($, { type: 'start', prd: { path, size: text.length, text: text.slice(0, 4_000) }, requirements })
+    // The pane says how the board stands against the PRD, and when crew looked, from the first moment.
+    await update($, live, l => ({ ...l, signals: { ...l.signals, checkedAt: 0 } }))
+    await watch($)
     await $.ui.open({ id: PANE, title: 'Crew' })
     const pm = (await read($, live)).roles.pm
     if (pm.state === 'blocked') return `crew 沒有開始：${pm.doing}`

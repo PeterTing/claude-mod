@@ -36,6 +36,13 @@ describe('the board held to the PRD', () => {
     expect((w.board() as { crew_prd?: { requirements: { id: string }[] } } | null)?.crew_prd?.requirements.map(r => r.id)).toEqual([REQ])
   })
 
+  test('says when crew last looked from the moment a PRD starts', async ($, on) => {
+    world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    expect(await paneText($)).toMatch(/對準 PRD 0\/1 ⚠[^\n]*即時檢查 剛剛/)
+  })
+
   test('keeps the PM on the split until every requirement has a feature', async ($, on) => {
     const w = world($, on)
     await start($)
