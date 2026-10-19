@@ -52,7 +52,7 @@ Mods by other authors are not sandboxed: they run with your permissions. Each on
 | Mod | What it does | Kind |
 | --- | --- | --- |
 | [`zh-reply`](mods/zh-reply) | Claude and its agents reply in Chinese (Traditional by default); a reply in another language is asked for again | System prompt, agent tasks, messages; sends a rewrite prompt |
-| [`crew`](mods/crew) | A resident PM and QA work your PRD into features, acceptance criteria and test cases, bring gaps and questions back to you, and remember decisions in the repo. Work in progress | Spawns subagents, MCP tools, a pane; writes `prd-tracker.json` and `.crew/`; uses Haiku once a day |
+| [`crew`](mods/crew) | A resident PM, QA, tech lead and full-stack work your PRD into features, acceptance criteria, test cases, tasks and code, bring gaps and questions back to you, and remember decisions in the repo. Work in progress | Spawns subagents that edit files and run commands under your permission mode, MCP tools, a pane; writes `prd-tracker.json` and `.crew/`; runs `git worktree add` and `git log` for its own branch `crew/<name>`; uses Haiku once a day |
 
 ## Repository layout
 

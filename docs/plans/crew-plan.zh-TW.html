@@ -759,6 +759,17 @@ flowchart LR
     <li>實跑一份待辦 App 的 PRD：PM 拆出 11 條驗收條件，QA 寫了 29 個 test case，Tech lead 拆了 12 個任務，每個任務都寫到檔案層級。G3 ✓，進度 100%。</li>
     <li>三個 reviewer 各審兩輪，最後都沒有 critical 或 important。</li>
   </ul>
+  <h3>第 4c 階段：全端寫程式（2026-10-19，0.3.0）</h3>
+  <ul class="plain prose">
+    <li>Tech lead 拆完任務後，全端一次做一個任務。它在 crew 自己的 git worktree（<code>.crew/work/&lt;名稱&gt;</code>，分支 <code>crew/&lt;名稱&gt;</code>）裡先寫會失敗的測試、再實作，commit 訊息以任務編號開頭（<code>TASK-001: …</code>）。模型照任務大小決定：S、M 用 Sonnet・high，L 用 Opus・high，XL 用 Opus・xhigh。</li>
+    <li>「做了沒」看 commit，不看全端怎麼說。只算 crew 的分支上、crew 開分支之後、其他分支都沒有的 commit。每個 commit 第一次被看到時，就綁定它當時做的任務（標題和驗收條件），記在本機，不放進 repo。所以合併或刪掉分支後不會掉；重做的看板上同編號的新任務，也不會被舊 commit 算成做完。</li>
+    <li>有 commit 只算「進行中」，不算完成：「實作」欄和整體進度都要等 4d 的 review 才會打勾。所有百分比都無條件捨去，100% 一定代表全部完成。Tech lead 排好的任務在「最近完成」裡寫成「排定：…」。</li>
+    <li>全端從 worktree 啟動，不在你的 checkout 裡。每一輪結束後，crew 都會檢查你的 checkout 有沒有新的變更、換了分支或多了 commit，有的話就告訴你。這是提醒，不是隔離：全端照你的權限模式執行。crew 自己跑 git 時會關掉 repo 的 hooks 和 file monitor。</li>
+    <li>進度列改成和每條需求同樣的七段：規格、設計、測試案例、任務、實作、Review、測試結果。以前「測試 ✓」只代表寫好了 test case。</li>
+    <li>實跑一份計算機的 PRD，從 <code>/crew start</code> 到完成約 1 分半：PM 拆出 2 個功能，QA 寫 test case，Tech lead 拆成 2 個任務，全端在 worktree 裡 commit 3 次。crew 都看到了，進度停在 88%（等 review）。這次實跑也抓到測試沒發現的 bug：真的 git 不接受 <code>--exclude=refs/heads/…</code> 這種寫法，結果 crew 一個 commit 都看不到。修好後，假 git 也改成照真的 git 的規則。</li>
+    <li>安全、品質、測試三個 reviewer 各審了四輪，最後都沒有 critical 或 important。</li>
+  </ul>
+  <p class="prose">已知限制，留到 4d：全端改到 crew 自己的檔案（<code>prd-tracker.json</code>、<code>.crew/</code>）時不會提醒，請在 git 裡檢查；沒辦法取消一個任務的「已 commit」，要等 review 才能退回；換一台機器時，看板不會顯示有實作，要等 crew 在自己的分支上看到 commit。</p>
   <h3>接下來：每一欄都接上真實訊號</h3>
   <p class="prose">每一欄的狀態都從真實訊號算出來，角色自己說「做完了」不算數。實作前，會先在 <code>/crew demo</code> 把每一欄的樣子做成設計稿，請你確認。</p>
   <div class="table-wrap">
@@ -766,7 +777,7 @@ flowchart LR
       <thead><tr><th>階段</th><th>欄位</th><th>誰做</th><th>狀態從哪裡來</th><th>關卡</th></tr></thead>
       <tbody>
         <tr><td>4b ✓</td><td>任務</td><td>Tech lead</td><td>Tech lead 把驗收條件拆成任務，每個任務都要對應到驗收條件。</td><td>G3：每條驗收條件都有任務</td></tr>
-        <tr><td>4c</td><td>實作</td><td>全端</td><td>git commit 訊息裡寫的 TASK 編號；只算真的進了分支的 commit。</td><td>—</td></tr>
+        <tr><td>4c ✓</td><td>實作</td><td>全端</td><td>crew 分支上、開分支之後的 commit，訊息以 TASK 編號開頭；每個 commit 都綁定它做的任務。只算「進行中」，要 review 過才算完成。</td><td>—</td></tr>
         <tr><td>4d</td><td>Review</td><td>Tech lead</td><td>review 結果釘在某個 commit sha 上；之後又有新的 commit，就標成「過期」，要重新 review。</td><td>G5：最新的 commit 都 review 過</td></tr>
         <tr><td>4e</td><td>測試結果</td><td>QA</td><td>crew 跑你指定的測試指令，把結果對應到 TC 編號，並保留證據。指令只存在本機，不放進 repo，避免 clone 下來的 repo 讓 crew 跑任意指令。</td><td>G6：每個 test case 都有通過的結果</td></tr>
         <tr><td>4f</td><td>設計</td><td>UI/UX</td><td>設計稿要由你核准；只有 UI/UX 自己說完成的不算。</td><td>G2：每個畫面都有你核准的設計稿</td></tr>
