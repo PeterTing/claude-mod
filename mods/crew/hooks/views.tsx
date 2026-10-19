@@ -1,6 +1,8 @@
 import type { CrewScenario, CrewTab } from '../types'
 import {
+  barCells,
   hitRate,
+  percent,
   ITEM_STATUS_NAMES,
   MEMORY_TYPE_NAMES,
   ROLE_NAMES,
@@ -58,11 +60,11 @@ const GATE_TEXT = (g: Gate): [string, string] => {
 
 /** A bar of `width` cells, filled to `percent`. */
 export const bar = (percent: number, width = 20): string => {
-  const filled = Math.round((Math.max(0, Math.min(100, percent)) / 100) * width)
+  const filled = barCells(percent, width)
   return `${'█'.repeat(filled)}${'░'.repeat(width - filled)}`
 }
 
-const percentOf = (p: Progress): number => (p.total === 0 ? 0 : Math.round((p.done / p.total) * 100))
+const percentOf = (p: Progress): number => percent(p.done, p.total)
 
 const STAGE_COLORS = { done: 'success', active: 'suggestion', pending: 'subtle' } as const
 
@@ -189,7 +191,7 @@ function ProgressTab({ el, snap }: { el: Elements; snap: Snapshot }) {
 /** What a gate checks, who fills and confirms it, how much is covered, and each gap. */
 function GateDetail({ el, g, act }: { el: Elements; g: Gate; act: Actions }) {
   const { Box, Text, Button } = el
-  const pct = g.total === 0 ? 0 : Math.round((g.covered / g.total) * 100)
+  const pct = percent(g.covered, g.total)
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1}>
       <Box flexDirection="row" gap={1}>

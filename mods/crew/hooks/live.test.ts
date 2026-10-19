@@ -4,6 +4,7 @@ import type { CrewLive } from '../types'
 import { applyOps, newTracker } from './board'
 import type { Op, Tracker } from './board'
 import { emptyLive, snapshotOf } from './live'
+import { barCells, percent } from './model'
 import type { Snapshot } from './model'
 import { bandText } from './views'
 import { withCommits } from './git'
@@ -362,5 +363,17 @@ describe('the full-stack’s commits', () => {
     expect(items.find(i => i.id === 'TASK-001')?.note).toMatch(/commit abc1234/)
     expect(items.find(i => i.id === 'TASK-002')).toMatchObject({ owner: 'fullstack', status: 'doing' })
     expect(items.find(i => i.id === 'TASK-002')?.note).toMatch(/全端正在做/)
+  })
+})
+
+describe('percentages', () => {
+  test('never read 100 before everything is done, and fill a bar’s last cell only then', () => {
+    expect(percent(199, 200)).toBe(99)
+    expect(percent(200, 200)).toBe(100)
+    expect(percent(1, 3)).toBe(33)
+    expect(percent(0, 0)).toBe(0)
+    expect(barCells(99.6, 20)).toBe(19)
+    expect(barCells(100, 20)).toBe(20)
+    expect(barCells(-5, 20)).toBe(0)
   })
 })

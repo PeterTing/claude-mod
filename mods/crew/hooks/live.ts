@@ -5,7 +5,7 @@ import { estimateTokens } from './memory'
 import type { MemoryEntry } from './memory'
 import { droppedRequirements, gateG0, refsOf } from './prd'
 import type { Requirement } from './prd'
-import { ROLE_NAMES } from './model'
+import { percent, ROLE_NAMES } from './model'
 import type { Feature, Gate, Item, RequirementRow, RoleId, RoleRow, Snapshot, Stage, StageCell, Tier, UsageRow } from './model'
 
 /** A team that has not started. */
@@ -191,12 +191,12 @@ export const snapshotOf = ({
   const features: Feature[] = (board?.prd_items ?? []).map(item => {
     const criteria = criteriaOf(item)
     const covered = criteria.filter(c => linked.has(c.id)).length
-    const percent = criteria.length === 0 ? 0 : Math.round((covered / criteria.length) * 100)
+    const share = percent(covered, criteria.length)
     return {
       id: item.id,
       title: item.title,
-      percent,
-      layers: { design: 'todo', frontend: 'todo', backend: 'todo', test: percent === 100 ? 'done' : covered > 0 ? 'doing' : 'todo' },
+      percent: share,
+      layers: { design: 'todo', frontend: 'todo', backend: 'todo', test: share === 100 ? 'done' : covered > 0 ? 'doing' : 'todo' },
       ...(item.crew_dropped !== undefined ? { dropped: item.crew_dropped } : {}),
     }
   })
@@ -301,7 +301,7 @@ export const snapshotOf = ({
     .map(t => ({ tier: t, tokens: live.tiers[t] ?? 0 }))
 
   return {
-    prd: board === null ? null : { id: board.project, title: live.prdPath ?? 'prd-tracker.json', progress: progress === null || progress.total === 0 ? 0 : Math.round((progress.done / progress.total) * 100) },
+    prd: board === null ? null : { id: board.project, title: live.prdPath ?? 'prd-tracker.json', progress: progress === null ? 0 : percent(progress.done, progress.total) },
     progress,
     today,
     roles: (['pm', 'uiux', 'fullstack', 'qa', 'techlead'] as const).map(roleRow),
