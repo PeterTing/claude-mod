@@ -5,6 +5,7 @@ import type { Op, Tracker } from './board'
 import { INITIAL, step } from './flow'
 import { withCommits } from './git'
 import { requirementsOf } from './prd'
+import { PLAN, SPLIT as WORLD_SPLIT } from './world'
 import type { FlowEvent, FlowState } from './flow'
 
 const ctx = (by: string) => ({ by, today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } })
@@ -752,5 +753,37 @@ describe('the PRD as the flow holds the board to it', () => {
       // While the full-stack is still at work, its own run's end takes the flow on.
       expect(step(s, { type: 'role_done', role: 'techlead', board: plannedTwo(), report: '用 Stripe。', working: ['fullstack'] }).actions).toEqual([])
     })
+  })
+})
+
+describe('what the full-stack is given', () => {
+  const apply = (t: Tracker, ops: readonly unknown[], by: string): Tracker => {
+    const r = applyOps(t, ops as Op[], { today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' }, by })
+    if (!r.ok) throw new Error(r.errors.join())
+    return r.tracker
+  }
+  const tested = (): Tracker =>
+    apply(apply(newTracker('x'), WORLD_SPLIT, 'pm'), [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }], 'qa')
+  const committed = (t: Tracker, id: string): Tracker => withCommits(t, new Map([[id, ['abc1234']]])) ?? t
+
+  test('is never a task the tech lead dropped', () => {
+    const plan = apply(tested(), [...PLAN, { op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '另一種做法', detail: '' }, { op: 'drop_task', id: 'TASK-001', reason: '改用 TASK-003' }], 'techlead')
+    const r = step({ stage: 'planning', round: 0, retries: 0 }, { type: 'role_done', role: 'techlead', board: plan })
+    expect(r.state).toMatchObject({ stage: 'building', building: 'TASK-002' })
+  })
+
+  test('is never a task of a feature the PM dropped', () => {
+    const plan = apply(apply(tested(), PLAN, 'techlead'), [{ op: 'drop_feature', id: 'PRD-001', reason: '不做' }], 'pm')
+    const r = step({ stage: 'planning', round: 0, retries: 0 }, { type: 'role_done', role: 'techlead', board: plan })
+    expect(r.state).toMatchObject({ stage: 'building', building: 'TASK-002' })
+  })
+
+  test('goes to the person once its worktree is left with changes not committed twice, not round and round', () => {
+    const board = committed(apply(tested(), PLAN, 'techlead'), 'TASK-001')
+    const once = step({ stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, { type: 'role_done', role: 'fullstack', board, unclean: true })
+    expect(once.actions[0]).toMatchObject({ type: 'message', role: 'fullstack' })
+    const twice = step(once.state, { type: 'role_done', role: 'fullstack', board, unclean: true })
+    expect(twice.state).toMatchObject({ stage: 'escalated', resumeAt: 'building' })
+    expect(twice.actions.some(a => a.type === 'ask_person')).toBe(true)
   })
 })

@@ -72,6 +72,8 @@ describe('/crew demo', () => {
       const text = await shown(ui)
       expect(text).toMatch(/整體進度/)
       expect(text).toMatch(/31\/50 項/)
+      // The same seven stages as each requirement's row, in its order.
+      expect(text).toMatch(/規格 ✓[\s\S]*設計 ✓[\s\S]*測試案例 10\/12[\s\S]*任務 4\/5[\s\S]*實作 5\/14[\s\S]*Review 3\/14[\s\S]*測試結果 1\/8/)
       expect(text).toMatch(/62%/)
       expect(text).toMatch(/目前在/)
       expect(text).toMatch(/今天完成 7 項/)
@@ -106,7 +108,8 @@ describe('/crew demo', () => {
       const text = await shown(ui)
       expect(text).toMatch(/每條驗收條件都有 test case/)
       expect(text).toMatch(/QA 補.*PM 確認/)
-      expect(text).toMatch(/14\/16/)
+      // 14 of 16 is 87.5%: shown as 87, never rounded up toward done.
+      expect(text).toMatch(/14\/16（87%）/)
       expect(text).toMatch(/AC-07/)
       expect(text).toMatch(/AC-09/)
       expect(text).toMatch(/程式計算/)

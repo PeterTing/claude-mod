@@ -198,13 +198,13 @@ export type Snapshot = {
   chores?: number
 }
 
-/** 41200 → "41K", 950 → "950". */
 /** A whole percentage, rounded down: it reads 100 only once everything is done. */
 export const percent = (done: number, total: number): number => (total === 0 ? 0 : Math.floor((done / total) * 100))
 
 /** How many of a bar's `width` cells a percentage fills, rounded down: the last cell fills only at 100. */
 export const barCells = (pct: number, width: number): number => Math.floor((Math.max(0, Math.min(100, pct)) / 100) * width)
 
+/** 41200 → "41K", 950 → "950". */
 export const tokens = (n: number): string => (n >= 1000 ? `${Math.round(n / 1000)}K` : String(n))
 
 /** The share of input read from the prompt cache, as a whole percent. */

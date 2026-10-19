@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
+import { taskMark } from './git'
 import { build, command, done, paneText, PLAN, ROOT, SPLIT, start, world, write } from './world'
 
 /** The full-stack builds the tasks one at a time in crew's own worktree; a commit, not its word, says a task is built. */
@@ -347,5 +348,70 @@ describe('the full-stack', () => {
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-4')
     expect(w.toasts.some(t => /全端這一輪期間，你的工作目錄多了 1 個變更（src\/early\.ts）/.test(t))).toBe(true)
+  })
+
+  test('makes a new branch once crew’s branch is merged and deleted, and keeps what it saw built', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-4')
+    // The person merges crew's branch and deletes it while the full-stack works on TASK-002.
+    const crew = w.git.branches.get('crew/prd') ?? []
+    w.git.branches.set('HEAD', crew)
+    w.git.branches.delete('crew/prd')
+    // TASK-002 is not committed yet: its next work needs a worktree again.
+    await done($, 'a-fullstack-4')
+    const fresh = w.git.commands.filter(c => c.includes('worktree') && c.includes('-b')).at(-1) ?? []
+    const branch = fresh[fresh.indexOf('-b') + 1] ?? ''
+    expect(branch).toMatch(/^crew\/prd-[0-9a-f]{6}$/)
+    w.commit('TASK-002: 取消流程', branch)
+    await done($, 'a-fullstack-4')
+    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[] }[] }[] }
+    expect(board.prd_items.flatMap(i => i.tasks ?? []).map(t => [t.id, (t.crew_commits ?? []).length])).toEqual([
+      ['TASK-001', 1],
+      ['TASK-002', 1],
+    ])
+    expect((await $.command.run(command('status'))).text).toMatch(/done/)
+  })
+
+  test('does not report changes the person already had in the checkout before the full-stack’s run', async ($, on) => {
+    const w = world($, on)
+    w.git.checkout = ' M src/mine.ts\n'
+    await start($)
+    await planned($)
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-4')
+    expect(w.toasts.filter(t => t.includes('全端這一輪期間'))).toEqual([])
+  })
+
+  test('says why it cannot start in a repo with no commit yet', async ($, on) => {
+    const w = world($, on)
+    w.git.branches.set('HEAD', [])
+    await start($)
+    await planned($)
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:techlead'])
+    expect(w.toasts.some(t => /全端沒有開始：這個 repo 還沒有 commit/.test(t))).toBe(true)
+  })
+
+  test('does not take a record whose base or commits are not ones git could have written', async ($, on) => {
+    const w = world($, on)
+    w.git.branches.set('crew/prd', [...(w.git.branches.get('HEAD') ?? [])])
+    w.store.set(`work:${ROOT}:docs/PRD.md`, { branch: 'crew/prd', dir: `${ROOT}/.crew/work/prd`, base: '--upload-pack=x', seen: {} })
+    await start($)
+    await planned($)
+    expect(String((w.spawned.at(-1) as { cwd?: string }).cwd)).toMatch(/^\/repo\/\.crew\/work\/prd-[0-9a-f]{6}$/)
+  })
+
+  test('counts nothing from recorded commits that are not shas or tasks', async ($, on) => {
+    const w = world($, on)
+    w.git.branches.set('crew/prd', [...(w.git.branches.get('HEAD') ?? [])])
+    w.disk.set(`${ROOT}/.crew/work/prd/.git`, 'gitdir: x')
+    const mark = taskMark({ id: 'TASK-001', title: '方案頁', status: 'planned', acceptance_criteria: ['AC-001'], detail: '' })
+    w.store.set(`work:${ROOT}:docs/PRD.md`, { branch: 'crew/prd', dir: `${ROOT}/.crew/work/prd`, base: 'c0ffee'.padEnd(40, '0'), seen: { 'not-a-sha': { 'TASK-001': mark }, abc1234: { 'TASK-1x': mark, 'TASK-001': 7 } } })
+    await start($)
+    await planned($)
+    expect(w.spawned.at(-1)?.prompt).toMatch(/請實作 TASK-001/)
+    expect(await paneText($, 'progress')).toMatch(/實作 0\/2/)
   })
 })

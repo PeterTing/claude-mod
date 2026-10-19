@@ -6,7 +6,7 @@ import type { Op, Tracker } from './board'
 import { emptyLive, snapshotOf } from './live'
 import { barCells, percent } from './model'
 import type { Snapshot } from './model'
-import { bandText } from './views'
+import { bandText, bar } from './views'
 import { withCommits } from './git'
 import { requirementsOf } from './prd'
 
@@ -375,5 +375,27 @@ describe('percentages', () => {
     expect(barCells(99.6, 20)).toBe(19)
     expect(barCells(100, 20)).toBe(20)
     expect(barCells(-5, 20)).toBe(0)
+  })
+
+  test('are rounded down where they are shown: the band, the bar, a feature and the PRD', () => {
+    const almost = { ...snapshotOf({ board: null, live: emptyLive(), now: 0 }), progress: { done: 199, total: 200, stages: [], features: [], daily: [], recent: [] } } as unknown as Snapshot
+    expect(bandText(almost, 'crew')).toMatch(/進度 99%/)
+    expect(bar(99.6, 20)).toBe(`${'█'.repeat(19)}░`)
+    const apply = (t: Tracker, ops: readonly unknown[], by: string): Tracker => {
+      const r = applyOps(t, ops as Op[], { today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' }, by })
+      if (!r.ok) throw new Error(r.errors.join())
+      return r.tracker
+    }
+    const board = apply(
+      apply(newTracker('x'), [{ op: 'add_feature', title: 'A', summary: '' }, ...['a', 'b', 'c'].map(text => ({ op: 'add_criterion', feature: 'PRD-001', text }))], 'pm'),
+      [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }],
+      'qa',
+    )
+    const s = snapshotOf({ board, live: emptyLive(), now: 0 })
+    // Two of three criteria tested: 66, not 67.
+    expect(s.progress?.features[0]?.percent).toBe(66)
+    // One feature with criteria and two of three tested, of seven: 42, not 43.
+    expect(s.progress).toMatchObject({ done: 3, total: 7 })
+    expect(s.prd?.progress).toBe(42)
   })
 })

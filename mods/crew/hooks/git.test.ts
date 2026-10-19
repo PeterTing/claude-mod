@@ -40,6 +40,9 @@ describe('commits that do a task', () => {
     const map = commitsByTask(log)
     expect(Object.fromEntries(map)).toEqual({ 'TASK-001': ['aaaaaaa1', 'bbbbbbb2'], 'TASK-002': ['bbbbbbb2'], 'TASK-004': ['eeeeeee5'] })
     expect(SUBJECT.test('TASK-001: x')).toBe(true)
+    // A commit that undoes a task, or only mentions one, does not do it.
+    expect(SUBJECT.test('Revert "TASK-001: 方案頁"')).toBe(false)
+    expect(SUBJECT.test('fix: TASK-001 的錯字')).toBe(false)
   })
 })
 
