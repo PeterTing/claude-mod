@@ -306,6 +306,35 @@ describe('the full-stack', () => {
     expect(said).toMatch(/如果不是你自己改的/)
   })
 
+  test('says a file moved out of crew’s folder into the checkout, though crew’s own files are left out', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.git.checkout = 'R  .crew/memory/x.md -> src/y.ts\nR  .crew/a.md -> .crew/b.md\n'
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-4')
+    expect(w.toasts.find(t => t.includes('全端這一輪期間'))).toMatch(/多了 1 個變更（\.crew\/memory\/x\.md -> src\/y\.ts）/)
+  })
+
+  test('goes back to a stuck task on the model its size calls for once the person answers, keeping its agent', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
+    await done($, 'a-qa-2')
+    await write($, 'a-techlead-3', PLAN.map(t => ({ ...t, size: 'XL' })))
+    await done($, 'a-techlead-3')
+    expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:fullstack', model: 'opus' })
+    await done($, 'a-fullstack-4', '卡住了')
+    await done($, 'a-fullstack-4', '還是卡住')
+    await $.command.run(command('answer Q-01 先跳過金流，用假資料'))
+    // The answer wakes the same Opus agent: another model would have started the task afresh.
+    expect(w.sent.at(-1)?.to).toBe('a-fullstack-4')
+    expect(w.spawned.filter(s => s.subagentType === 'crew:fullstack')).toHaveLength(1)
+  })
+
   test('takes the checkout as it was when the full-stack’s run began, not when work reached it mid-run', async ($, on) => {
     const w = world($, on)
     await start($)

@@ -206,7 +206,8 @@ export const snapshotOf = ({
     board === null
       ? null
       : {
-          done: (g0?.requirements.covered ?? 0) + g1.covered + g4.covered + g3.covered + built.covered,
+          // Committed code counts toward the whole, never as done: only a review will say it is (phase 4d).
+          done: (g0?.requirements.covered ?? 0) + g1.covered + g4.covered + g3.covered,
           total: (g0?.requirements.total ?? 0) + g1.total + g4.total + g3.total + built.total,
           // The seven stages of each requirement's row, in its order, over the whole board.
           stages: [

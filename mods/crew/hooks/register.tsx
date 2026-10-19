@@ -1160,7 +1160,7 @@ async function checkoutState($: any): Promise<Checkout | undefined> {
     return {
       ref: ref.exitCode === 0 ? ref.stdout.trim() : '',
       head: head.exitCode === 0 ? head.stdout.trim() : '',
-      changes: status.stdout.split('\n').filter(line => line.trim() !== '' && !/^.{3}"?(?:\.crew\/|prd-tracker\.json"?$)/.test(line)),
+      changes: status.stdout.split('\n').filter(line => line.trim() !== '' && !line.slice(3).split(' -> ').every(path => /^"?(?:\.crew\/|prd-tracker\.json"?$)/.test(path))),
     }
   } catch {
     return undefined
@@ -1827,9 +1827,9 @@ export const register: Register = on => {
       for (const c of criteriaOf(item)) titles.set(c.id, c.text)
     }
     const moved = [...covered(r.tracker)].filter(id => !before.has(id))
-    // The tech lead's work shows as the tasks it planned.
+    // The tech lead's work shows as the tasks it planned: the plan is what it finished, not the task.
     const planned = r.results.filter(x => x.op === 'add_task' && x.id !== undefined).map(x => x.id as string)
-    for (const item of r.tracker.prd_items) for (const x of tasksOf(item)) titles.set(x.id, x.title)
+    for (const item of r.tracker.prd_items) for (const x of tasksOf(item)) titles.set(x.id, `排定：${x.title}`)
     await update($, live, l => ({
       ...l,
       activity: [...l.activity, ...[...moved, ...planned].map(id => ({ t: now, day: dayOf(now), role, id, title: titles.get(id) ?? id }))].slice(-200),

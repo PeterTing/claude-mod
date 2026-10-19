@@ -347,6 +347,15 @@ describe('the full-stack’s commits', () => {
     expect((snapshotOf({ board: all, live: building, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]?.layers.review.state).toBe('later')
   })
 
+  test('count committed code toward the whole but never as done: overall progress stays short of 100% until review', () => {
+    const all = withCommits(planned, new Map([['TASK-001', ['abc1234def']], ['TASK-002', ['def5678abc']]])) ?? planned
+    const before = snapshotOf({ board: planned, live: building, now: NOW }).progress
+    const after = snapshotOf({ board: all, live: building, now: NOW }).progress
+    expect(after?.total).toBe(before?.total)
+    expect(after?.done).toBe(before?.done)
+    expect(after?.done ?? 0).toBeLessThan(after?.total ?? 0)
+  })
+
   test('show a committed task as under way, by the full-stack, with its commit; a task being built as the full-stack’s', () => {
     const items = snapshotOf({ board: half, live: building, now: NOW }).items
     expect(items.find(i => i.id === 'TASK-001')).toMatchObject({ owner: 'fullstack', status: 'doing' })

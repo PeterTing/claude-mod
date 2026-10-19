@@ -31,7 +31,10 @@ describe('the tech lead', () => {
     await tested($)
     expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:techlead', model: 'opus' })
     expect((await $.command.run(command('status'))).text).toMatch(/planning[\s\S]*TL/)
+    await w.clock.advance(60_000)
     expect(String((await write($, 'a-techlead-3', PLAN)).result)).toMatch(/TASK-001、TASK-002/)
+    // What the tech lead finished is the plan: a task it planned is not shown as a task done.
+    expect(await paneText($, 'progress')).toMatch(/最近完成：TASK-00\d 排定：/)
     await done($, 'a-techlead-3')
     await build($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)

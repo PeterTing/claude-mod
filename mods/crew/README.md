@@ -96,7 +96,7 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
   - tasks: those criteria have the tech lead's tasks, counted done only once the spec is;
   - code: how many of those tasks have a commit on crew's branch. It shows as under way (◐), never done: a commit alone does not make code done, and review comes later.
 
-  The other stages show `—` until the roles that do them are added, and never show as done before then. A requirement moved out of scope shows the reason instead. The overall row above the table uses the same seven stages, in the same order.
+  The other stages show `—` until the roles that do them are added, and never show as done before then. A requirement moved out of scope shows the reason instead. The overall row above the table uses the same seven stages, in the same order. Overall progress counts committed code toward the whole but not as done, so it stays below 100% until review says the code is done. A task the tech lead planned shows in the recent work as `排定：<title>`: the plan is what was finished, not the task.
 - **One board, several PRDs.** Starting another PRD keeps the earlier one's requirement numbers on the board, so its features stay its own and do not hold up the new PRD's split. A board from before crew numbered requirements is not reported as a PRD change: the PM is asked to link its features to the requirements.
 
 ## Where things live
