@@ -7,6 +7,27 @@ import { build, command, done, paneText, PLAN, ROOT, SPLIT, start, world, write 
 
 /** The full-stack builds the tasks one at a time in crew's own worktree; a commit, not its word, says a task is built. */
 
+/** How crew runs git: the repo's hooks and file monitor off. */
+const GIT = 'git -c core.hooksPath=/dev/null -c core.fsmonitor=false'
+
+/** The commit the person's checkout is on when crew makes its branch. */
+const BASE = 'c0ffee'.padEnd(40, '0')
+
+/** A board planned for the PRD: features, criteria, test cases and the tech lead's tasks. */
+const plannedBoard = (plan: readonly unknown[] = PLAN) => {
+  let t = newTracker('repo')
+  for (const [by, ops] of [
+    ['pm', SPLIT],
+    ['qa', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }]],
+    ['techlead', plan],
+  ] as const) {
+    const r = applyOps(t, ops as unknown as Op[], { by, today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
+    if (!r.ok) throw new Error(r.errors.join())
+    t = r.tracker
+  }
+  return t
+}
+
 const planned = async ($: Engine) => {
   await $.command.run(command('start docs/PRD.md'))
   await write($, 'a-pm-1', SPLIT)
@@ -22,7 +43,10 @@ describe('the full-stack', () => {
     const w = world($, on)
     await start($)
     await planned($)
-    expect(w.git.commands.some(c => c.join(' ') === `git -C ${ROOT} worktree add -b crew/prd ${ROOT}/.crew/work/prd HEAD`)).toBe(true)
+    expect(w.git.commands.some(c => c.join(' ') === `${GIT} -C ${ROOT} worktree add -b crew/prd ${ROOT}/.crew/work/prd ${BASE}`)).toBe(true)
+    // crew runs git itself, outside the session's permission prompts: never with the repo's hooks or file monitor.
+    expect(w.git.commands.length).toBeGreaterThan(0)
+    expect(w.git.commands.every(c => c.slice(0, 5).join(' ') === GIT)).toBe(true)
     expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:fullstack' })
     expect(w.spawned.at(-1)?.prompt).toMatch(/請實作 TASK-001 方案頁[\s\S]*工作目錄：\/repo\/\.crew\/work\/prd（分支 crew\/prd）/)
     expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toMatch(/work\//)
@@ -88,9 +112,9 @@ describe('the full-stack', () => {
     }
     w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(t))
     // crew made its branch and worktree in the last session, and keeps that in its own store.
-    w.git.branches.set('crew/prd', [])
+    w.git.branches.set('crew/prd', [...(w.git.branches.get('HEAD') ?? [])])
     w.disk.set(`${ROOT}/.crew/work/prd/.git`, 'gitdir: x')
-    w.store.set(`work:${ROOT}`, { prd: 'docs/PRD.md', branch: 'crew/prd', dir: `${ROOT}/.crew/work/prd`, built: {} })
+    w.store.set(`work:${ROOT}:docs/PRD.md`, { branch: 'crew/prd', dir: `${ROOT}/.crew/work/prd`, base: BASE, seen: {} })
     w.commit('TASK-001: 方案頁')
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, questions: [], lead: 'person' })
     await start($)
@@ -196,6 +220,8 @@ describe('the full-stack', () => {
     await done($, 'a-fullstack-4', '先休息')
     expect(w.sent.at(-1)?.to).toBe('a-fullstack-4')
     expect(w.sent.at(-1)?.text).toMatch(/TASK-001 的工作目錄還有沒 commit 的修改/)
+    // A project's build or test output is no reason to stop: it belongs in .gitignore.
+    expect(w.sent.at(-1)?.text).toMatch(/建置或測試產生的檔案，請加進 \.gitignore/)
     w.git.dirty = ''
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-4')
@@ -210,5 +236,87 @@ describe('the full-stack', () => {
     const text = await paneText($, 'progress')
     expect(text).not.toMatch(/實作 ✓/)
     expect(text).toMatch(/◐ 2\/2/)
+  })
+
+  test('does not count a commit made before crew made its branch, even one no branch has', async ($, on) => {
+    const w = world($, on)
+    w.commit('TASK-001: 團隊自己的票', 'HEAD')
+    await start($)
+    await planned($)
+    // The person's checkout leaves its branch (a detached HEAD, a tag): the old commit is now on crew's branch only.
+    w.git.branches.delete('HEAD')
+    w.git.ref = ''
+    await done($, 'a-fullstack-4', '做完了')
+    expect(w.sent.at(-1)?.text).toMatch(/TASK-001 還沒有 commit/)
+    expect(await paneText($, 'progress')).toMatch(/實作 0\/2/)
+  })
+
+  test('does not count a new board’s task built from commits crew saw for an earlier task of the same id', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await build($)
+    expect(await paneText($, 'progress')).toMatch(/實作 2\/2/)
+    // The board is made again: the tech lead's TASK-001 is another task now, while the old commits stay on crew's branch.
+    const again = plannedBoard([
+      { op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '登入頁', detail: '', size: 'S' },
+      { op: 'add_task', feature: 'PRD-002', criteria: ['AC-002'], title: '登出', detail: '', size: 'S' },
+    ])
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(again))
+    // crew's next look at git and the board marks nothing on the new tasks.
+    await w.clock.advance(31_000)
+    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[] }[] }[] }
+    expect(board.prd_items.flatMap(i => i.tasks ?? []).map(t => [t.id, t.crew_commits])).toEqual([
+      ['TASK-001', undefined],
+      ['TASK-002', undefined],
+    ])
+    expect(await paneText($, 'progress')).toMatch(/實作 0\/2/)
+  })
+
+  test('keeps each PRD’s record of its own: another PRD starts with nothing built', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await build($)
+    expect(w.store.get(`work:${ROOT}:docs/PRD.md`)).toMatchObject({ branch: 'crew/prd', base: BASE })
+    expect(w.store.get(`work:${ROOT}:docs/OTHER.md`)).toBeUndefined()
+  })
+
+  test('makes a branch of its own when the one in its record is not one it can trust', async ($, on) => {
+    const w = world($, on)
+    w.git.branches.set('crew/prd', [...(w.git.branches.get('HEAD') ?? [])])
+    w.store.set(`work:${ROOT}:docs/PRD.md`, { branch: 'crew/prd', dir: `${ROOT}/.crew/work/../..`, base: BASE, seen: {} })
+    await start($)
+    await planned($)
+    const cwd = String((w.spawned.at(-1) as { cwd?: string }).cwd)
+    expect(cwd).toMatch(/^\/repo\/\.crew\/work\/prd-[0-9a-f]{6}$/)
+  })
+
+  test('says what changed in the person’s checkout during the full-stack’s run, without blaming it', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.git.checkout = ' M src/mine.ts\n M prd-tracker.json.bak\n M prd-tracker.json\n?? .crew/threads/x.jsonl\n'
+    w.commit('TASK-001: 方案頁', 'HEAD')
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-4')
+    const said = w.toasts.find(t => t.includes('全端這一輪期間')) ?? ''
+    expect(said).toMatch(/多了 2 個變更（src\/mine\.ts、prd-tracker\.json\.bak）/)
+    expect(said).toMatch(/checkout 從 main c0ffee0 變成 main abc000/)
+    expect(said).toMatch(/如果不是你自己改的/)
+  })
+
+  test('takes the checkout as it was when the full-stack’s run began, not when work reached it mid-run', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.git.checkout = ' M src/early.ts\n'
+    // The person's answer reaches the full-stack while it is at work: the run's start stays as it was.
+    await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 'q', agentId: 'a-fullstack-4', question: '金流用哪家？', item: 'TASK-001' } as never)
+    await $.command.run(command('answer Q-01 用 Stripe'))
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-fullstack-4' })
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-4')
+    expect(w.toasts.some(t => /全端這一輪期間，你的工作目錄多了 1 個變更（src\/early\.ts）/.test(t))).toBe(true)
   })
 })

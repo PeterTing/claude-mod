@@ -659,6 +659,13 @@ describe('the PRD as the flow holds the board to it', () => {
     expect(step(INITIAL, { ...START_WITH, board: board(SPLIT) }).actions[0]).toMatchObject({ type: 'spawn', role: 'pm' })
   })
 
+  test('builds a finished board’s tasks that have no code on a new start, as a board from 0.2.0 has', () => {
+    const plannedOnly = planned(tied, [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001', 'AC-002'] }])
+    const again = step({ stage: 'done', round: 1, retries: 0 }, { ...START_WITH, board: plannedOnly })
+    expect(again.state).toMatchObject({ stage: 'building', building: 'TASK-001' })
+    expect(again.actions[0]).toMatchObject({ role: 'fullstack' })
+  })
+
   describe('building', () => {
     const SPLIT2: readonly Op[] = [
       { op: 'add_feature', title: '方案選擇', summary: '' },
@@ -702,6 +709,17 @@ describe('the PRD as the flow holds the board to it', () => {
       const answered = step(stuck.state, { type: 'answered', question: 'q', answer: '先用假資料', escalation: true })
       expect(answered.state).toMatchObject({ stage: 'building', retries: 0 })
       expect(answered.actions[0]).toMatchObject({ type: 'message', role: 'fullstack' })
+    })
+
+    test('goes back to a task on the model its size calls for, once the person answers', () => {
+      const big = plannedTwo()
+      const xl: Tracker = { ...big, prd_items: big.prd_items.map(i => ({ ...i, tasks: (i.tasks ?? []).map(t => ({ ...(t as object), size: 'XL' })) })) }
+      const stuck = { stage: 'escalated' as const, round: 0, retries: 0, building: 'TASK-001', resumeAt: 'building' as const }
+      const r = step(stuck, { type: 'answered', question: 'q', answer: '先用假資料', escalation: true, board: xl })
+      expect(r.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', item: 'TASK-001', route: { label: 'Opus', effort: 'xhigh' } })
+      // The full-stack's own question, answered while it builds: the same model, so its context is kept.
+      const own = step({ stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, { type: 'answered', question: 'q', answer: 'a', role: 'fullstack', board: xl })
+      expect(own.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', route: { label: 'Opus', effort: 'xhigh' } })
     })
 
     test('sends new criteria to QA and the tech lead before building on', () => {

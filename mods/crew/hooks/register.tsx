@@ -13,7 +13,8 @@ import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, r
 import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { ROLE_NAMES } from './model'
 import { baselineFor, baselineOf, changeKey, cut, diffRequirements, earlierFor, fingerprint, gateG0, MAX_REQUIREMENTS, refsOf, requirementsOf } from './prd'
-import { branchOf, commitsByTask, withCommits, workdirOf } from './git'
+import { branchOf, commitsOf, marksOf, recordSeen, withCommits, workdirOf } from './git'
+import type { Seen } from './git'
 import type { Requirement } from './prd'
 import { composeStart, relatedOf, threadLines, wakePlan, withMemories, workingSet } from './pack'
 import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
@@ -608,7 +609,7 @@ async function startRole($: any, role: CrewRole, route: Route, given: string, re
   // Unnamed on purpose: a named agent in a team-enabled session becomes a teammate, whose
   // finish notices reach the main conversation and whose prompt is the lead's, not the role card.
   // The full-stack runs in its worktree, so its tools start there and not in the person's checkout.
-  const cwd = role === 'fullstack' ? (await loadWork($)).dir : undefined
+  const cwd = role === 'fullstack' ? (await currentWork($))?.dir : undefined
   const spawned = await $.agent.spawn({
     subagentType: `crew:${role}`,
     description: `crew ${crewName(role)}`,
@@ -675,8 +676,9 @@ const WORKDIR = '工作目錄：'
  */
 async function withWorkdir($: any, role: CrewRole, work: string): Promise<string | undefined> {
   if (role !== 'fullstack') return work
-  // What the checkout held when the full-stack's work began: its turn end tells what it changed there.
-  checkout.before = await checkoutChanges($)
+  // The checkout as the full-stack's run begins: its run's end tells what changed there. Work for a run
+  // under way waits in its inbox, and leaves the run's start as it was.
+  if (checkout.before === undefined || (await read($, live)).roles.fullstack.state !== 'working') checkout.before = await checkoutState($)
   if (work.includes(WORKDIR)) return work
   const wd = await ensureWorkdir($)
   if ('error' in wd) {
@@ -1012,56 +1014,85 @@ const inboxOf = (l: CrewLive): Record<CrewRole, string[]> => {
   return { pm: unread('pm'), qa: unread('qa'), techlead: unread('techlead'), fullstack: unread('fullstack') }
 }
 
-/** A git command in the repo, by its argument vector: no shell, the repo's hooks off. */
-const git = ($: any, args: readonly string[]) =>
-  $.process.run(['git', '-C', files.root, ...args], { timeoutMs: 30_000 }) as Promise<{ exitCode: number; stdout: string; stderr: string }>
+/**
+ * A git command in a folder, by its argument vector: no shell. crew runs git
+ * itself, outside the session's permission prompts, so the repo's hooks and
+ * file monitor stay off.
+ */
+const gitIn = ($: any, dir: string, args: readonly string[]) =>
+  $.process.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-C', dir, ...args], { timeoutMs: 30_000 }) as Promise<{
+    exitCode: number
+    stdout: string
+    stderr: string
+  }>
+
+/** A git command in the repo. */
+const git = ($: any, args: readonly string[]) => gitIn($, files.root, args)
 
 /**
- * crew's own record of the full-stack's work, on this machine and not in the
- * repo: the branch and worktree it made for the PRD, and the commits it has
- * seen on that branch doing each task. A board or branch a repo brings is
- * neither crew's branch nor crew's record.
+ * crew's own record of the full-stack's work on a PRD, on this machine and not
+ * in the repo: the branch and worktree it made, the commit it made them from,
+ * and the commits it has seen on that branch, each tied to the tasks it did. A
+ * board or branch a repo brings is neither crew's branch nor crew's record.
  */
-type Work = { prd?: string; branch?: string; dir?: string; built: Record<string, string[]> }
+type Work = { branch: string; dir: string; base: string; seen: Seen }
 
-const workKey = (): string => `work:${files.root}`
+const workKey = (path: string): string => `work:${files.root}:${path}`
 
-async function loadWork($: any): Promise<Work> {
-  const v = (await $.store.get(workKey())) as Partial<Work> | undefined
-  const built: Record<string, string[]> = {}
-  if (typeof v?.built === 'object' && v.built !== null) {
-    for (const [id, shas] of Object.entries(v.built)) if (/^TASK-\d+$/.test(id) && Array.isArray(shas)) built[id] = shas.filter((x): x is string => typeof x === 'string' && /^[0-9a-f]{7,40}$/.test(x))
+const SHA = /^[0-9a-f]{7,64}$/
+
+/** crew's record for a PRD: undefined when it has none, or none it can take as its own. */
+async function loadWork($: any, path: string): Promise<Work | undefined> {
+  const v = (await $.store.get(workKey(path))) as Partial<Work> | undefined
+  if (typeof v !== 'object' || v === null) return undefined
+  const { branch, dir, base } = v
+  const under = `${files.root}/.crew/work/`
+  if (typeof branch !== 'string' || !/^crew\/[a-z0-9-]+$/.test(branch)) return undefined
+  if (typeof dir !== 'string' || !dir.startsWith(under) || !/^[a-z0-9-]+$/.test(dir.slice(under.length))) return undefined
+  if (typeof base !== 'string' || !SHA.test(base)) return undefined
+  const seen: Seen = {}
+  if (typeof v.seen === 'object' && v.seen !== null) {
+    for (const [sha, did] of Object.entries(v.seen)) {
+      if (!SHA.test(sha) || typeof did !== 'object' || did === null) continue
+      seen[sha] = Object.fromEntries(Object.entries(did).filter(([id, mark]) => /^TASK-\d+$/.test(id) && typeof mark === 'string'))
+    }
   }
-  return {
-    built,
-    ...(typeof v?.prd === 'string' ? { prd: v.prd } : {}),
-    ...(typeof v?.branch === 'string' && /^crew\/[a-z0-9-]+$/.test(v.branch) ? { branch: v.branch } : {}),
-    ...(typeof v?.dir === 'string' && v.dir.startsWith(`${files.root}/.crew/work/`) ? { dir: v.dir } : {}),
-  }
+  return { branch, dir, base, seen }
 }
 
-const saveWork = ($: any, work: Work) => $.store.set(workKey(), work)
+const saveWork = ($: any, path: string, work: Work) => $.store.set(workKey(path), work)
+
+/** crew's record for the PRD the session follows. */
+async function currentWork($: any): Promise<Work | undefined> {
+  const l = await read($, live)
+  return l.prdPath === null ? undefined : loadWork($, relativeOf(l.prdPath))
+}
 
 /**
  * The worktree and branch the full-stack builds this PRD in: made from the
- * checkout's HEAD the first time, and crew's own from then on. A branch of the
- * name that crew did not make is left alone: crew makes one of its own beside it.
+ * checkout's commit the first time, and crew's own from then on. A branch of
+ * the name that crew did not make is left alone: crew makes one of its own
+ * beside it. Once crew's branch is gone (merged and deleted), the next build
+ * gets a new one, and what crew saw built stays seen.
  */
 async function ensureWorkdir($: any): Promise<{ dir: string; branch: string } | { error: string }> {
   const l = await read($, live)
   if (l.prdPath === null) return { error: '還沒有開始的 PRD。' }
   const path = relativeOf(l.prdPath)
-  const work = await loadWork($)
+  const work = await loadWork($, path)
   try {
     const inside = await git($, ['rev-parse', '--is-inside-work-tree'])
     if (inside.exitCode !== 0 || inside.stdout.trim() !== 'true') return { error: '這個資料夾不是 git repo：全端要在 crew 自己的分支上 commit。' }
-    if (work.prd === path && work.branch !== undefined && work.dir !== undefined) {
+    if (work !== undefined && (await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${work.branch}`])).exitCode === 0) {
       if (!(await staysIn($, work.dir))) return { error: `${work.dir} 是連結，或指到 repo 外。` }
       if (await $.fs.exists(`${work.dir}/.git`)) return { dir: work.dir, branch: work.branch }
       const back = await git($, ['worktree', 'add', work.dir, work.branch])
       if (back.exitCode !== 0) return { error: `建立工作目錄失敗：${cut(squeeze(back.stderr), 200)}` }
       return { dir: work.dir, branch: work.branch }
     }
+    const head = await git($, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])
+    const base = head.stdout.trim()
+    if (head.exitCode !== 0 || !SHA.test(base)) return { error: '這個 repo 還沒有 commit：全端要從一個 commit 開出 crew 的分支。' }
     let branch = branchOf(path)
     let dir = workdirOf(files.root, path)
     const taken = await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
@@ -1071,11 +1102,11 @@ async function ensureWorkdir($: any): Promise<{ dir: string; branch: string } | 
       dir = `${dir}-${mark}`
     }
     if (!(await staysIn($, dir))) return { error: `${dir} 是連結，或指到 repo 外。` }
-    const made = await git($, ['worktree', 'add', '-b', branch, dir, 'HEAD'])
+    const made = await git($, ['worktree', 'add', '-b', branch, dir, base])
     if (made.exitCode !== 0) return { error: `建立工作目錄失敗：${cut(squeeze(made.stderr), 200)}` }
-    await saveWork($, { ...work, prd: path, branch, dir })
-    await note($, { kind: 'workdir', dir, branch })
-    $.ui.toast(`crew：全端開始在 ${dir}（分支 ${branch}）寫程式。它照你的權限模式執行，不會 push，合併由你決定。`)
+    await saveWork($, path, { branch, dir, base, seen: work?.seen ?? {} })
+    await note($, { kind: 'workdir', dir, branch, base })
+    $.ui.toast(`crew：全端開始在 ${dir}（分支 ${branch}）寫程式。它照你的權限模式執行；crew 要它不 push，合併由你決定。`)
     return { dir, branch }
   } catch (err) {
     return { error: `git 沒辦法執行：${cut(String(err), 200)}` }
@@ -1083,34 +1114,33 @@ async function ensureWorkdir($: any): Promise<{ dir: string; branch: string } | 
 }
 
 /**
- * The commits that do tasks, as crew has seen them on its own branch: only the
- * commits no other branch has, so the checkout's own history is not crew's
- * work. What crew has seen stays seen, through a merge or a deleted branch, and
+ * The commits that do tasks, as crew has seen them on its own branch: only
+ * those made after crew made the branch, and on no other branch, so the
+ * checkout's own history is not crew's work. Each is tied to the task it did
+ * when crew first saw it, and stays seen through a merge or a deleted branch;
  * the board's marks follow crew's record, not what the board was given.
  */
 async function syncCommits($: any) {
   const l = await read($, live)
   if (l.prdPath === null) return
+  const path = relativeOf(l.prdPath)
   try {
-    const work = await loadWork($)
-    let seen = work.built
-    if (work.branch !== undefined) {
-      const has = await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${work.branch}`])
-      if (has.exitCode === 0) {
-        const log = await git($, ['log', '--format=%H%x09%s', '-n', '2000', `refs/heads/${work.branch}`, '--not', `--exclude=refs/heads/${work.branch}`, '--branches', '--'])
-        if (log.exitCode === 0) {
-          const next: Record<string, string[]> = { ...seen }
-          for (const [id, shas] of commitsByTask(log.stdout)) next[id] = [...new Set([...(next[id] ?? []), ...shas])]
-          if (JSON.stringify(next) !== JSON.stringify(seen)) {
-            seen = next
-            await saveWork($, { ...work, built: seen })
-          }
-        }
-      }
+    const work = await loadWork($, path)
+    let commits: { sha: string; ids: string[] }[] = []
+    if (work !== undefined && (await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${work.branch}`])).exitCode === 0) {
+      // With --branches, git takes an --exclude pattern without its refs/heads/.
+      const log = await git($, ['log', '--format=%H%x09%s', '-n', '2000', `refs/heads/${work.branch}`, '--not', work.base, `--exclude=${work.branch}`, '--branches', '--'])
+      if (log.exitCode === 0) commits = commitsOf(log.stdout)
     }
     await changeBoard($, async board => {
       if (board === null) return { value: undefined }
-      const marked = withCommits(board, new Map(Object.entries(seen)))
+      let seen = work?.seen ?? {}
+      if (work !== undefined) {
+        const next = recordSeen(seen, commits, board)
+        if (next !== seen) await saveWork($, path, { ...work, seen: next })
+        seen = next
+      }
+      const marked = withCommits(board, marksOf(board, seen))
       return marked === null ? { value: undefined } : { board: marked, value: undefined }
     })
   } catch (err) {
@@ -1118,26 +1148,45 @@ async function syncCommits($: any) {
   }
 }
 
-/** The checkout's own changes, crew's files left out: what the full-stack must leave as it found it. */
-async function checkoutChanges($: any): Promise<string[]> {
+/** The person's checkout: its branch, its commit, and its changes with crew's own files left out. */
+type Checkout = { ref: string; head: string; changes: string[] }
+
+async function checkoutState($: any): Promise<Checkout | undefined> {
   try {
-    const r = await git($, ['status', '--porcelain'])
-    if (r.exitCode !== 0) return []
-    return r.stdout.split('\n').filter(line => line.trim() !== '' && !/^.{3}(?:"?\.crew\/|"?prd-tracker\.json)/.test(line))
+    const status = await git($, ['status', '--porcelain'])
+    if (status.exitCode !== 0) return undefined
+    const ref = await git($, ['symbolic-ref', '--quiet', 'HEAD'])
+    const head = await git($, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])
+    return {
+      ref: ref.exitCode === 0 ? ref.stdout.trim() : '',
+      head: head.exitCode === 0 ? head.stdout.trim() : '',
+      changes: status.stdout.split('\n').filter(line => line.trim() !== '' && !/^.{3}"?(?:\.crew\/|prd-tracker\.json"?$)/.test(line)),
+    }
   } catch {
-    return []
+    return undefined
   }
 }
 
-/** The checkout's changes when the full-stack's run began, to tell what it changed there. */
-const checkout: { before: string[] | undefined } = { before: undefined }
+/** The checkout as it was when the full-stack's run began, to tell what changed there during it. */
+const checkout: { before: Checkout | undefined } = { before: undefined }
+
+/** What changed in the person's checkout since `before`: new changes, and a branch or commit moved. Empty when nothing did. */
+const checkoutMoved = (before: Checkout, after: Checkout): string[] => {
+  const was = new Set(before.changes)
+  const added = after.changes.filter(line => !was.has(line))
+  const name = (c: Checkout) => `${c.ref.replace(/^refs\/heads\//, '') || '（沒有分支）'} ${c.head.slice(0, 7)}`
+  return [
+    ...(added.length > 0 ? [`你的工作目錄多了 ${added.length} 個變更（${cut(added.map(t => t.slice(3)).join('、'), 160)}）`] : []),
+    ...(before.ref !== after.ref || before.head !== after.head ? [`你的 checkout 從 ${name(before)} 變成 ${name(after)}`] : []),
+  ]
+}
 
 /** Whether the full-stack's worktree holds changes it has not committed. */
 async function workUnclean($: any): Promise<boolean> {
-  const work = await loadWork($)
-  if (work.dir === undefined) return false
+  const work = await currentWork($)
+  if (work === undefined) return false
   try {
-    const r = (await $.process.run(['git', '-C', work.dir, 'status', '--porcelain'], { timeoutMs: 30_000 })) as { exitCode: number; stdout: string }
+    const r = await gitIn($, work.dir, ['status', '--porcelain'])
     return r.exitCode === 0 && r.stdout.trim() !== ''
   } catch {
     return false
@@ -1469,13 +1518,14 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     const askedBy: CrewRole = isCrewRole(q.from) ? q.from : waiting === 'planning' ? 'techlead' : waiting === 'building' ? 'fullstack' : 'pm'
     if (q.item !== undefined && ITEM.test(q.item)) await post($, { item: q.item, from: by, to: askedBy, text: `${q.question} → ${answer}` })
     await remember($, { type: 'DEC', text: `${decided}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `${by} ${q.id}` }, askedBy)
-    await feed($, { type: 'answered', question: q.question, answer, ...(isCrewRole(q.from) ? { role: q.from } : {}), escalation: q.from === 'crew' })
+    const board = await loadBoard($)
+    await feed($, { type: 'answered', question: q.question, answer, ...(isCrewRole(q.from) ? { role: q.from } : {}), escalation: q.from === 'crew', ...(board === null ? {} : { board }) })
     return `已把 ${id} 的回答轉給 ${crewName(askedBy)}。`
   }
   if (verb === 'ask') {
     const [role = '', ...words] = rest
     const question = words.join(' ')
-    if (!isCrewRole(role) || question === '') return '用法：/crew ask <pm|qa|techlead> <你的問題>'
+    if (!isCrewRole(role) || question === '') return '用法：/crew ask <pm|qa|techlead|fullstack> <你的問題>'
     const l = await read($, live)
     const name = crewName(role)
     if (l.roles[role].state === 'working') return `${name} 正在工作，等它這一輪做完再問。`
@@ -1493,7 +1543,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
   }
   if (verb === 'rotate') {
     const role = rest[0] ?? ''
-    if (!isCrewRole(role)) return '用法：/crew rotate <pm|qa|techlead>'
+    if (!isCrewRole(role)) return '用法：/crew rotate <pm|qa|techlead|fullstack>'
     const r = (await read($, live)).roles[role]
     const name = crewName(role)
     if (r.agentId === undefined) return `${name} 還沒開始，下次叫它時就是新的 context。`
@@ -1575,14 +1625,16 @@ async function roleEnded($: any, e: any, next: any, role: CrewRole, before: Crew
   await syncCommits($)
   const unclean = role === 'fullstack' && (await workUnclean($))
   if (role === 'fullstack' && checkout.before !== undefined) {
-    // The full-stack works in its worktree: anything new in the person's checkout after its run is said, once.
-    const was = new Set(checkout.before)
-    const touched = (await checkoutChanges($)).filter(line => !was.has(line))
+    // The full-stack works in its worktree: what changed in the person's checkout during its run is said, once.
+    // crew cannot tell who changed it: the person may have, too.
+    const was = checkout.before
     checkout.before = undefined
-    if (touched.length > 0) {
-      const text = `全端這一輪之後，你的工作目錄多了 ${touched.length} 個變更（${cut(touched.map(t => t.slice(3)).join('、'), 160)}）：請檢查，全端應該只改 crew 的工作目錄。`
+    const now = await checkoutState($)
+    const moved = now === undefined ? [] : checkoutMoved(was, now)
+    if (moved.length > 0) {
+      const text = `全端這一輪期間，${moved.join('；')}。如果不是你自己改的，請檢查：全端應該只在 crew 的工作目錄裡工作。`
       $.ui.toast(`crew：${text}`)
-      await note($, { kind: 'checkout_touched', files: touched.slice(0, 20) })
+      await note($, { kind: 'checkout_touched', what: moved })
       if (before.lead === 'brain') tellBrain(text)
     }
   }

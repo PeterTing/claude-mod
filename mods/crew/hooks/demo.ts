@@ -50,12 +50,13 @@ const NORMAL: Snapshot = {
     done: 31,
     total: 50,
     stages: [
-      { label: '拆解', done: 12, total: 12, state: 'done' },
+      { label: '規格', done: 12, total: 12, state: 'done' },
       { label: '設計', done: 9, total: 9, state: 'done' },
-      { label: '架構', done: 4, total: 5, state: 'active' },
+      { label: '測試案例', done: 10, total: 12, state: 'active' },
+      { label: '任務', done: 4, total: 5, state: 'active' },
       { label: '實作', done: 5, total: 14, state: 'active' },
-      { label: '測試', done: 1, total: 8, state: 'active' },
-      { label: '驗收', done: 0, total: 2, state: 'pending' },
+      { label: 'Review', done: 3, total: 14, state: 'active' },
+      { label: '測試結果', done: 1, total: 8, state: 'active' },
     ],
     features: [
       { id: 'F-01', title: '方案選擇', percent: 100, layers: { design: 'done', frontend: 'done', backend: 'done', test: 'done' } },

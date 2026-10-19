@@ -80,7 +80,7 @@ export type FlowEvent =
       unlinked?: boolean
     }
   /** The person answered a question: the flow's own (`escalation`), or one a role asked with ask_person. */
-  | { type: 'answered'; question: string; answer: string; role?: FlowRole; escalation?: boolean }
+  | { type: 'answered'; question: string; answer: string; role?: FlowRole; escalation?: boolean; board?: Tracker }
   /** Claude Code started again on a flow the last session left running: its roles are gone. */
   | { type: 'resume'; board: Tracker; prd: { path: string; size: number; text?: string }; requirements?: readonly Requirement[] }
 
@@ -294,7 +294,7 @@ const afterBuild = (state: FlowState, board: Tracker, inbox: Inbox = {}, require
     }
     return {
       state: { ...state, retries: state.retries + 1 },
-      actions: [{ type: 'message', role: 'fullstack', item: asked.id, text: `${asked.id} 的工作目錄還有沒 commit 的修改：做完的請 commit（訊息以「${asked.id}: 」開頭），不要的請還原。`, route: fsRoute(asked) }],
+      actions: [{ type: 'message', role: 'fullstack', item: asked.id, text: `${asked.id} 的工作目錄還有沒 commit 的修改：做完的請 commit（訊息以「${asked.id}: 」開頭），不要的請還原；建置或測試產生的檔案，請加進 .gitignore。`, route: fsRoute(asked) }],
     }
   }
   if (asked !== undefined && (asked.crew_commits ?? []).length === 0) {
@@ -473,11 +473,13 @@ const answerText = (question: string, answer: string): string =>
 
 const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered' }>): StepResult => {
   const role = event.role ?? 'pm'
+  // The full-stack goes on with its task on the model the task's size calls for: another model would start it afresh.
+  const task = event.board === undefined || state.building === undefined ? undefined : liveTasks(event.board).find(t => t.id === state.building)
   const message: FlowAction = {
     type: 'message',
     role,
     text: answerText(event.question, event.answer),
-    route: routeFor(role, tierFor({ kind: 'confirm_gaps', size: 1 })),
+    route: role === 'fullstack' && task !== undefined ? fsRoute(task) : routeFor(role, tierFor({ kind: 'confirm_gaps', size: 1 })),
   }
   // A role's own question is the person's answer for that role to take in, even while the flow waits;
   // only the answer to the flow's own question takes a waiting flow on: with the tech lead for its plan,
@@ -489,7 +491,7 @@ const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered'
     ...message,
     role: to,
     item: to === 'fullstack' ? state.building : message.item,
-    route: to === 'techlead' ? tlRoute(1) : to === 'fullstack' ? routeFor('fullstack', 'M') : routeFor('pm', tierFor({ kind: 'confirm_gaps', size: 1 })),
+    route: to === 'techlead' ? tlRoute(1) : to === 'fullstack' ? (task === undefined ? routeFor('fullstack', 'M') : fsRoute(task)) : routeFor('pm', tierFor({ kind: 'confirm_gaps', size: 1 })),
   } as FlowAction
   const { resumeAt: _, ...rest } = state
   return {

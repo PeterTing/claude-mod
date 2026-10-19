@@ -208,17 +208,19 @@ export const snapshotOf = ({
       : {
           done: (g0?.requirements.covered ?? 0) + g1.covered + g4.covered + g3.covered + built.covered,
           total: (g0?.requirements.total ?? 0) + g1.total + g4.total + g3.total + built.total,
+          // The seven stages of each requirement's row, in its order, over the whole board.
           stages: [
-            stageOf('拆解', split, stage === 'splitting'),
+            stageOf('規格', split, stage === 'splitting'),
             pendingStage('設計'),
-            // The plan is done only once the split is, as testing is.
-            { ...stageOf('架構', g3, stage === 'planning'), ...(split.gaps.length > 0 && g3.total > 0 && g3.gaps.length === 0 ? { state: stage === 'planning' ? ('active' as const) : ('pending' as const) } : {}) },
-            // Code is done only once the plan is: a criterion still without a task has nothing built for it.
+            // Test cases are done only once the spec is: a requirement still without features has nothing to test yet.
+            { ...stageOf('測試案例', g4, testing), ...(split.gaps.length > 0 && g4.total > 0 && g4.gaps.length === 0 ? { state: testing ? ('active' as const) : ('pending' as const) } : {}) },
+            // The plan is done only once the spec is, as test cases are.
+            { ...stageOf('任務', g3, stage === 'planning'), ...(split.gaps.length > 0 && g3.total > 0 && g3.gaps.length === 0 ? { state: stage === 'planning' ? ('active' as const) : ('pending' as const) } : {}) },
             // Code committed is not code checked: the stage is not done until a review says so (phase 4d).
             { ...stageOf('實作', built, stage === 'building'), ...(built.total > 0 && built.gaps.length === 0 ? { state: stage === 'building' ? ('active' as const) : ('pending' as const) } : {}) },
-            // Testing is done only once the split is: a requirement still without features has nothing tested yet.
-            { ...stageOf('測試', g4, testing), ...(split.gaps.length > 0 && g4.total > 0 && g4.gaps.length === 0 ? { state: testing ? ('active' as const) : ('pending' as const) } : {}) },
-            pendingStage('驗收'),
+            // Nobody reviews code or runs the tests yet: these never show as done before the roles that do them come.
+            pendingStage('Review'),
+            pendingStage('測試結果'),
           ],
           features,
           daily: days.map(d => ({ day: d.slice(5).replace('-', '/'), done: live.activity.filter(a => a.day === d).length })),

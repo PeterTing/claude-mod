@@ -86,10 +86,15 @@ describe('snapshotOf', () => {
     const s = snapshotOf({ board: BOARD, live: LIVE, now: NOW })
     // Two features with criteria, two of three criteria tested, none planned into tasks yet.
     expect(s.progress).toMatchObject({ done: 4, total: 8 })
-    expect(s.progress?.stages.find(st => st.label === '架構')).toMatchObject({ done: 0, total: 3, state: 'pending' })
-    expect(s.progress?.stages.find(st => st.label === '拆解')).toMatchObject({ done: 2, total: 2, state: 'done' })
-    expect(s.progress?.stages.find(st => st.label === '測試')).toMatchObject({ done: 2, total: 3, state: 'active' })
+    // The same seven stages, in the same order, as each requirement's row.
+    expect(s.progress?.stages.map(st => st.label)).toEqual(['規格', '設計', '測試案例', '任務', '實作', 'Review', '測試結果'])
+    expect(s.progress?.stages.find(st => st.label === '規格')).toMatchObject({ done: 2, total: 2, state: 'done' })
+    expect(s.progress?.stages.find(st => st.label === '測試案例')).toMatchObject({ done: 2, total: 3, state: 'active' })
+    expect(s.progress?.stages.find(st => st.label === '任務')).toMatchObject({ done: 0, total: 3, state: 'pending' })
     expect(s.progress?.stages.find(st => st.label === '實作')).toMatchObject({ total: 0, state: 'pending' })
+    // Nothing reviews code or runs tests yet: those stages never show as done.
+    expect(s.progress?.stages.find(st => st.label === 'Review')).toMatchObject({ total: 0, state: 'pending' })
+    expect(s.progress?.stages.find(st => st.label === '測試結果')).toMatchObject({ total: 0, state: 'pending' })
     expect(s.progress?.features.map(f => [f.id, f.percent])).toEqual([
       ['PRD-001', 100],
       ['PRD-002', 50],
@@ -268,12 +273,12 @@ describe('the tech lead’s tasks', () => {
     expect(tl?.limit).toBeGreaterThan(0)
   })
 
-  test('make G3 and the 架構 stage from the board, and count toward progress', () => {
+  test('make G3 and the 任務 stage from the board, and count toward progress', () => {
     const snap = snapshotOf({ board, live: planning, now: NOW })
     const g3 = snap.gates.find(g => g.id === 'G3')
     expect(g3).toMatchObject({ state: 'active', covered: 2, total: 3, name: '每條驗收條件都拆好任務' })
     expect(g3?.gaps.map(g => g.id)).toEqual(['AC-003'])
-    expect(snap.progress?.stages.find(st => st.label === '架構')).toMatchObject({ done: 2, total: 3, state: 'active' })
+    expect(snap.progress?.stages.find(st => st.label === '任務')).toMatchObject({ done: 2, total: 3, state: 'active' })
     // The two tasks add two units of code still to build.
     expect((snap.progress?.total ?? 0) - (snapshotOf({ board: tested, live: planning, now: NOW }).progress?.total ?? 0)).toBe(2)
     expect((snap.progress?.done ?? 0) - (snapshotOf({ board: tested, live: planning, now: NOW }).progress?.done ?? 0)).toBe(2)

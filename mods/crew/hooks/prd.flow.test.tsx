@@ -418,8 +418,8 @@ describe('the board held to the PRD', () => {
     w.disk.set(PRD_PATH, CHANGED)
     await w.clock.advance(10_000)
     const text = await paneText($, 'progress')
-    expect(text).toMatch(/拆解 \d+\/\d+/)
-    expect(text).not.toMatch(/拆解 ✓/)
+    expect(text).toMatch(/規格 \d+\/\d+/)
+    expect(text).not.toMatch(/規格 ✓/)
   })
 
   test('gives an upgraded board a baseline once the PM links it, and tells the next change', async ($, on) => {
@@ -879,7 +879,7 @@ describe('the board held to the PRD', () => {
     await finished($)
     w.disk.set(PRD_PATH, CHANGED)
     await w.clock.advance(10_000)
-    expect(await paneText($, 'progress')).not.toMatch(/測試 ✓/)
+    expect(await paneText($, 'progress')).not.toMatch(/測試案例 ✓/)
   })
 
   test('says a PRD it cannot read once, in a toast, and keeps the person’s transcript clear', async ($, on) => {

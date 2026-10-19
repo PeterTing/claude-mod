@@ -64,16 +64,22 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   }
   const isDir = (path: string) => [...disk.keys()].some(p => p.startsWith(`${path}/`))
   on('fs.exists', (_$, e) => ({ value: disk.has(resolve(e.path)) || isDir(resolve(e.path)) }))
-  /** A repo's git, as far as crew asks it: branches with their commits (newest first), and worktrees. */
+  /**
+   * A repo's git, as far as crew asks it: branches with their commits (newest
+   * first; `HEAD` is the person's checkout, made with one commit), worktrees,
+   * and the checkout's branch.
+   */
   const git = {
     repo: true,
-    branches: new Map<string, { sha: string; subject: string }[]>([['HEAD', []]]),
+    branches: new Map<string, { sha: string; subject: string }[]>([['HEAD', [{ sha: 'c0ffee'.padEnd(40, '0'), subject: 'init' }]]]),
     worktrees: new Map<string, string>(),
     commands: [] as string[][],
     /** What `git status --porcelain` says in crew's worktree: changes not committed. */
     dirty: '',
     /** What it says in the person's checkout. */
     checkout: '',
+    /** The checkout's branch, as `git symbolic-ref HEAD` says it. */
+    ref: 'refs/heads/main',
   }
   let shas = 0
   /** A commit the full-stack made on a branch (crew's, by default the PRD's). */
@@ -88,30 +94,57 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     git.commands.push([...argv])
     const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     const fail = (stderr = '') => ({ value: { exitCode: 1, stdout: '', stderr, isStdoutTruncated: false, isStderrTruncated: false } })
-    if (argv[0] !== 'git' || argv[1] !== '-C') return fail('not git')
-    const args = argv.slice(3)
+    if (argv[0] !== 'git') return fail('not git')
+    // `-c name=value` settings come first, then `-C <dir>`.
+    let at = 1
+    while (argv[at] === '-c') at += 2
+    if (argv[at] !== '-C') return fail('no -C')
+    const dir = argv[at + 1] ?? ''
+    const args = argv.slice(at + 2)
     if (!git.repo) return fail('fatal: not a git repository')
+    const top = (name: string) => git.branches.get(name)?.[0]?.sha
     if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree') return ok('true\n')
-    if (args[0] === 'rev-parse' && args[1] === '--verify') return git.branches.has((args[3] ?? '').replace('refs/heads/', '')) ? ok('x\n') : fail()
+    if (args[0] === 'rev-parse' && args[1] === '--verify') {
+      const name = args[3] ?? ''
+      if (name === 'HEAD^{commit}') return top('HEAD') === undefined ? fail() : ok(`${top('HEAD')}\n`)
+      return git.branches.has(name.replace('refs/heads/', '')) ? ok('x\n') : fail()
+    }
+    if (args[0] === 'symbolic-ref') return git.ref === '' ? fail() : ok(`${git.ref}\n`)
     if (args[0] === 'worktree' && args[1] === 'add') {
       const fresh = args[2] === '-b'
-      const branch = fresh ? (args[3] ?? '') : (args[3] ?? '')
-      const dir = fresh ? (args[4] ?? '') : (args[2] ?? '')
-      if (fresh) git.branches.set(branch, [...(git.branches.get('HEAD') ?? [])])
-      git.worktrees.set(dir, branch)
-      disk.set(`${dir}/.git`, `gitdir: ${ROOT}/.git/worktrees/x`)
+      const branch = args[3] ?? ''
+      const at2 = fresh ? (args[4] ?? '') : (args[2] ?? '')
+      if (fresh) {
+        // The new branch starts at the commit given, with the history beneath it.
+        const from = args[5] ?? 'HEAD'
+        const line = [...git.branches.values()].find(cs => cs.some(c => c.sha === from)) ?? git.branches.get('HEAD') ?? []
+        git.branches.set(branch, line.slice(Math.max(0, line.findIndex(c => c.sha === from))))
+      }
+      git.worktrees.set(at2, branch)
+      disk.set(`${at2}/.git`, `gitdir: ${ROOT}/.git/worktrees/x`)
       return ok()
     }
-    if (args[0] === 'status' && args[1] === '--porcelain') return ok(argv[2] === ROOT ? git.checkout : git.dirty)
+    if (args[0] === 'status' && args[1] === '--porcelain') return ok(dir === ROOT ? git.checkout : git.dirty)
     if (args[0] === 'log') {
       const end = args.indexOf('--')
       const not = args.indexOf('--not')
       const refs = args.slice(4, not === -1 ? end : not).map(r => r.replace('refs/heads/', ''))
-      // `--not --exclude=<ref> --branches`: commits on no other branch.
-      const keep = not === -1 ? undefined : args.slice(not + 1, end).find(a => a.startsWith('--exclude='))?.replace('--exclude=refs/heads/', '')
-      const elsewhere = new Set(not === -1 ? [] : [...git.branches].filter(([b]) => b !== keep).flatMap(([, cs]) => cs.map(c => c.sha)))
+      const negated = not === -1 ? [] : args.slice(not + 1, end)
+      // `--not <sha>`: that commit and those beneath it.
+      const beneath = new Set(
+        negated
+          .filter(a => !a.startsWith('--'))
+          .flatMap(sha => [...git.branches.values()].flatMap(cs => (cs.some(c => c.sha === sha) ? cs.slice(cs.findIndex(c => c.sha === sha)).map(c => c.sha) : []))),
+      )
+      // `--exclude=<name> --branches`: every other branch's commits. As in git, the pattern an --exclude
+      // gives --branches is the branch's name under refs/heads/: `refs/heads/x` matches nothing.
+      const branches = negated.includes('--branches')
+      const keep = negated.find(a => a.startsWith('--exclude='))?.slice('--exclude='.length)
+      const elsewhere = new Set(branches ? [...git.branches].filter(([b]) => b !== keep).flatMap(([, cs]) => cs.map(c => c.sha)) : [])
       const seen = new Set<string>()
-      const lines = refs.flatMap(r => git.branches.get(r) ?? []).filter(c => !elsewhere.has(c.sha) && !seen.has(c.sha) && seen.add(c.sha) !== undefined)
+      const lines = refs
+        .flatMap(r => git.branches.get(r) ?? [])
+        .filter(c => !elsewhere.has(c.sha) && !beneath.has(c.sha) && !seen.has(c.sha) && seen.add(c.sha) !== undefined)
       return ok(lines.map(c => `${c.sha}\t${c.subject}`).join('\n'))
     }
     return fail(`unknown: ${args.join(' ')}`)

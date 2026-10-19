@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { applyOps, newTracker, tasksOf } from './board'
 import type { Op, Tracker } from './board'
-import { branchOf, commitsByTask, SUBJECT, withCommits, workdirOf } from './git'
+import { branchOf, commitsByTask, commitsOf, marksOf, recordSeen, SUBJECT, taskMark, withCommits, workdirOf } from './git'
 
 const ctx = (by: string) => ({ by, today: '2026-10-16', prefixes: { feature: 'PRD-', testCase: 'TC-' } })
 
@@ -52,5 +52,40 @@ describe('the board’s record of them', () => {
     expect(withCommits(marked!, new Map([['TASK-001', ['aaaaaaa1']]]))).toBeNull()
     // A commit that went away (a rewritten branch) takes the mark with it.
     expect(tasksOf(withCommits(marked!, new Map())!.prd_items[0]!).map(t => t.crew_commits)).toEqual([undefined, undefined])
+  })
+})
+
+describe('crew’s record of what it saw done', () => {
+  const retitled = (board: Tracker, title: string): Tracker => ({
+    ...board,
+    prd_items: board.prd_items.map(item => ({ ...item, tasks: (item.tasks ?? []).map(t => ((t as { id?: string }).id === 'TASK-001' ? { ...(t as object), title } : t)) })),
+  })
+
+  test('ties each commit to the tasks it did, as they stood when crew first saw it', () => {
+    const board = planned()
+    const first = tasksOf(board.prd_items[0]!)[0]!
+    const seen = recordSeen({}, commitsOf('aaaaaaa1\tTASK-001: 方案頁\nccccccc3\tTASK-009: 看板上沒有這個任務'), board)
+    expect(seen).toEqual({ aaaaaaa1: { 'TASK-001': taskMark(first) }, ccccccc3: {} })
+    expect(Object.fromEntries(marksOf(board, seen))).toEqual({ 'TASK-001': ['aaaaaaa1'] })
+    // A newer commit joins, newest first; one already seen changes nothing.
+    const more = recordSeen(seen, commitsOf('bbbbbbb2\tTASK-001: 方案頁樣式\naaaaaaa1\tTASK-001: 方案頁'), board)
+    expect(Object.fromEntries(marksOf(board, more))).toEqual({ 'TASK-001': ['bbbbbbb2', 'aaaaaaa1'] })
+    expect(recordSeen(more, commitsOf('aaaaaaa1\tTASK-001: 方案頁'), board)).toBe(more)
+  })
+
+  test('does not count a commit for another task that later takes the same id', () => {
+    const seen = recordSeen({}, commitsOf('aaaaaaa1\tTASK-001: 方案頁'), planned())
+    // The board was made again: its TASK-001 is another task now, and the old commit is still on the branch.
+    const other = retitled(planned(), '登入頁')
+    expect(marksOf(other, seen).size).toBe(0)
+    const again = recordSeen(seen, commitsOf('bbbbbbb2\tTASK-001: 登入頁\naaaaaaa1\tTASK-001: 方案頁'), other)
+    expect(Object.fromEntries(marksOf(other, again))).toEqual({ 'TASK-001': ['bbbbbbb2'] })
+  })
+
+  test('keeps a task’s mark while only its size or detail changes', () => {
+    const board = planned()
+    const seen = recordSeen({}, commitsOf('aaaaaaa1\tTASK-001: 方案頁'), board)
+    const resized = { ...board, prd_items: board.prd_items.map(item => ({ ...item, tasks: (item.tasks ?? []).map(t => ({ ...(t as object), size: 'L', detail: '加上年繳' })) })) }
+    expect(Object.fromEntries(marksOf(resized as Tracker, seen))).toEqual({ 'TASK-001': ['aaaaaaa1'] })
   })
 })

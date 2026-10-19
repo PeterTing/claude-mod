@@ -168,7 +168,7 @@ describe('the tech lead', () => {
     await done($, 'a-techlead-3')
     w.disk.set(PRD_PATH, CHANGED)
     await w.clock.advance(10_000)
-    expect(await paneText($, 'progress')).not.toMatch(/架構 ✓/)
+    expect(await paneText($, 'progress')).not.toMatch(/任務 ✓/)
   })
 
   test('sends an answer to its own question to it', async ($, on) => {

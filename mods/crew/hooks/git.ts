@@ -5,7 +5,7 @@
  * the full-stack says about its work is not. Pure.
  */
 
-import type { Tracker } from './board'
+import type { Task, Tracker } from './board'
 import { tasksOf } from './board'
 import { fingerprint } from './prd'
 
@@ -28,19 +28,58 @@ export const workdirOf = (root: string, prdPath: string): string => `${root}/.cr
 /** A commit's subject that does tasks: it starts with their ids, as `TASK-001: …`, `TASK-001, TASK-002：…` or `[TASK-001] …`. */
 export const SUBJECT = /^\[?(TASK-\d{3,}(?:\s*[,，、]\s*TASK-\d{3,})*)\]?(?=[\s:：\]])/
 
+/** Each commit that does tasks, newest first, from `git log --format=%H%x09%s`: its sha and the task ids its subject starts with. */
+export const commitsOf = (log: string): { sha: string; ids: string[] }[] =>
+  log.split('\n').flatMap(line => {
+    const tab = line.indexOf('\t')
+    if (tab <= 0) return []
+    const sha = line.slice(0, tab).trim()
+    const m = SUBJECT.exec(line.slice(tab + 1).trim())
+    if (m === null || !/^[0-9a-f]{7,40}$/.test(sha)) return []
+    return [{ sha, ids: [...new Set((m[1] ?? '').split(/\s*[,，、]\s*/))] }]
+  })
+
 /** Task id → the commits that do it, newest first, from `git log --format=%H%x09%s`. */
 export const commitsByTask = (log: string): Map<string, string[]> => {
   const out = new Map<string, string[]>()
-  for (const line of log.split('\n')) {
-    const tab = line.indexOf('\t')
-    if (tab <= 0) continue
-    const sha = line.slice(0, tab).trim()
-    const m = SUBJECT.exec(line.slice(tab + 1).trim())
-    if (m === null || !/^[0-9a-f]{7,40}$/.test(sha)) continue
-    for (const id of (m[1] ?? '').split(/\s*[,，、]\s*/)) {
-      const shas = out.get(id) ?? []
-      if (!shas.includes(sha)) out.set(id, [...shas, sha])
+  for (const { sha, ids } of commitsOf(log)) for (const id of ids) out.set(id, [...(out.get(id) ?? []), sha])
+  return out
+}
+
+/**
+ * What crew saw done on its branch: each commit, newest first, with the tasks it
+ * did as they stood when crew first saw it (task id → taskMark). A commit is
+ * tied once and stays tied, so a task that later takes the same id, on a board
+ * made again, is not counted built by the earlier task's commits.
+ */
+export type Seen = Record<string, Record<string, string>>
+
+/** Which task an id named: its title and criteria, not its size or detail, which the plan may still change. */
+export const taskMark = (task: Task): string => fingerprint(`${task.title}\n${task.acceptance_criteria.join(',')}`)
+
+/** The record with the commits crew has not seen before tied to the board's tasks; the same record when nothing is new. */
+export const recordSeen = (seen: Seen, commits: readonly { sha: string; ids: readonly string[] }[], board: Tracker): Seen => {
+  const tasks = new Map(board.prd_items.flatMap(item => tasksOf(item)).map(t => [t.id, t]))
+  const fresh: Seen = {}
+  for (const { sha, ids } of commits) {
+    if (Object.hasOwn(seen, sha) || Object.hasOwn(fresh, sha)) continue
+    const did: Record<string, string> = {}
+    for (const id of ids) {
+      const task = tasks.get(id)
+      if (task !== undefined) did[id] = taskMark(task)
     }
+    fresh[sha] = did
+  }
+  return Object.keys(fresh).length === 0 ? seen : { ...fresh, ...seen }
+}
+
+/** Task id → the commits crew saw doing that very task, newest first. */
+export const marksOf = (board: Tracker, seen: Seen): Map<string, string[]> => {
+  const out = new Map<string, string[]>()
+  for (const task of board.prd_items.flatMap(item => tasksOf(item))) {
+    const mark = taskMark(task)
+    const shas = Object.entries(seen).flatMap(([sha, did]) => (did[task.id] === mark ? [sha] : []))
+    if (shas.length > 0) out.set(task.id, shas)
   }
   return out
 }

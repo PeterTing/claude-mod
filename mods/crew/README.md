@@ -13,6 +13,12 @@ Four roles run today:
 - **Tech lead** breaks the criteria into tasks: what to build, for which criteria, and how big (S, M, L, XL). Gate **G3**, checked by code, needs a task for every criterion.
 - **Full-stack** builds the tasks, one at a time, in crew's own git worktree and branch. Each commit's message starts with its task's id (`TASK-003: …`), and crew reads the commits to see what is built. The task's size picks the model: S and M run on Sonnet at high effort, L on Opus at high, XL on Opus at xhigh.
 
+  What counts as built:
+  - Only commits on crew's branch count, made after crew made the branch and on no other branch. A `TASK-001: …` in your own history is not crew's work.
+  - crew remembers each commit it has seen, and the task it did, so a merge or a deleted branch does not undo it. A later task that takes the same id on a board made again is not counted built by the earlier task's commits.
+  - A task whose worktree still holds changes not committed is not counted built: the full-stack is asked to commit them, revert them, or add build output to `.gitignore`.
+  - A commit makes a task under way, never done. Review, which comes next in phase 4, will decide done.
+
 The team also handles:
 
 - **Gaps:** test gaps go back to the PM, who drops each one with a reason or asks QA to test it. Criteria without a task go back to the tech lead, and then to you.
@@ -53,6 +59,8 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 
 **After upgrading from 0.1.0.** A board crew finished then has no tasks, so its progress counts the plan as not done. Run `/crew start <PRD file>` once: crew checks the board without a new split, and the tech lead plans the tasks.
 
+**After upgrading from 0.2.0.** A board crew finished then has tasks with no code. crew does not start building them on a turn of its own. The full-stack starts on them the next time the flow runs to its end: after `/crew start <PRD file>`, or after a question that has one role pass work to another.
+
 **After a restart.** When Claude Code starts on a PRD crew left unfinished on this machine, the roles start again by themselves, and crew says how many questions are waiting for you.
 
 ## The board stays on the PRD, live
@@ -86,9 +94,9 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
   - spec: every feature that answers the requirement has criteria;
   - test cases: those criteria have test cases, counted done only once the spec is;
   - tasks: those criteria have the tech lead's tasks, counted done only once the spec is;
-  - code: those tasks each have a commit on crew's branch, counted done only once the tasks are. A commit alone never makes a task done: review and test runs come later.
+  - code: how many of those tasks have a commit on crew's branch. It shows as under way (◐), never done: a commit alone does not make code done, and review comes later.
 
-  The other stages show `—` until the roles that do them are added, and never show as done before then. A requirement moved out of scope shows the reason instead.
+  The other stages show `—` until the roles that do them are added, and never show as done before then. A requirement moved out of scope shows the reason instead. The overall row above the table uses the same seven stages, in the same order.
 - **One board, several PRDs.** Starting another PRD keeps the earlier one's requirement numbers on the board, so its features stay its own and do not hold up the new PRD's split. A board from before crew numbered requirements is not reported as a PRD change: the PM is asked to link its features to the requirements.
 
 ## Where things live
@@ -101,9 +109,9 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 | `.crew/memory/consolidated.json` | yes | The days the log has been tidied. |
 | `.crew/log/*.jsonl` | no | The day's log, used for consolidation. |
 | `.crew/usage/*.json` | no | Token use per day. |
-| `.crew/work/<name>/` | no | The full-stack's git worktree for a PRD, on branch `crew/<name>`, named after the PRD file. |
+| `.crew/work/<name>/` | no | The full-stack's git worktree for a PRD, on branch `crew/<name>`, named after the PRD file. It is a second copy of your code: add `.crew/` to the ignore lists of your test runner, linter and type-checker (Vitest, Jest, ESLint and a `tsconfig.json` that includes `**/*` all pick it up otherwise). The other roles' searches in your checkout see it too. |
 
-The flow, the open questions and who started the work are not in the repo. crew keeps them in its own store on this machine, keyed by the repo's path. A repo you clone therefore cannot start work by itself.
+The flow, the open questions, who started the work, crew's branch for each PRD and the commits it has seen are not in the repo. crew keeps them in its own store on this machine, keyed by the repo's path. A repo you clone therefore cannot start work by itself, and a board's commit marks count for nothing until crew has seen the commits itself. On another machine, crew starts without that record: the board shows no code built there until crew sees the commits on its own branch.
 
 crew adds `usage/`, `log/` and `work/` to `.crew/.gitignore` and leaves your own rules there alone.
 
@@ -113,7 +121,12 @@ crew adds `usage/`, `log/` and `work/` to `.crew/.gitignore` and leaves your own
 - **crew never writes over what it cannot read, nor outside the repo.** A board it cannot parse (a merge conflict, a typo) is left as it is until you fix it. A file of crew's that is itself a link, or whose path leads out of the repo, is neither read nor written. That includes a file that links to another file inside the repo. A directory link on the way is followed only when it lands inside the repo. Either way crew tells you why.
 - **Write tools take only crew's own callers.** Only crew's roles and the main conversation can write to the board, threads, questions or memory. Other agents and the roles a reset retired cannot.
 - **Each role has its own permissions on the board.** The PM edits features and criteria; QA writes test cases; the tech lead plans tasks. The full-stack cannot write the board at all.
-- **The full-stack's code stays on crew's branch.** It works in `.crew/work/<name>`, a git worktree on branch `crew/<name>` that crew makes from your checkout's `HEAD`. Your own checkout and branches are left alone, and nothing is pushed: merging is yours. It edits files and runs commands under your Claude Code permission mode, like any agent. crew itself runs only `git rev-parse`, `git worktree add` and `git log`, with the repo's hooks off. A folder that is not a git repo stops the full-stack, and crew says why.
+- **The full-stack works in crew's worktree, not your checkout.**
+  - It starts in `.crew/work/<name>`, a git worktree on branch `crew/<name>` that crew makes from your checkout's commit. It is told to leave your checkout and branches alone and not to push: merging is yours.
+  - That is an instruction, not a fence. The full-stack edits files and runs commands under your Claude Code permission mode, like any agent, and crew says so once when the build starts.
+  - After each of its runs, crew checks your checkout: new changes, another branch or another commit. If anything moved, crew says what, since it cannot tell whether you or the full-stack did it. crew's own files (`prd-tracker.json`, `.crew/`) are left out of that check, so review their changes in git as you would any other.
+  - A `crew/<name>` branch crew did not make is not used: crew makes one with a new name beside it.
+  - crew itself runs only `git rev-parse`, `git symbolic-ref`, `git status`, `git worktree add` and `git log`, with the repo's hooks and file monitor off. A folder that is not a git repo, or one with no commit yet, stops the full-stack, and crew says why.
 - **Your words stay yours.** Roles cannot save or replace your preferences, nor a decision you made or the main conversation relayed for you. The daily tidy-up saves only facts and lessons, never decisions or preferences.
 - **Answers are marked by who relayed them.** An answer Claude relays for you is saved as `brain Q-nn`, so it stays traceable.
 
