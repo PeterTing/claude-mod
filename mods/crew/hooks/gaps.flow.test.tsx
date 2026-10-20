@@ -5,7 +5,7 @@ import type { Engine } from 'claude-code/testing'
 import { applyOps, newTracker } from './board'
 import type { Op } from './board'
 import { parseMemories } from './memory'
-import { command, done, paneText, ROOT, SPLIT, start, world, write } from './world'
+import { command, done, paneText, resumed, ROOT, SPLIT, start, world, write } from './world'
 
 /** What the test review found untested: failures, restarts, context, filters, and the edges of each rule. */
 
@@ -244,6 +244,9 @@ describe('restarting at each stage', () => {
     const w = world($, on)
     restartAt(w, 'splitting')
     await start($)
+    // Nothing goes on before the person says so in the pane.
+    expect(w.spawned).toEqual([])
+    await resumed($)
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm'])
     expect(w.spawned[0]?.prompt).toMatch(/拆到一半/)
   })
@@ -252,6 +255,9 @@ describe('restarting at each stage', () => {
     const w = world($, on)
     restartAt(w, 'confirming', {}, [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e' }])
     await start($)
+    // Nothing goes on before the person says so in the pane.
+    expect(w.spawned).toEqual([])
+    await resumed($)
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm'])
     expect(w.spawned[0]?.prompt).toMatch(/AC-002/)
   })
@@ -260,6 +266,9 @@ describe('restarting at each stage', () => {
     const w = world($, on)
     restartAt(w, 'adding_tests', {}, [{ op: 'add_test_case', criteria: ['AC-002'], title: 't', steps: ['s'], expected: 'e' }])
     await start($)
+    // Nothing goes on before the person says so in the pane.
+    expect(w.spawned).toEqual([])
+    await resumed($)
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:qa'])
     expect(w.spawned[0]?.prompt).toMatch(/重開過[\s\S]*AC-001/)
   })
@@ -280,6 +289,9 @@ describe('restarting at each stage', () => {
     restartAt(w, 'splitting')
     w.store.set(STATE_KEY, { ...(w.store.get(STATE_KEY) as object), lead: 'brain' })
     await start($)
+    // Nothing goes on before the person says so in the pane.
+    expect(w.spawned).toEqual([])
+    await resumed($)
     await call($, 'ask_person', { question: '年繳？' }, 'a-pm-1')
     await done($, 'a-pm-1')
     expect((await notice($, 'a-pm-1')).text).toMatch(/Q-01/)
@@ -290,6 +302,9 @@ describe('restarting at each stage', () => {
     w.disk.delete(`${ROOT}/docs/PRD.md`)
     restartAt(w, 'writing_tests')
     await start($)
+    // Nothing goes on before the person says so in the pane.
+    expect(w.spawned).toEqual([])
+    await resumed($)
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:qa'])
   })
 
@@ -298,6 +313,9 @@ describe('restarting at each stage', () => {
     w.disk.delete(`${ROOT}/docs/PRD.md`)
     restartAt(w, 'splitting')
     await start($)
+    // Nothing goes on before the person says so in the pane.
+    expect(w.spawned).toEqual([])
+    await resumed($)
     expect(w.spawned).toEqual([])
     expect(w.toasts.some(t => /沒有接續：找不到 docs\/PRD\.md/.test(t))).toBe(true)
   })

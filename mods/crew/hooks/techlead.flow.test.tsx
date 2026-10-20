@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
 import { requirementsOf } from './prd'
-import { approve, build, command, designed, done, paneText, PLAN, PRD, ROOT, SPLIT, start, world, write } from './world'
+import { approve, build, command, designed, done, paneText, PLAN, PRD, resumed, ROOT, SPLIT, start, world, write } from './world'
 
 /** The tech lead breaks the tested criteria into tasks; G3 holds every criterion to one. */
 
@@ -100,6 +100,9 @@ describe('the tech lead', () => {
     w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(half.tracker))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'planning', round: 0, retries: 0 }, questions: [], lead: 'person' })
     await start($)
+    // Nothing goes on before the person says so in the pane.
+    expect(w.spawned).toEqual([])
+    await resumed($)
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:techlead'])
     expect(w.spawned[0]?.prompt).toMatch(/重開過[\s\S]*AC-002/)
   })

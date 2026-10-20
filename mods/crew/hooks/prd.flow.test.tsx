@@ -5,7 +5,7 @@ import type { Engine } from 'claude-code/testing'
 import { applyOps, newTracker } from './board'
 import { parseMemories } from './memory'
 import { requirementsOf } from './prd'
-import { build, command, designed, done, paneText, PLAN, PRD, REQ, ROOT, SPLIT, start, world, write } from './world'
+import { build, command, designed, done, paneText, PLAN, PRD, REQ, resumed, ROOT, SPLIT, start, world, write } from './world'
 
 /** The board held to the PRD as it stands, checked every few seconds without a model call. */
 
@@ -371,6 +371,9 @@ describe('the board held to the PRD', () => {
     w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify({ ...newTracker('repo'), crew_prd: { path: 'docs/PRD.md', requirements: requirementsOf(PRD), synced_at: '2026-10-15' } }))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'splitting', round: 0, retries: 0 }, questions: [], lead: 'person' })
     await start($)
+    // Nothing goes on before the person says so in the pane.
+    expect(w.spawned).toEqual([])
+    await resumed($)
     expect(w.spawned[0]?.prompt).toMatch(new RegExp(`${REQ}[\\s\\S]*拆到一半`))
   })
 
@@ -732,7 +735,7 @@ describe('the board held to the PRD', () => {
     expect(w.sent.some(m => /看板還對不上 PRD/.test(m.text))).toBe(false)
     const status = (await $.command.run(command('status'))).text ?? ''
     expect(status).toMatch(/看板對準的是另一份 PRD「docs\/OTHER\.md」/)
-    expect(status).toMatch(/\/crew start docs\/OTHER\.md[\s\S]*\/crew start docs\/PRD\.md/)
+    expect(status).toMatch(/看板對準的是另一份 PRD「docs\/OTHER\.md」，crew 追的是「docs\/PRD\.md」：在面板的「設定」分頁選要跟哪一份 PRD/)
   })
 
   test('keeps a path planted on the board to one quoted line', async ($, on) => {

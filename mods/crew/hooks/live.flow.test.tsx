@@ -207,7 +207,7 @@ describe('crew, PM and QA', () => {
     await $.command.run(command('start docs/PRD.md'))
     const asked = await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 't-ask', agentId: 'a-pm-1', question: '年繳要不要做？', item: 'PRD-001' } as never)
     expect(String((asked as { result: unknown }).result)).toMatch(/Q-01/)
-    expect(w.toasts.at(-1)).toMatch(/\/crew answer Q-01/)
+    expect(w.toasts.at(-1)).toMatch(/有一件事等你決定（Q-01），在右側面板「待你決定」回答/)
 
     const status = await $.command.run(command('status'))
     expect(status.text).toMatch(/待你決定 1/)

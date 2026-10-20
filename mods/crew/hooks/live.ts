@@ -37,6 +37,28 @@ export const emptyLive = (): CrewLive => ({
   signals: { prdVersion: '', boardVersion: '', doubt: '', doubtAt: 0, prdChangedAt: 0, checkedAt: 0, added: 0, removed: 0 },
 })
 
+/** The stage of the seven a flow stage stands in, as the progress row names it. */
+const STAGE_OF: Record<string, string> = {
+  splitting: '規格',
+  writing_tests: '測試案例',
+  adding_tests: '測試案例',
+  confirming: '測試案例',
+  designing: '設計',
+  approving: '設計',
+  planning: '任務',
+  building: '實作',
+  reviewing: 'Review',
+  testing: '測試結果',
+  escalated: '等你決定',
+}
+
+/** Where a held flow stopped, in a sentence: the PRD, the stage, and who was on what. */
+const stoppedAt = (live: CrewLive): string => {
+  const f = live.flow
+  const on = f.stage === 'building' && f.building !== undefined ? `（全端 ${f.building}）` : f.stage === 'reviewing' && f.reviewing !== undefined ? `（Tech lead ${f.reviewing.task}）` : ''
+  return `上次的 ${live.prdPath ?? ''} 停在「${STAGE_OF[f.stage] ?? f.stage}」${on}`
+}
+
 const DAY = 86_400_000
 
 /** "2 分鐘前" from a time and now. */
@@ -404,7 +426,17 @@ export const snapshotOf = ({
               gaps: cases.filter(c => !passedNow(c)).map(c => ({ id: c.id, title: c.title ?? c.id, status: runGap(c), ...(live.threads[c.id] !== undefined ? { thread: c.id } : {}) })),
             },
           ],
-    decisions: live.questions.filter(q => q.status === 'open').map(q => ({ id: q.id, question: q.question, from: q.from, age: ageOf(q.t, now) })),
+    decisions: live.questions
+      .filter(q => q.status === 'open')
+      .map(q => ({
+        id: q.id,
+        question: q.question,
+        from: q.from,
+        age: ageOf(q.t, now),
+        // crew's question on a design is the person's to approve or send back in the pane.
+        ...(q.from === 'crew' && q.item !== undefined && /^SCR-\d+$/.test(q.item) ? { kind: 'design' as const, design: q.item } : {}),
+      })),
+    ...(live.paused === undefined || live.prdPath === null ? {} : { start: { prds: [], resumable: stoppedAt(live), ...(live.paused === 'person' ? { paused: true } : {}) } }),
     items: [...items, ...designItems, ...taskItems],
     threads: Object.entries(live.threads).map(([item, messages]) => ({
       item,

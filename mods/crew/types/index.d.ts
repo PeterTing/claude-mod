@@ -133,6 +133,8 @@ export type CrewLive = {
   pending: Record<string, CrewWork[]>
   /** What crew last saw of the PRD and the board, checked every few seconds: the board is held to the PRD as it stands. */
   signals: CrewSignals
+  /** A running flow held until the person goes on: offered when Claude Code started, or put off by the person. */
+  paused?: 'offer' | 'person'
 }
 
 export type CrewSignals = {
@@ -168,6 +170,12 @@ declare module 'claude-code' {
       asking: string | null
       /** The settings tab asks to confirm a reset. */
       confirming: boolean
+      /** The PRD picked on the start screen, before the start. */
+      picked: string | null
+      /** The design whose content the overview shows, if any. */
+      designOpen: string | null
+      /** The person's last memory search on the memory tab, and what it found. */
+      recalled: { query: string; text: string } | null
       /** The gate whose detail the overview has open, if any. */
       gate: string | null
       /** The running team. */

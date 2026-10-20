@@ -32,7 +32,8 @@ export type Actions = {
   answer: (question: string, text: string) => void
   approve: (question: string) => void
   reject: (question: string, reason?: string) => void
-  viewDesign: (design: string) => void
+  /** Opens a design to read in the pane, or closes it with null. */
+  viewDesign: (design: string | null) => void
   /** Opens a role's question field, or closes it with null; asks it; rotates it. */
   openAsk: (role: RoleId | null) => void
   ask: (role: RoleId, text: string) => void
@@ -369,9 +370,9 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
     <Box flexDirection="column" gap={1}>
       {snap.start?.resumable !== undefined && (
         <Box flexDirection="row" gap={1}>
-          <Text color="suggestion">{snap.start.resumable}。要接續嗎？</Text>
+          <Text color="suggestion">{snap.start.paused === true ? `${snap.start.resumable}，暫停中。` : `${snap.start.resumable}。要接續嗎？`}</Text>
           <Button key="resume" label="接續" variant="primary" onPress={() => act.resume()} />
-          <Button key="not-now" label="先不要" onPress={() => act.notNow()} />
+          {snap.start.paused !== true && <Button key="not-now" label="先不要" onPress={() => act.notNow()} />}
         </Box>
       )}
       {snap.progress !== null && ProgressSummary({ el, p: snap.progress })}
@@ -421,6 +422,17 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
           {snap.decisions.map(d => DecisionRow({ el, d, act }))}
         </Box>
       )}
+      {snap.opened !== undefined && (
+        <Box flexDirection="column">
+          <Box flexDirection="row" gap={1}>
+            <Text bold>
+              {snap.opened.id} {snap.opened.title}
+            </Text>
+            <Button key="close-design" label="關閉" onPress={() => act.viewDesign(null)} />
+          </Box>
+          <Text>{snap.opened.body}</Text>
+        </Box>
+      )}
     </Box>
   )
 }
@@ -438,7 +450,7 @@ function DecisionRow({ el, d, act }: { el: Elements; d: Decision; act: Actions }
         <Text dimColor>
           {who} · {d.age}
         </Text>
-        {d.kind === 'design' && d.design !== undefined && <Button key={`view-${d.design}`} label="看設計稿" onPress={() => act.viewDesign(d.design ?? '')} />}
+        {d.kind === 'design' && d.design !== undefined && <Button key={`view-${d.design}`} label="看設計稿" onPress={() => act.viewDesign(d.design ?? null)} />}
         {d.kind !== undefined && <Button key={`approve-${d.id}`} label="核准" variant="primary" onPress={() => act.approve(d.id)} />}
         {d.kind === 'proposal' && <Button key={`reject-${d.id}`} label="不要" onPress={() => act.reject(d.id)} />}
       </Box>
@@ -456,7 +468,7 @@ function StartScreen({ el, snap, act }: { el: Elements; snap: Snapshot; act: Act
     <Box flexDirection="column" gap={1}>
       <Text bold>crew 已載入，還沒有開始的 PRD。</Text>
       {prds.length > 0 && Select !== undefined && (
-        <Select key="prd-pick" label="PRD 檔案" value={prds[0]?.path} options={prds.map(p => ({ value: p.path, label: `${p.path}　${p.title}` }))} onSelect={(path: string) => act.pick(path)} />
+        <Select key="prd-pick" label="PRD 檔案" value={snap.start?.chosen ?? prds[0]?.path} options={prds.map(p => ({ value: p.path, label: `${p.path}　${p.title}` }))} onSelect={(path: string) => act.pick(path)} />
       )}
       {Field({ el, id: 'prd-path', label: '或輸入路徑', placeholder: 'docs/PRD.md', submit: '開始', what: 'PRD 路徑', onSubmit: path => act.start(path) })}
       <Box flexDirection="row" gap={1}>
@@ -473,8 +485,22 @@ function Settings({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapsho
   const { Box, Text, Button } = el
   const tuning = snap.tuning ?? 'ask'
   const open = snap.settings?.openOnLoad ?? true
+  const { Select } = el
+  const prds = snap.start?.prds ?? []
   return (
     <Box flexDirection="column" gap={1}>
+      {snap.prd !== null && prds.length > 0 && (
+        <Box flexDirection="column">
+          <Text bold>PRD</Text>
+          {Select !== undefined && (
+            <Select key="prd-switch" label="換一份" value={snap.start?.chosen ?? prds[0]?.path} options={prds.map(p => ({ value: p.path, label: `${p.path}　${p.title}` }))} onSelect={(path: string) => act.pick(path)} />
+          )}
+          <Box flexDirection="row" gap={1}>
+            <Button key="switch-prd" label="改跟這一份" onPress={() => act.start()} />
+            <Text dimColor>看板會對準選的 PRD；流程還在進行時要先等這一輪做完。</Text>
+          </Box>
+        </Box>
+      )}
       <Box flexDirection="column">
         <Text bold>測試指令</Text>
         {Field({ el, id: 'test-command', label: '指令', placeholder: '例如 npm test', value: snap.settings?.testCommand, submit: '儲存', what: '測試指令', onSubmit: text => act.testCommand(text) })}
@@ -594,6 +620,12 @@ function MemoryList({ el, snap, act }: { el: Elements; snap: Snapshot; act: Acti
   const fields = (
     <Box flexDirection="column">
       {Field({ el, id: 'recall', label: '搜尋', placeholder: '關鍵字或編號', submit: '搜尋', what: '搜尋', onSubmit: q => act.recall(q) })}
+      {snap.recalled !== undefined && (
+        <Box flexDirection="column">
+          <Text color="suggestion">找到（{snap.recalled.query}）：</Text>
+          <Text>{snap.recalled.text}</Text>
+        </Box>
+      )}
       {Field({ el, id: 'remember', label: '記下偏好', placeholder: '例如：文案用台灣用語', submit: '記下', what: '偏好', onSubmit: text => act.remember(text) })}
     </Box>
   )

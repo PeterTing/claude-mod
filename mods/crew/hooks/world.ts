@@ -298,8 +298,16 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     return { value: { agent: `crew:${e.name}` } }
   })
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.close', () => ({ value: undefined }))
+  /** The panes crew opened and closed, in order: `open:<id>`, `close:<id>`. */
+  const panes: string[] = []
+  on('ui.open', (_$, e) => {
+    panes.push(`open:${(e as { id: string }).id}`)
+    return { value: { isPlaced: true } }
+  })
+  on('ui.close', (_$, e) => {
+    panes.push(`close:${(e as { id: string }).id}`)
+    return { value: undefined }
+  })
   const logs: string[] = []
   /** Log rows that went to the person's transcript, not the debug log alone. */
   const shown: string[] = []
@@ -354,7 +362,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   current.clock = clock
   current.spawned = spawned
   current.disk = disk
-  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, amend, reset, tests, broken, refuse }
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, amend, reset, tests, broken, refuse, panes }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)
@@ -390,6 +398,26 @@ export const PLAN = [
 
 
 /** The pane's text on one tab. */
+/** crew's pane as the person sees it in the terminal, held open to press and type in. */
+export const paneUi = ($: Engine) =>
+  $.ui.mount({
+    plugin: 'crew',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'crew',
+    props: { title: 'Crew', isFocused: true, bodyColumns: 120, placement: 'dock', scroll: { offset: 0, bodyRows: 80 } } as unknown as RenderPropsOf['Pane'],
+  })
+
+/** The person presses 接續 in the pane: a flow left running when Claude Code closed goes on. */
+export const resumed = async ($: Engine) => {
+  const ui = await paneUi($)
+  await ui.press({ key: 'resume' })
+  await ui.unmount()
+}
+
+/** Every text a mounted drawing shows, joined. */
+export const textOf = async (ui: { findAll: (q: { type: string }) => Promise<{ text: string }[]> }) => (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+
 export const paneText = async ($: Engine, tab?: string) => {
   const ui = await $.ui.mount({
     plugin: 'crew',

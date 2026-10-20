@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { applyOps, newTracker } from './board'
 import type { Op } from './board'
-import { build, command, designed, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { build, command, designed, done, PLAN, resumed, ROOT, SPLIT, start, world, write } from './world'
 
 /** The main conversation running crew in plain language, and crew picking up after a restart. */
 
@@ -156,6 +156,9 @@ describe('crew across restarts', () => {
       lead: 'person',
     })
     await start($)
+    // Nothing goes on before the person says so in the pane.
+    expect(w.spawned).toEqual([])
+    await resumed($)
     expect(w.spawned).toHaveLength(1)
     expect(w.spawned[0]?.subagentType).toBe('crew:qa')
     expect(w.spawned[0]?.prompt).toMatch(/## 這次的工作\n[\s\S]*AC-002/)

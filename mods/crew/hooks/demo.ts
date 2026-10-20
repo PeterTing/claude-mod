@@ -211,6 +211,7 @@ const NORMAL: Snapshot = {
   actions: [{ id: 'DEC-15', text: '全端輪替，門檻 100K → 80K', before: '命中率 52% · context 96K', after: '命中率 81% · context 8K' }],
   tuning: 'ask',
   settings: { testCommand: 'python3 -m pytest -v', openOnLoad: true },
+  start: { prds: [{ path: 'docs/PRD.md', title: '會員訂閱 v1' }, { path: 'docs/specs/checkout.md', title: '結帳流程' }] },
   resident: { checked: '2 分鐘前', next: '3 分鐘後', digest: { sent: '12:30', queued: 2, next: '13:00' } },
   requirements: REQUIREMENTS,
   alignment: { covered: 14, total: 14, gaps: 0, added: 0, removed: 0, prdChanged: '2 小時前', checked: '剛剛' },

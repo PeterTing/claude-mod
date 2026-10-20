@@ -537,7 +537,7 @@ describe('fifth-round review items', () => {
     await $.command.run(command('start docs/PRD.md'))
     await write($, 'a-pm-1', SPLIT)
     await done($, 'a-pm-1')
-    expect(w.toasts.some(t => /流程停住了[\s\S]*\/crew resume/.test(t))).toBe(true)
+    expect(w.toasts.some(t => /流程停住了[\s\S]*按［接續］/.test(t))).toBe(true)
   })
 })
 

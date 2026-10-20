@@ -31,7 +31,7 @@ describe('designs', () => {
     await done($, 'a-uiux-3')
     const status = (await $.command.run(command('status'))).text
     expect(status).toMatch(/approving[\s\S]*待你決定 2/)
-    expect(w.toasts.some(t => /設計稿 SCR-001 等你核准（\/crew design SCR-001 看內容；\/crew approve SCR-001 核准，或 \/crew reject SCR-001 <原因> 退回）/.test(t))).toBe(true)
+    expect(w.toasts.some(t => /設計稿 SCR-001 等你核准，在右側面板「待你決定」看內容、核准或退回/.test(t))).toBe(true)
     expect((await $.command.run(command('design SCR-001'))).text).toMatch(/^SCR-001 方案選擇頁（PRD-001 方案選擇，畫面）・等你核准\n\n版面：三張方案卡片/)
     expect(String((await crew($, { action: 'design', question: 'SCR-002' })).result)).toMatch(/SCR-002 取消訂閱（PRD-002 取消訂閱，沒有畫面）/)
     expect(await paneText($, 'progress')).toMatch(/→ 設計 0\/2/)
@@ -57,8 +57,8 @@ describe('designs', () => {
     await done($, 'a-uiux-3')
     // The brain's tool has no way to approve; an answer to the question is not an approval either.
     expect(String((await crew($, { action: 'approve', question: 'SCR-001' })).result)).toMatch(/action 要是/)
-    expect(String((await crew($, { action: 'answer', question: 'Q-01', text: '核准' })).result)).toMatch(/SCR-001 是設計稿：請使用者自己輸入 \/crew approve SCR-001/)
-    expect((await $.command.run(command('answer Q-01 好'))).text).toMatch(/請使用者自己輸入 \/crew approve SCR-001/)
+    expect(String((await crew($, { action: 'answer', question: 'Q-01', text: '核准' })).result)).toMatch(/SCR-001 是設計稿：請在右側面板核准，或寫原因退回/)
+    expect((await $.command.run(command('answer Q-01 好'))).text).toMatch(/SCR-001 是設計稿：請在右側面板核准/)
     expect((await $.command.run(command('approve'))).text).toMatch(/用法：\/crew approve SCR-001/)
     expect((await $.command.run(command('approve SCR-009'))).text).toMatch(/找不到設計稿 SCR-009/)
     expect((await $.command.run(command('reject SCR-001'))).text).toMatch(/用法：\/crew reject SCR-001 <原因>/)
@@ -119,7 +119,7 @@ describe('designs', () => {
     await write($, agentOf('uiux'), DESIGNS)
     await done($, agentOf('uiux'))
     await w.clock.advance(61_000)
-    expect(w.prompts.at(-1)).toMatch(/設計稿 SCR-001 「方案選擇頁」等使用者核准。請使用者自己輸入 \/crew approve SCR-001[\s\S]*不要替使用者核准/)
+    expect(w.prompts.at(-1)).toMatch(/設計稿 SCR-001 「方案選擇頁」等使用者核准。請使用者自己在右側面板核准或退回；不要替使用者核准/)
   })
 
   test('take an approval only from the person’s own typing: not another plugin, a peer, a channel or a relay', async ($, on) => {
@@ -130,9 +130,9 @@ describe('designs', () => {
     await done($, 'a-uiux-3')
     for (const kind of ['plugin', 'peer', 'channel', 'unclassified', 'scheduled-trigger', 'sdk']) {
       const r = await $.command.run({ ...command('approve SCR-001 SCR-002'), origin: { kind } } as never)
-      expect((r as { text: string }).text).toMatch(/要使用者自己在輸入框輸入/)
+      expect((r as { text: string }).text).toMatch(/要使用者自己在右側面板核准或退回/)
     }
-    expect((await $.command.run({ ...command('reject SCR-001 不要'), origin: { kind: 'peer' } } as never) as { text: string }).text).toMatch(/要使用者自己在輸入框輸入/)
+    expect((await $.command.run({ ...command('reject SCR-001 不要'), origin: { kind: 'peer' } } as never) as { text: string }).text).toMatch(/要使用者自己在右側面板核准或退回/)
     expect(w.spawned.some(s => s.subagentType === 'crew:techlead')).toBe(false)
     // The person's Remote Control client is the person.
     expect(((await $.command.run({ ...command('approve SCR-001 SCR-002'), origin: { kind: 'bridge' } } as never)) as { text: string }).text).toBe('已核准 SCR-001、SCR-002。')

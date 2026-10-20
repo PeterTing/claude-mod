@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
 import { taskMark } from './git'
-import { approve, build, command, designed, done, paneText, PLAN, ROOT, SPLIT, start, tested, world, write } from './world'
+import { approve, build, command, designed, done, paneText, PLAN, resumed, ROOT, SPLIT, start, tested, world, write } from './world'
 
 /** The full-stack builds the tasks one at a time in crew's own worktree; a commit, not its word, says a task is built. */
 
@@ -129,6 +129,9 @@ describe('the full-stack', () => {
     w.store.set(`work:${ROOT}:docs/PRD.md`, { branch: 'crew/prd', dir: `${ROOT}/.crew/work/prd`, base: BASE, seen: {}, reviewed: { 'TASK-001': { sha, verdict: 'approve', mark } } })
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, questions: [], lead: 'person' })
     await start($)
+    // Nothing goes on before the person says so in the pane.
+    expect(w.spawned).toEqual([])
+    await resumed($)
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:fullstack'])
     expect(w.spawned[0]?.prompt).toMatch(/重開過[\s\S]*TASK-002/)
   })

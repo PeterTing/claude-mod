@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
-import { approve, build, command, designed, done, paneText, PLAN, ROOT, SPLIT, start, tested, world, write } from './world'
+import { approve, build, command, designed, done, paneText, PLAN, resumed, ROOT, SPLIT, start, tested, world, write } from './world'
 
 /** crew runs the person's test command on its branch; each test case passes or not by what the run printed. */
 
@@ -63,7 +63,7 @@ describe('crew’s test runs', () => {
     // Another plugin, a peer session or a channel relay cannot set what crew runs either.
     for (const kind of ['plugin', 'peer', 'peer-send-message', 'channel', 'unclassified', 'scheduled-trigger', 'sdk']) {
       const r = (await $.command.run({ ...command('test-command python3 -c "print(1)"'), origin: { kind } } as never)) as { text: string }
-      expect(r.text).toMatch(/要使用者自己在輸入框輸入/)
+      expect(r.text).toMatch(/要使用者自己在右側面板的「設定」分頁設定/)
     }
     expect(await (async () => { const r = await $.command.run(command('test-command npm ci && npm test')); return r.text })()).toMatch(/不經過 shell/)
     expect(w.store.get(`tests:${ROOT}`)).toEqual({ argv: ['npm', 'test'] })
@@ -187,6 +187,9 @@ describe('crew’s test runs', () => {
     w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(cases.tracker))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'testing', round: 0, retries: 0 }, questions: [], lead: 'person' })
     await start($)
+    // Nothing goes on before the person says so in the pane.
+    expect(w.tests.runs).toEqual([])
+    await resumed($)
     await tested()
     // There is no worktree here to run in: crew says so, rather than wait for a run that never ends.
     expect((await $.command.run(command('status'))).text).toMatch(/escalated[\s\S]*待你決定 1/)

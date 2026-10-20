@@ -88,7 +88,7 @@ export type Gate = {
 export type Decision = { id: string; question: string; from: RoleId | 'crew' | 'brain'; age: string; kind?: 'design' | 'proposal'; design?: string }
 
 /** What crew offers when it loads: the PRDs in the repo to start from, or the PRD it stopped on. */
-export type Start = { prds: readonly { path: string; title: string }[]; resumable?: string }
+export type Start = { prds: readonly { path: string; title: string }[]; chosen?: string; resumable?: string; paused?: boolean }
 
 /** crew's settings, set in the pane: the test command, and whether the pane opens when crew loads. */
 export type Settings = { testCommand?: string; openOnLoad: boolean }
@@ -220,6 +220,10 @@ export type Snapshot = {
   /** What crew offers on load: a PRD to start, or the one to go on with. */
   start?: Start
   settings?: Settings
+  /** A design the person opened to read in the pane. */
+  opened?: { id: string; title: string; body: string }
+  /** The person's memory search, and what it found. */
+  recalled?: { query: string; text: string }
   /** Memories attached to starts and wakes: how many times, and their average size. */
   injected?: { count: number; average: number }
   /** The PRD's requirements, each with how far its development is. */

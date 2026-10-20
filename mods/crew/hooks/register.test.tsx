@@ -1,5 +1,5 @@
 import type { CommandRunInput, On, RenderPropsOf } from 'claude-code'
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -31,10 +31,11 @@ const band = (surface: (typeof SURFACES)[number]) => ({
 const shown = async (ui: { findAll: (q: { type: string }) => Promise<{ text: string }[]> }) =>
   (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
 
-/** The engine beneath: a pane that opens and closes. */
+/** The engine beneath: a pane that opens and closes, and a clock. */
 const stage = (on: On) => {
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.close', () => ({ value: undefined }))
+  mock.clock(on, { now: Date.UTC(2026, 9, 20, 6, 0, 0) })
 }
 
 const demoOn = ($: Engine) => $.command.run(command('demo'))
@@ -51,10 +52,12 @@ const staged = (on: On): string[] => {
 }
 
 describe('/crew demo', () => {
-  test('says how to open the preview before it is on', async $ => {
+  test('offers to start a PRD in the pane before anything is on', async ($, on) => {
+    stage(on)
     for (const surface of SURFACES) {
       const ui = await $.ui.mount(pane(surface))
-      expect(await shown(ui)).toMatch(/\/crew demo/)
+      expect(await shown(ui)).toMatch(/crew 已載入，還沒有開始的 PRD/)
+      expect(await ui.find({ key: 'start' })).toBeDefined()
       await ui.unmount()
     }
   })
@@ -358,7 +361,7 @@ describe('/crew demo', () => {
     expect(off.text).toMatch(/關閉/)
     for (const surface of SURFACES) {
       const ui = await $.ui.mount(pane(surface))
-      expect(await shown(ui)).toMatch(/\/crew demo/)
+      expect(await shown(ui)).toMatch(/crew 已載入，還沒有開始的 PRD/)
       await ui.unmount()
     }
   })

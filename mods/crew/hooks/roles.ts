@@ -215,7 +215,7 @@ export const TOOL_SPECS = [
   {
     name: 'crew',
     description:
-      '指揮 crew 產品團隊（PM、QA、UI/UX、Tech lead、全端），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM、QA、UI/UX、Tech lead 或全端；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作；test：用使用者設定的測試指令重跑測試（指令只能由使用者自己用 /crew test-command 設定）；design：讀一份設計稿（設計稿只能由使用者自己用 /crew approve、/crew reject 核准或退回）。角色的回覆和要使用者決定的事會再通知你。',
+      '指揮 crew 產品團隊（PM、QA、UI/UX、Tech lead、全端），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM、QA、UI/UX、Tech lead 或全端；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作；test：用使用者設定的測試指令重跑測試（指令只能由使用者自己在右側面板設定）；design：讀一份設計稿（設計稿只能由使用者自己在右側面板核准或退回）。角色的回覆和要使用者決定的事會再通知你。',
     inputSchema: {
       type: 'object',
       properties: {
