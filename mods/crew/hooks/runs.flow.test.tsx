@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { approve, build, command, done, paneText, PLAN, ROOT, SPLIT, start, tested, world, write } from './world'
+import { approve, build, command, designed, done, paneText, PLAN, ROOT, SPLIT, start, tested, world, write } from './world'
 
 /** crew runs the person's test command on its branch; each test case passes or not by what the run printed. */
 
@@ -11,8 +11,9 @@ const planned = async ($: Engine) => {
   await done($, 'a-pm-1')
   await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
   await done($, 'a-qa-2')
-  await write($, 'a-techlead-3', PLAN)
-  await done($, 'a-techlead-3')
+  await designed($)
+  await write($, 'a-techlead-4', PLAN)
+  await done($, 'a-techlead-4')
 }
 
 const crew = ($: Engine, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__crew__crew', tool_use_id: `c-${Math.random()}`, ...input } as never) as Promise<{ result: unknown }>
@@ -71,15 +72,15 @@ describe('crew’s test runs', () => {
     await start($)
     await planned($)
     await build($)
-    expect(w.sent.at(-1)).toMatchObject({ to: 'a-fullstack-4' })
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-fullstack-5' })
     expect(w.sent.at(-1)?.text).toMatch(/TC-001 t：失敗[\s\S]*方案價格錯誤[\s\S]*「TASK-001: 」/)
     expect((await $.command.run(command('status'))).text).toMatch(/building/)
     // The fix is committed, reviewed, and the tests run again and pass.
     w.tests.stdout = ''
     w.tests.exitCode = 0
     w.commit('TASK-001: 修正方案價格')
-    await done($, 'a-fullstack-4')
-    expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-3' })
+    await done($, 'a-fullstack-5')
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
     await approve($, 'TASK-001')
     await tested()
     expect(w.tests.runs).toHaveLength(2)
@@ -143,7 +144,7 @@ describe('crew’s test runs', () => {
     for (const c of board.prd_items.flatMap(i => i.test_cases)) c.crew_result = { result: 'passed', sha: 'abc0001', run: '20261020-120000' }
     w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
     w.commit('TASK-001: 方案頁')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     expect(await paneText($, 'progress')).toMatch(/→ 測試結果 0\/1/)
   })
 })

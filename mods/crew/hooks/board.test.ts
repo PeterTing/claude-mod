@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { applyOps, approvedNow, criteriaOf, gateG1, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf, tipOf } from './board'
+import { applyOps, approvedNow, criteriaOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf, tipOf } from './board'
 import type { Op, Tracker } from './board'
 
 const CTX = { by: 'pm', today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } } as const
@@ -627,5 +627,74 @@ describe('the test results of a test case', () => {
     const text = renderBoard(b)
     expect(text).toMatch(/AC-001 可以選月繳方案 ← TC-001 ✓/)
     expect(text).toMatch(/AC-002 .* ← TC-002 ✗/)
+  })
+})
+
+describe('designs the UI/UX designer makes', () => {
+  const design = (feature: string, title: string, kind = 'screen', body = '版面：方案卡片三張，選中時高亮。狀態：載入中、空、錯誤。'): Op => ({ op: 'add_design', feature, title, kind, body }) as Op
+  const decide = (t: Tracker, id: string, decision: unknown): Tracker => ({
+    ...t,
+    prd_items: t.prd_items.map(i => ({ ...i, crew_designs: ((i.crew_designs as unknown[] | undefined) ?? []).map(d => ((d as { id?: string }).id === id ? { ...(d as object), crew_decision: decision } : d)) })),
+  })
+
+  test('land under the feature, numbered SCR-, as a screen or as no screen with why', () => {
+    const r = run(withTwoFeatures(), [design('PRD-001', '方案選擇頁'), design('PRD-002', '取消訂閱', 'none', '只在後台處理，沒有新畫面。')], 'uiux')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(designsOf(r.tracker.prd_items[0]!)).toEqual([{ id: 'SCR-001', title: '方案選擇頁', kind: 'screen', body: '版面：方案卡片三張，選中時高亮。狀態：載入中、空、錯誤。' }])
+    expect(designsOf(r.tracker.prd_items[1]!).map(d => [d.id, d.kind])).toEqual([['SCR-002', 'none']])
+  })
+
+  test('say what is wrong with a design, and are the UI/UX designer’s alone', () => {
+    const bad = run(withTwoFeatures(), [design('PRD-009', 'x'), design('PRD-001', ' '), design('PRD-001', 'x', 'page'), design('PRD-001', 'x', 'screen', '')], 'uiux')
+    expect(bad.ok).toBe(false)
+    if (bad.ok) return
+    expect(bad.errors).toEqual([
+      'add_design：找不到功能 PRD-009',
+      'add_design：PRD-001 的設計稿標題是空白的',
+      'add_design：kind 要是 screen（有畫面）或 none（沒有畫面）',
+      'add_design：PRD-001 的設計稿內容是空白的',
+    ])
+    expect(run(withTwoFeatures(), [design('PRD-001', 'x', 'screen', 'y'.repeat(6001))], 'uiux')).toMatchObject({ ok: false, errors: ['add_design：設計稿內容最多 6000 字'] })
+    expect(run(withTwoFeatures(), [design('PRD-001', 'x')], 'pm')).toMatchObject({ ok: false })
+    expect(run(withTwoFeatures(), [{ op: 'add_feature', title: 'x', summary: '' }], 'uiux')).toMatchObject({ ok: false })
+  })
+
+  test('count toward G2 once the person approved a design for every feature in scope', () => {
+    const r = run(withTwoFeatures(), [design('PRD-001', '方案選擇頁'), design('PRD-002', '取消訂閱', 'none', '沒有畫面')], 'uiux')
+    if (!r.ok) throw new Error(r.errors.join())
+    expect(gateG2(r.tracker)).toMatchObject({ covered: 0, total: 2 })
+    let b = decide(r.tracker, 'SCR-001', { verdict: 'approved' })
+    expect(gateG2(b)).toEqual({ covered: 1, total: 2, gaps: [{ id: 'PRD-002', title: '取消訂閱' }] })
+    // A rejected design does not count; a garbled mark is no decision.
+    b = decide(b, 'SCR-002', { verdict: 'rejected', reason: '要有確認頁' })
+    expect(gateG2(b).covered).toBe(1)
+    expect(gateG2(decide(r.tracker, 'SCR-001', 'approved')).covered).toBe(0)
+    // A dropped feature needs none.
+    const less = run(decide(r.tracker, 'SCR-001', { verdict: 'approved' }), [{ op: 'drop_feature', id: 'PRD-002', reason: '不做' }] as Op[], 'pm')
+    if (!less.ok) throw new Error(less.errors.join())
+    expect(gateG2(less.tracker)).toMatchObject({ covered: 1, total: 1 })
+  })
+
+  test('can be dropped by the UI/UX designer, and show on the board with where they stand', () => {
+    const r = run(withTwoFeatures(), [design('PRD-001', '方案選擇頁'), design('PRD-001', '舊版'), { op: 'drop_design', id: 'SCR-002', reason: '合併到 SCR-001' }] as Op[], 'uiux')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const b = decide(r.tracker, 'SCR-001', { verdict: 'approved' })
+    const text = renderBoard(b)
+    expect(text).toMatch(/  設計 SCR-001 方案選擇頁（畫面）· 你核准了/)
+    expect(text).toMatch(/  設計 SCR-002 舊版 — 移出：合併到 SCR-001/)
+    expect(text).not.toMatch(/方案卡片三張/)
+    // One feature's view carries the design itself.
+    expect(renderBoard(b, { feature: 'PRD-001' })).toMatch(/方案卡片三張/)
+    expect(renderBoard(decide(r.tracker, 'SCR-001', { verdict: 'rejected', reason: '太擠' }))).toMatch(/SCR-001 方案選擇頁（畫面）· 你退回了：太擠/)
+    expect(renderBoard(r.tracker)).toMatch(/SCR-001 方案選擇頁（畫面）· 等你核准/)
+  })
+
+  test('parse from what the model wrote', () => {
+    const ok = parseOps([{ op: 'add_design', feature: 'PRD-001', title: 't', kind: 'screen', body: 'b' }, { op: 'drop_design', id: 'SCR-001', reason: 'r' }])
+    expect(ok.ok).toBe(true)
+    const bad = parseOps([{ op: 'add_design', feature: 'PRD-001', title: 't' }])
+    expect(bad).toMatchObject({ ok: false, error: expect.stringMatching(/第 1 筆 add_design 缺少 kind、body/) })
   })
 })

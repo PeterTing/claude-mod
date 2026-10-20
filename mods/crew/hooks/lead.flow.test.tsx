@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { applyOps, newTracker } from './board'
 import type { Op } from './board'
-import { build, command, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { build, command, designed, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
 
 /** The main conversation running crew in plain language, and crew picking up after a restart. */
 
@@ -70,11 +70,12 @@ describe('the brain runs crew', () => {
     await done($, 'a-pm-1')
     await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: '全部', steps: ['s'], expected: 'e' }])
     await done($, 'a-qa-2')
-    await write($, 'a-techlead-3', PLAN)
-    await done($, 'a-techlead-3')
+    await designed($)
+    await write($, 'a-techlead-4', PLAN)
+    await done($, 'a-techlead-4')
     await build($)
-    const r = await notice($, 'a-fullstack-4')
-    expect(r.text).toMatch(/^\[crew\] PM＋QA＋Tech lead＋全端 完成/)
+    const r = await notice($, 'a-fullstack-5')
+    expect(r.text).toMatch(/\[crew\][\s\S]*crew 完成：[\s\S]*G2 2\/2[\s\S]*G6 1\/1/)
     // Brief, and decisions go where the roles will see them.
     expect(r.text).toMatch(/一兩句話[\s\S]*記進團隊記憶/)
   })

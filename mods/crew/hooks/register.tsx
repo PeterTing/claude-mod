@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { CrewLive, CrewMessage, CrewScenario, CrewTab, CrewWork } from '../types'
-import { applyOps, criteriaOf, gateG1, gateG4, gateG6, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, reviewOf, tasksOf } from './board'
+import { applyOps, criteriaOf, decisionOf, designsOf, gateG1, gateG4, gateG6, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, reviewOf, tasksOf } from './board'
 import type { Tracker } from './board'
 import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './consolidate'
 import { DEMO } from './demo'
@@ -16,6 +16,8 @@ import { baselineFor, baselineOf, changeKey, cut, diffRequirements, earlierFor, 
 import { branchOf, commitsOf, marksOf, recordSeen, resultsMarkOf, reviewsOf, taskMark, withCommits, withResults, withReviews, workdirOf } from './git'
 import type { Ran, Reviewed, Seen } from './git'
 import { parseCommand, resultsOf, testMark } from './runs'
+import { decisionsOf, designMark, withDecisions } from './designs'
+import type { Decided } from './designs'
 import type { Requirement } from './prd'
 import { composeStart, relatedOf, threadLines, wakePlan, withMemories, workingSet } from './pack'
 import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
@@ -28,8 +30,8 @@ import type { Actions } from './views'
 const PANE = 'crew'
 
 /** The names the roles get as teammates, and how a message names them. */
-const CREW_TEAMMATE = /^crew-(pm|qa|techlead|fullstack)\b/i
-const CREW_MENTION = /@crew-(pm|qa|techlead|fullstack)\b/i
+const CREW_TEAMMATE = /^crew-(pm|qa|uiux|techlead|fullstack)\b/i
+const CREW_MENTION = /@crew-(pm|qa|uiux|techlead|fullstack)\b/i
 
 /** One of the roles crew runs. */
 const isCrewRole = (v: unknown): v is CrewRole => typeof v === 'string' && (CREW_ROLES as readonly string[]).includes(v)
@@ -440,7 +442,7 @@ async function restore($: any) {
     if (saved !== undefined && saved !== null && typeof saved === 'object') {
       // Only what still has the shape crew wrote: anything else starts clean.
       const flow = saved.flow as Partial<CrewLive['flow']> | undefined
-      const stages: readonly string[] = ['idle', 'done', 'escalated', ...RUNNING]
+      const stages: readonly string[] = ['idle', 'done', 'escalated', 'approving', ...RUNNING]
       const isFlow = typeof flow === 'object' && flow !== null && stages.includes(String(flow.stage)) && typeof flow.round === 'number' && typeof flow.retries === 'number'
       const questions = (Array.isArray(saved.questions) ? saved.questions : []).filter(
         (q): q is CrewLive['questions'][number] =>
@@ -772,6 +774,13 @@ async function execute($: any, actions: readonly FlowAction[]) {
       await handOver($, action.role, [work])
     } else if (action.type === 'ask_person') {
       await ask($, 'crew', action.question, action.item)
+    } else if (action.type === 'approve') {
+      const board = await loadBoard($)
+      const designs = board === null ? [] : board.prd_items.flatMap(i => designsOf(i))
+      for (const id of action.ids) {
+        const d = designs.find(x => x.id === id)
+        if (d !== undefined) await askApproval($, d)
+      }
     } else if (action.type === 'run_tests') {
       // The run can take minutes, and its end is a flow event of its own: it runs on the clock, apart from this step.
       laterTests($)
@@ -910,6 +919,79 @@ async function reviewMaterial($: any, task: string, sha: string): Promise<string
   } catch (err) {
     return `${where}\ngit 沒辦法執行：${cut(String(err), 200)}`
   }
+}
+
+/** The person's decisions on designs, kept on this machine per PRD: a board brings none, and a rewritten design loses its own. */
+const decidedKey = (path: string): string => `designs:${files.root}:${path}`
+
+async function loadDecided($: any, path: string): Promise<Decided> {
+  const v = (await $.store.get(decidedKey(path))) as Record<string, Partial<Decided[string]>> | undefined
+  const out: Decided = {}
+  if (typeof v !== 'object' || v === null) return out
+  for (const [id, d] of Object.entries(v)) {
+    if (!/^SCR-\d+$/.test(id) || typeof d !== 'object' || d === null || (d.verdict !== 'approved' && d.verdict !== 'rejected') || typeof d.mark !== 'string') continue
+    out[id] = { verdict: d.verdict, mark: d.mark, ...(typeof d.reason === 'string' ? { reason: d.reason } : {}) }
+  }
+  return out
+}
+
+/** A design's approval question, asked once while it waits: how to read it, approve it or send it back. */
+async function askApproval($: any, design: { id: string; title: string; kind: string }) {
+  const l = await read($, live)
+  if (l.questions.some(q => q.status === 'open' && q.from === 'crew' && q.item === design.id)) return
+  const t = await $.clock.now()
+  const how = `/crew design ${design.id} 看內容；/crew approve ${design.id} 核准，或 /crew reject ${design.id} <原因> 退回`
+  const question = cut(redact(`${design.id} ${design.title}（${design.kind === 'screen' ? '畫面' : '沒有畫面'}）的設計稿等你核准：${how}。`), 500)
+  let id = ''
+  await update($, live, s => {
+    const most = s.questions.reduce((n, q) => Math.max(n, Number(/^Q-(\d+)$/.exec(q.id)?.[1] ?? 0)), 0)
+    id = `Q-${String(most + 1).padStart(2, '0')}`
+    return { ...s, questions: [...s.questions, { id, question, item: design.id, from: 'crew' as const, status: 'open' as const, t }].slice(-MAX_QUESTIONS) }
+  })
+  $.ui.toast(`crew：設計稿 ${design.id} 等你核准（${how}）`)
+  await note($, { kind: 'ask', id, from: 'crew', question, item: design.id })
+  await saveState($)
+  if ((await read($, live)).lead === 'brain') {
+    tellBrain(`UI/UX 的設計稿 ${design.id}（${design.title}）等使用者核准。請使用者自己輸入 /crew approve ${design.id} 或 /crew reject ${design.id} <原因>；不要替使用者核准。要看內容可以用 crew 工具的 design（question: ${design.id}）。`)
+  }
+}
+
+/**
+ * The person's decision on designs: recorded on this machine against the
+ * design as it stands, said in the design's thread for the designer, and
+ * kept as a decision; the flow that waits for it goes on.
+ */
+async function decide($: any, ids: readonly string[], verdict: 'approved' | 'rejected', reason: string): Promise<string> {
+  const l = await read($, live)
+  if (l.prdPath === null) return '還沒有開始的 PRD。'
+  const path = relativeOf(l.prdPath)
+  const board = await loadBoard($)
+  if (board === null) return boardProblem() ?? '找不到看板。'
+  const all = new Map(board.prd_items.filter(i => i.crew_dropped === undefined).flatMap(i => designsOf(i).filter(d => d.crew_dropped === undefined).map(d => [d.id, { d, feature: i.id }] as const)))
+  const missing = ids.filter(id => !all.has(id))
+  if (missing.length > 0) return `找不到設計稿 ${missing.join('、')}（或它已經移出）。`
+  await serial('board', async () => {
+    const decided = await loadDecided($, path)
+    for (const id of ids) {
+      const found = all.get(id)
+      if (found !== undefined) decided[id] = { verdict, mark: designMark(found.d), ...(reason === '' ? {} : { reason }) }
+    }
+    await $.store.set(decidedKey(path), decided)
+  })
+  const said = verdict === 'approved' ? '核准' : `退回：${reason}`
+  await update($, live, s => ({ ...s, questions: s.questions.map(q => (q.status === 'open' && q.from === 'crew' && q.item !== undefined && ids.includes(q.item) ? { ...q, status: 'answered' as const, answer: said } : q)) }))
+  await saveState($)
+  for (const id of ids) {
+    const found = all.get(id)
+    if (found === undefined) continue
+    await post($, { item: id, from: 'person', to: 'uiux', text: `使用者${said}。` })
+    await remember($, { type: 'DEC', text: `使用者${verdict === 'approved' ? '核准' : '退回'}了設計稿 ${id} ${found.d.title}${verdict === 'rejected' ? `（原因：${reason}）` : ''}。`, refs: [id, found.feature], source: 'person' }, 'uiux')
+  }
+  await syncCommits($)
+  const after = await loadBoard($)
+  const requirements = (await prdView($))?.requirements
+  if (after !== null) await feed($, { type: 'designs_decided', board: after, ...(requirements === undefined ? {} : { requirements }) })
+  return `已${verdict === 'approved' ? '核准' : '退回'} ${ids.join('、')}。`
 }
 
 async function ask($: any, from: CrewRole | 'crew' | 'brain', asked: string, item?: string): Promise<string> {
@@ -1145,7 +1227,7 @@ const inboxOf = (l: CrewLive): Record<CrewRole, string[]> => {
     Object.entries(l.threads)
       .filter(([, messages]) => messages.some(m => m.to === role && m.from !== 'crew' && (m.n ?? 0) > (l.seen[role] ?? 0)))
       .map(([item]) => item)
-  return { pm: unread('pm'), qa: unread('qa'), techlead: unread('techlead'), fullstack: unread('fullstack') }
+  return { pm: unread('pm'), qa: unread('qa'), uiux: unread('uiux'), techlead: unread('techlead'), fullstack: unread('fullstack') }
 }
 
 /**
@@ -1306,7 +1388,8 @@ async function syncCommits($: any) {
       const marked = withCommits(board, shas)
       const reviewed = withReviews(marked ?? board, reviewsOf(board, now?.reviewed ?? {}, shas))
       const tested = withResults(reviewed ?? marked ?? board, resultsMarkOf(board, now?.ran, tip))
-      const next = tested ?? reviewed ?? marked
+      const decided = withDecisions(tested ?? reviewed ?? marked ?? board, decisionsOf(board, await loadDecided($, path)))
+      const next = decided ?? tested ?? reviewed ?? marked
       return next === null ? { value: undefined } : { board: next, value: undefined }
     })
   } catch (err) {
@@ -1669,6 +1752,8 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     const answer = cut(redact(words.join(' ')), 500)
     const q = (await read($, live)).questions.find(x => x.id === id && x.status === 'open')
     if (q === undefined || answer === '') return '用法：/crew answer <Q-編號> <回答>，編號要是還沒回答的問題。'
+    // A design waits for the person's approval, not an answer: it is approved or sent back by them alone.
+    if (q.from === 'crew' && q.item !== undefined && /^SCR-\d+$/.test(q.item)) return `${q.item} 是設計稿：請使用者自己輸入 /crew approve ${q.item} 核准，或 /crew reject ${q.item} <原因> 退回。`
     await update($, live, l => ({ ...l, questions: l.questions.map(x => (x.id === id ? { ...x, status: 'answered' as const, answer } : x)) }))
     // An answer the brain relays is recorded as the brain's, so it can be traced.
     const decided = by === 'brain' ? `使用者決定（經大腦轉達）：${answer}` : `使用者決定：${answer}`
@@ -1681,7 +1766,15 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     }
     // A role's own question goes back to that role; the flow's own question, to the role its stage waits on.
     const waiting = (await read($, live)).flow.resumeAt
-    const askedBy: CrewRole = isCrewRole(q.from) ? q.from : waiting === 'planning' ? 'techlead' : waiting === 'building' ? 'fullstack' : 'pm'
+    const askedBy: CrewRole = isCrewRole(q.from)
+      ? q.from
+      : waiting === 'planning' || waiting === 'reviewing'
+        ? 'techlead'
+        : waiting === 'building' || waiting === 'testing'
+          ? 'fullstack'
+          : waiting === 'designing'
+            ? 'uiux'
+            : 'pm'
     if (q.item !== undefined && ITEM.test(q.item)) await post($, { item: q.item, from: by, to: askedBy, text: `${q.question} → ${answer}` })
     await remember($, { type: 'DEC', text: `${decided}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `${by} ${q.id}` }, askedBy)
     const board = await loadBoard($)
@@ -1762,6 +1855,28 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
       laterTests($)
     }
     return `測試指令設定為：${parsed.argv.join(' ')}。crew 會在全端的工作目錄（crew 自己的分支）直接執行它，不經過 shell，也不再逐次詢問；最多跑 10 分鐘。${waiting ? '現在開始跑。' : ''}`
+  }
+  if (verb === 'design') {
+    const id = rest[0] ?? ''
+    const board = await loadBoard($)
+    const found = board === null ? undefined : board.prd_items.flatMap(i => designsOf(i).map(d => ({ d, item: i }))).find(x => x.d.id === id)
+    if (found === undefined) return `找不到設計稿 ${id || '（沒有給編號）'}。用法：/crew design SCR-001`
+    const decision = decisionOf(found.d)
+    const where = found.d.crew_dropped !== undefined ? `已移出：${found.d.crew_dropped}` : decision === undefined ? '等你核准' : decision.verdict === 'approved' ? '你核准了' : `你退回了：${decision.reason ?? ''}`
+    return [`${found.d.id} ${found.d.title}（${found.item.id} ${found.item.title}，${found.d.kind === 'screen' ? '畫面' : '沒有畫面'}）・${where}`, '', found.d.body].join('\n')
+  }
+  if (verb === 'approve' || verb === 'reject') {
+    // A design is the person's to approve, typed by them: not the brain's to decide for them.
+    if (by === 'brain') return `設計稿要使用者自己輸入 /crew ${verb} 決定。`
+    if (verb === 'approve') {
+      const ids = rest.filter(x => /^SCR-\d+$/.test(x))
+      if (ids.length === 0 || ids.length !== rest.length) return '用法：/crew approve SCR-001 [SCR-002 …]'
+      return decide($, ids, 'approved', '')
+    }
+    const [id = '', ...why] = rest
+    const reason = redact(why.join(' ').trim())
+    if (!/^SCR-\d+$/.test(id) || reason === '') return '用法：/crew reject SCR-001 <原因>'
+    return decide($, [id], 'rejected', cut(reason, 500))
   }
   if (verb === 'test') {
     if ((await read($, live)).prdPath === null) return '還沒有開始的 PRD。'
@@ -2118,10 +2233,11 @@ export const register: Register = on => {
       rotate: words(e.role),
       resume: [],
       test: [],
+      design: words(e.question),
     }
     const verb = str(e.action)
     const rest = Object.hasOwn(args, verb) ? args[verb] : undefined
-    if (rest === undefined) return { result: 'action 要是 start、ask、answer、status、remember、recall、rotate、resume 或 test。' }
+    if (rest === undefined) return { result: 'action 要是 start、ask、answer、status、remember、recall、rotate、resume、test 或 design。' }
     await boot.ready
     return { result: await crewVerb($, verb, rest, 'brain') }
   })

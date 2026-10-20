@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { parseMemories } from './memory'
-import { build, command, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { build, command, designed, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
 
 /** What the second test review found untested: parallel writes, QA's questions, the brain's relays, and each rule's other side. */
 
@@ -64,12 +64,13 @@ describe('work the person started', () => {
     await $.command.run(command('resume'))
     await write($, 'a-qa-3', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
     await done($, 'a-qa-3')
+    await designed($)
     expect((await notice($, 'a-qa-3')).drop).toBeDefined()
-    await write($, 'a-techlead-4', PLAN)
-    await done($, 'a-techlead-4')
-    await build($, ['TASK-001', 'TASK-002'], 'a-fullstack-5', 'a-techlead-4')
+    await write($, 'a-techlead-5', PLAN)
+    await done($, 'a-techlead-5')
+    await build($, ['TASK-001', 'TASK-002'], 'a-fullstack-6', 'a-techlead-5')
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
-    expect((await notice($, 'a-fullstack-5')).drop).toBeDefined()
+    expect((await notice($, 'a-fullstack-6')).drop).toBeDefined()
     await w.clock.advance(61_000)
     expect(w.prompts).toEqual([])
   })
@@ -138,8 +139,9 @@ describe('third test review', () => {
     await done($, 'a-pm-1')
     await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
     await done($, 'a-qa-2')
-    await write($, 'a-techlead-3', PLAN)
-    await done($, 'a-techlead-3')
+    await designed($)
+    await write($, 'a-techlead-4', PLAN)
+    await done($, 'a-techlead-4')
     await build($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
     await $.command.run(command('ask pm 補一條：可以改方案'))

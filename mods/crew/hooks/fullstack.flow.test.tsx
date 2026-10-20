@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
 import { taskMark } from './git'
-import { approve, build, command, done, paneText, PLAN, ROOT, SPLIT, start, tested, world, write } from './world'
+import { approve, build, command, designed, done, paneText, PLAN, ROOT, SPLIT, start, tested, world, write } from './world'
 
 /** The full-stack builds the tasks one at a time in crew's own worktree; a commit, not its word, says a task is built. */
 
@@ -35,8 +35,9 @@ const planned = async ($: Engine) => {
   await done($, 'a-pm-1')
   await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
   await done($, 'a-qa-2')
-  await write($, 'a-techlead-3', PLAN)
-  await done($, 'a-techlead-3')
+  await designed($)
+  await write($, 'a-techlead-4', PLAN)
+  await done($, 'a-techlead-4')
 }
 
 describe('the full-stack', () => {
@@ -58,18 +59,18 @@ describe('the full-stack', () => {
     const w = world($, on)
     await start($)
     await planned($)
-    await done($, 'a-fullstack-4', '做完了')
-    expect(w.sent.at(-1)?.to).toBe('a-fullstack-4')
+    await done($, 'a-fullstack-5', '做完了')
+    expect(w.sent.at(-1)?.to).toBe('a-fullstack-5')
     expect(w.sent.at(-1)?.text).toMatch(/TASK-001 還沒有 commit/)
     w.commit('TASK-001: 方案頁')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     // The tech lead reviews the commit before the next task starts.
-    expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-3' })
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
     expect(w.sent.at(-1)?.text).toMatch(/請 review TASK-001 方案頁（commit abc0001）[\s\S]*commit abc0001\n TASK-001: 方案頁|請 review TASK-001 方案頁（commit abc0001）[\s\S]*diff of abc0001/)
     expect(String((await approve($, 'TASK-001')).result)).toMatch(/已記下 TASK-001 的 review 結論（通過，commit abc0001）/)
     expect(w.sent.at(-1)?.text).toMatch(/請實作 TASK-002 取消流程/)
     w.commit('TASK-002: 取消流程')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     await approve($, 'TASK-002')
     // crew runs the person's test command; every test case passes.
     await tested()
@@ -81,18 +82,18 @@ describe('the full-stack', () => {
     const w = world($, on)
     await start($)
     await planned($)
-    await done($, 'a-fullstack-4', '卡住了')
-    await done($, 'a-fullstack-4', '還是卡住')
+    await done($, 'a-fullstack-5', '卡住了')
+    await done($, 'a-fullstack-5', '還是卡住')
     expect((await $.command.run(command('status'))).text).toMatch(/escalated[\s\S]*待你決定 1/)
-    expect((await $.command.run(command('answer Q-01 先跳過金流，用假資料'))).text).toMatch(/轉給 全端|轉給全端/)
-    expect(w.sent.at(-1)?.to).toBe('a-fullstack-4')
+    expect((await $.command.run(command('answer Q-03 先跳過金流，用假資料'))).text).toMatch(/轉給 全端|轉給全端/)
+    expect(w.sent.at(-1)?.to).toBe('a-fullstack-5')
   })
 
   test('counts a task as built from its commit, not from what the full-stack says', async ($, on) => {
     world($, on)
     await start($)
     await planned($)
-    await done($, 'a-fullstack-4', 'TASK-001 和 TASK-002 都做完了')
+    await done($, 'a-fullstack-5', 'TASK-001 和 TASK-002 都做完了')
     const text = await paneText($, 'progress')
     expect(text).toMatch(/實作 0\/2/)
   })
@@ -102,7 +103,7 @@ describe('the full-stack', () => {
     w.git.repo = false
     await start($)
     await planned($)
-    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:techlead'])
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:uiux', 'crew:techlead'])
     expect(w.toasts.some(t => /全端沒有開始：這個資料夾不是 git repo/.test(t))).toBe(true)
   })
 
@@ -137,12 +138,12 @@ describe('the full-stack', () => {
     await start($)
     await planned($)
     w.commit('TASK-001: 方案頁')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     w.commit('TASK-002: 取消流程')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     expect((await $.command.run(command('ask fullstack 用了什麼框架？'))).text).toMatch(/全端/)
-    expect(w.sent.at(-1)).toMatchObject({ to: 'a-fullstack-4' })
-    expect(String((await write($, 'a-fullstack-4', [{ op: 'add_feature', title: 'x', summary: '' }])).result)).toMatch(/全端 不能做 add_feature/)
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-fullstack-5' })
+    expect(String((await write($, 'a-fullstack-5', [{ op: 'add_feature', title: 'x', summary: '' }])).result)).toMatch(/全端 不能做 add_feature/)
   })
 
   test('shows each built task under way with its commit on the board tab', async ($, on) => {
@@ -150,7 +151,7 @@ describe('the full-stack', () => {
     await start($)
     await planned($)
     w.commit('TASK-001: 方案頁')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     let text = await paneText($, 'board')
     expect(text).toMatch(/TASK-001[\s\S]*commit abc0001 · Tech lead 正在 review/)
     await approve($, 'TASK-001')
@@ -216,11 +217,11 @@ describe('the full-stack', () => {
     const w = world($, on)
     await start($)
     await planned($)
-    await $.tool.call({ tool: 'mcp__crew__thread_post', tool_use_id: 'q', agentId: 'a-fullstack-4', item: 'TASK-001', to: 'techlead', text: '金流用哪家？' } as never)
-    await done($, 'a-fullstack-4', '等 Tech lead')
-    expect(w.sent.at(-1)?.to).toBe('a-techlead-3')
-    await done($, 'a-techlead-3', '用 Stripe。')
-    expect(w.sent.at(-1)?.to).toBe('a-fullstack-4')
+    await $.tool.call({ tool: 'mcp__crew__thread_post', tool_use_id: 'q', agentId: 'a-fullstack-5', item: 'TASK-001', to: 'techlead', text: '金流用哪家？' } as never)
+    await done($, 'a-fullstack-5', '等 Tech lead')
+    expect(w.sent.at(-1)?.to).toBe('a-techlead-4')
+    await done($, 'a-techlead-4', '用 Stripe。')
+    expect(w.sent.at(-1)?.to).toBe('a-fullstack-5')
     expect(w.sent.at(-1)?.text).toMatch(/用 Stripe/)
   })
 
@@ -230,14 +231,14 @@ describe('the full-stack', () => {
     await planned($)
     w.commit('TASK-001: 先寫失敗的測試')
     w.git.dirty = ' M src/plan.ts\n'
-    await done($, 'a-fullstack-4', '先休息')
-    expect(w.sent.at(-1)?.to).toBe('a-fullstack-4')
+    await done($, 'a-fullstack-5', '先休息')
+    expect(w.sent.at(-1)?.to).toBe('a-fullstack-5')
     expect(w.sent.at(-1)?.text).toMatch(/TASK-001 的工作目錄還有沒 commit 的修改/)
     // A project's build or test output is no reason to stop: it belongs in .gitignore.
     expect(w.sent.at(-1)?.text).toMatch(/建置或測試產生的檔案，請加進 \.gitignore/)
     w.git.dirty = ''
     w.commit('TASK-001: 方案頁')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     expect(w.sent.at(-1)?.text).toMatch(/請 review TASK-001/)
   })
 
@@ -246,13 +247,13 @@ describe('the full-stack', () => {
     await start($)
     await planned($)
     w.commit('TASK-001: 方案頁')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     let text = await paneText($, 'progress')
     expect(text).not.toMatch(/實作 ✓/)
     expect(text).toMatch(/→ Review 0\/2/)
     await approve($, 'TASK-001')
     w.commit('TASK-002: 取消流程')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     await approve($, 'TASK-002')
     text = await paneText($, 'progress')
     expect(text).toMatch(/→ 實作 ✓/)
@@ -267,7 +268,7 @@ describe('the full-stack', () => {
     // The person's checkout leaves its branch (a detached HEAD, a tag): the old commit is now on crew's branch only.
     w.git.branches.delete('HEAD')
     w.git.ref = ''
-    await done($, 'a-fullstack-4', '做完了')
+    await done($, 'a-fullstack-5', '做完了')
     expect(w.sent.at(-1)?.text).toMatch(/TASK-001 還沒有 commit/)
     expect(await paneText($, 'progress')).toMatch(/實作 0\/2/)
   })
@@ -320,7 +321,7 @@ describe('the full-stack', () => {
     w.git.checkout = ' M src/mine.ts\n M prd-tracker.json.bak\n M prd-tracker.json\n?? .crew/threads/x.jsonl\n'
     w.commit('TASK-001: 方案頁', 'HEAD')
     w.commit('TASK-001: 方案頁')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     const said = w.toasts.find(t => t.includes('全端這一輪期間')) ?? ''
     expect(said).toMatch(/多了 2 個變更（src\/mine\.ts、prd-tracker\.json\.bak）/)
     expect(said).toMatch(/checkout 從 main c0ffee0 變成 main abc000/)
@@ -333,7 +334,7 @@ describe('the full-stack', () => {
     await planned($)
     w.git.checkout = 'R  .crew/memory/x.md -> src/y.ts\nR  .crew/a.md -> .crew/b.md\n'
     w.commit('TASK-001: 方案頁')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     expect(w.toasts.find(t => t.includes('全端這一輪期間'))).toMatch(/多了 1 個變更（\.crew\/memory\/x\.md -> src\/y\.ts）/)
   })
 
@@ -345,14 +346,15 @@ describe('the full-stack', () => {
     await done($, 'a-pm-1')
     await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
     await done($, 'a-qa-2')
-    await write($, 'a-techlead-3', PLAN.map(t => ({ ...t, size: 'XL' })))
-    await done($, 'a-techlead-3')
+    await designed($)
+    await write($, 'a-techlead-4', PLAN.map(t => ({ ...t, size: 'XL' })))
+    await done($, 'a-techlead-4')
     expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:fullstack', model: 'opus' })
-    await done($, 'a-fullstack-4', '卡住了')
-    await done($, 'a-fullstack-4', '還是卡住')
-    await $.command.run(command('answer Q-01 先跳過金流，用假資料'))
+    await done($, 'a-fullstack-5', '卡住了')
+    await done($, 'a-fullstack-5', '還是卡住')
+    await $.command.run(command('answer Q-03 先跳過金流，用假資料'))
     // The answer wakes the same Opus agent: another model would have started the task afresh.
-    expect(w.sent.at(-1)?.to).toBe('a-fullstack-4')
+    expect(w.sent.at(-1)?.to).toBe('a-fullstack-5')
     expect(w.spawned.filter(s => s.subagentType === 'crew:fullstack')).toHaveLength(1)
   })
 
@@ -362,11 +364,11 @@ describe('the full-stack', () => {
     await planned($)
     w.git.checkout = ' M src/early.ts\n'
     // The person's answer reaches the full-stack while it is at work: the run's start stays as it was.
-    await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 'q', agentId: 'a-fullstack-4', question: '金流用哪家？', item: 'TASK-001' } as never)
-    await $.command.run(command('answer Q-01 用 Stripe'))
-    expect(w.sent.at(-1)).toMatchObject({ to: 'a-fullstack-4' })
+    await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 'q', agentId: 'a-fullstack-5', question: '金流用哪家？', item: 'TASK-001' } as never)
+    await $.command.run(command('answer Q-03 用 Stripe'))
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-fullstack-5' })
     w.commit('TASK-001: 方案頁')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     expect(w.toasts.some(t => /全端這一輪期間，你的工作目錄多了 1 個變更（src\/early\.ts）/.test(t))).toBe(true)
   })
 
@@ -375,19 +377,19 @@ describe('the full-stack', () => {
     await start($)
     await planned($)
     w.commit('TASK-001: 方案頁')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     await approve($, 'TASK-001')
     // The person merges crew's branch and deletes it while the full-stack works on TASK-002.
     const crew = w.git.branches.get('crew/prd') ?? []
     w.git.branches.set('HEAD', crew)
     w.git.branches.delete('crew/prd')
     // TASK-002 is not committed yet: its next work needs a worktree again.
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     const fresh = w.git.commands.filter(c => c.includes('worktree') && c.includes('-b')).at(-1) ?? []
     const branch = fresh[fresh.indexOf('-b') + 1] ?? ''
     expect(branch).toMatch(/^crew\/prd-[0-9a-f]{6}$/)
     w.commit('TASK-002: 取消流程', branch)
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     await approve($, 'TASK-002')
     await tested()
     const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[] }[] }[] }
@@ -404,7 +406,7 @@ describe('the full-stack', () => {
     await start($)
     await planned($)
     w.commit('TASK-001: 方案頁')
-    await done($, 'a-fullstack-4')
+    await done($, 'a-fullstack-5')
     expect(w.toasts.filter(t => t.includes('全端這一輪期間'))).toEqual([])
   })
 
@@ -413,7 +415,7 @@ describe('the full-stack', () => {
     w.git.branches.set('HEAD', [])
     await start($)
     await planned($)
-    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:techlead'])
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:uiux', 'crew:techlead'])
     expect(w.toasts.some(t => /全端沒有開始：這個 repo 還沒有 commit/.test(t))).toBe(true)
   })
 

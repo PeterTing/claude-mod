@@ -1,16 +1,27 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { applyOps, newTracker } from './board'
+import { applyOps, designsOf, newTracker } from './board'
 import type { Op, Tracker } from './board'
 import { INITIAL, step } from './flow'
 import { withCommits, withResults, withReviews } from './git'
+import { withDecisions } from './designs'
 import { requirementsOf } from './prd'
 import { PLAN, SPLIT as WORLD_SPLIT } from './world'
 import type { FlowEvent, FlowState } from './flow'
 
 const ctx = (by: string) => ({ by, today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } })
 
-const board = (pm: readonly Op[], qa: readonly Op[] = []): Tracker => {
+/** The board with a design the person approved for every feature in scope: the design stage behind it. */
+const designedOf = (t: Tracker): Tracker => {
+  const items = t.prd_items.filter(i => i.crew_dropped === undefined && designsOf(i).length === 0)
+  if (items.length === 0) return t
+  const r = applyOps(t, items.map(i => ({ op: 'add_design', feature: i.id, title: `${i.title} 畫面`, kind: 'none', body: '沒有畫面' }) as Op), ctx('uiux'))
+  if (!r.ok) throw new Error(r.errors.join('; '))
+  return withDecisions(r.tracker, new Map(r.tracker.prd_items.flatMap(i => designsOf(i)).map(d => [d.id, { verdict: 'approved' as const }]))) ?? r.tracker
+}
+
+/** The board as the PM and QA left it, with no design yet. */
+const bare = (pm: readonly Op[], qa: readonly Op[] = []): Tracker => {
   const a = applyOps(newTracker('shop'), pm, ctx('pm'))
   if (!a.ok) throw new Error(a.errors.join('; '))
   if (qa.length === 0) return a.tracker
@@ -18,6 +29,9 @@ const board = (pm: readonly Op[], qa: readonly Op[] = []): Tracker => {
   if (!b.ok) throw new Error(b.errors.join('; '))
   return b.tracker
 }
+
+/** The board as the PM and QA left it, its designs approved. */
+const board = (pm: readonly Op[], qa: readonly Op[] = []): Tracker => designedOf(bare(pm, qa))
 
 const SPLIT: readonly Op[] = [
   { op: 'add_feature', title: '方案選擇', summary: '' },
@@ -894,7 +908,7 @@ describe('what the full-stack is given', () => {
     return r.tracker
   }
   const tested = (): Tracker =>
-    apply(apply(newTracker('x'), WORLD_SPLIT, 'pm'), [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }], 'qa')
+    designedOf(apply(apply(newTracker('x'), WORLD_SPLIT, 'pm'), [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }], 'qa'))
   const committed = (t: Tracker, id: string): Tracker => withCommits(t, new Map([[id, ['abc1234']]])) ?? t
 
   test('is never a task the tech lead dropped', () => {
@@ -916,5 +930,70 @@ describe('what the full-stack is given', () => {
     const twice = step(once.state, { type: 'role_done', role: 'fullstack', board, unclean: true })
     expect(twice.state).toMatchObject({ stage: 'escalated', resumeAt: 'building' })
     expect(twice.actions.some(a => a.type === 'ask_person')).toBe(true)
+  })
+})
+
+describe('designs', () => {
+  const tested = (): Tracker => bare(WORLD_SPLIT as unknown as Op[], [tc(['AC-001', 'AC-002'])])
+  const design = (t: Tracker, ops: readonly Op[]): Tracker => {
+    const r = applyOps(t, ops, ctx('uiux'))
+    if (!r.ok) throw new Error(r.errors.join('; '))
+    return r.tracker
+  }
+  const both = (t: Tracker): Tracker =>
+    design(t, [{ op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張卡片' } as Op, { op: 'add_design', feature: 'PRD-002', title: '取消', kind: 'none', body: '後台' } as Op])
+  const decided = (t: Tracker, d: [string, { verdict: 'approved' | 'rejected'; reason?: string }][]): Tracker => withDecisions(t, new Map(d)) ?? t
+
+  test('are made for every feature once its test cases are in, and approved by the person before the plan', () => {
+    const toDesign = step({ stage: 'confirming', round: 0, retries: 0 }, { type: 'role_done', role: 'pm', board: tested() })
+    expect(toDesign.state).toMatchObject({ stage: 'designing' })
+    expect(toDesign.actions[0]).toMatchObject({ type: 'spawn', role: 'uiux', route: { label: 'Sonnet' } })
+    expect((toDesign.actions[0] as { prompt: string }).prompt).toMatch(/2 個功能[\s\S]*PRD-001 方案選擇：AC-001 可以選月繳方案[\s\S]*PRD-002 取消訂閱[\s\S]*add_design[\s\S]*kind 填 none/)
+    const drawn = both(tested())
+    const toApprove = step(toDesign.state, { type: 'role_done', role: 'uiux', board: drawn })
+    expect(toApprove).toMatchObject({ state: { stage: 'approving' }, actions: [{ type: 'approve', ids: ['SCR-001', 'SCR-002'] }] })
+    // Only part approved: still waiting for the person.
+    expect(step(toApprove.state, { type: 'designs_decided', board: decided(drawn, [['SCR-001', { verdict: 'approved' }]]) })).toMatchObject({ state: { stage: 'approving' }, actions: [{ type: 'approve', ids: ['SCR-002'] }] })
+    const toPlan = step(toApprove.state, { type: 'designs_decided', board: decided(drawn, [['SCR-001', { verdict: 'approved' }], ['SCR-002', { verdict: 'approved' }]]) })
+    expect(toPlan.state.stage).toBe('planning')
+    expect(toPlan.actions[0]).toMatchObject({ type: 'spawn', role: 'techlead' })
+  })
+
+  test('sent back go to the designer again, with the person’s reason', () => {
+    const back = decided(both(tested()), [['SCR-001', { verdict: 'rejected', reason: '要有比較表' }], ['SCR-002', { verdict: 'approved' }]])
+    const r = step({ stage: 'approving', round: 0, retries: 0 }, { type: 'designs_decided', board: back })
+    expect(r.state.stage).toBe('designing')
+    expect(r.actions[0]).toMatchObject({ type: 'message', role: 'uiux', item: 'PRD-001' })
+    expect((r.actions[0] as { text: string }).text).toMatch(/PRD-001 方案選擇（你的 SCR-001 被使用者退回，原因：要有比較表）/)
+    expect((r.actions[0] as { text: string }).text).not.toMatch(/PRD-002/)
+  })
+
+  test('missing after the designer’s run are asked for once more, then the person decides', () => {
+    const half = design(tested(), [{ op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張卡片' } as Op])
+    const again = step({ stage: 'designing', round: 0, retries: 0 }, { type: 'role_done', role: 'uiux', board: half })
+    expect(again.actions[0]).toMatchObject({ type: 'message', role: 'uiux', item: 'PRD-002' })
+    expect(again.state.retries).toBe(1)
+    const stuck = step(again.state, { type: 'role_done', role: 'uiux', board: half })
+    expect(stuck.state).toMatchObject({ stage: 'escalated', resumeAt: 'designing' })
+    const answered = step(stuck.state, { type: 'answered', question: 'q', answer: 'PRD-002 不用畫面', escalation: true, board: half })
+    expect(answered).toMatchObject({ state: { stage: 'designing' }, actions: [{ type: 'message', role: 'uiux' }] })
+  })
+
+  test('leave the flow waiting for the person: a role’s run ending moves nothing, and a decision at another time only marks the board', () => {
+    const drawn = both(tested())
+    expect(step({ stage: 'approving', round: 0, retries: 0 }, { type: 'role_done', role: 'pm', board: drawn }).actions).toEqual([])
+    expect(step({ stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, { type: 'designs_decided', board: drawn }).actions).toEqual([])
+  })
+
+  test('pass the designer’s questions to the PM and the PM’s answer back', () => {
+    const asked = step({ stage: 'designing', round: 0, retries: 0 }, { type: 'role_done', role: 'uiux', board: tested(), inbox: { pm: ['PRD-001'] } })
+    expect(asked.actions[0]).toMatchObject({ type: 'message', role: 'pm', item: 'PRD-001' })
+    const back = step(asked.state, { type: 'role_done', role: 'pm', board: tested(), inbox: { uiux: ['PRD-001'] } })
+    expect(back.actions[0]).toMatchObject({ type: 'message', role: 'uiux', item: 'PRD-001' })
+  })
+
+  test('pick up after a restart: the designer goes on, or the person is asked again', () => {
+    expect(step({ stage: 'designing', round: 0, retries: 0 }, { type: 'resume', board: tested(), prd: { path: 'docs/PRD.md', size: 600 } }).actions[0]).toMatchObject({ type: 'message', role: 'uiux' })
+    expect(step({ stage: 'approving', round: 0, retries: 0 }, { type: 'resume', board: both(tested()), prd: { path: 'docs/PRD.md', size: 600 } })).toMatchObject({ actions: [{ type: 'approve', ids: ['SCR-001', 'SCR-002'] }] })
   })
 })

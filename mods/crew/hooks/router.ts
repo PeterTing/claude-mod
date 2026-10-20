@@ -1,7 +1,7 @@
 import type { RoleId, Tier } from './model'
 
 /** What a role is asked to do, and what sizes it. */
-export type TaskKind = 'split_prd' | 'write_tests' | 'add_tests' | 'confirm_gaps' | 'plan_tasks'
+export type TaskKind = 'split_prd' | 'write_tests' | 'add_tests' | 'confirm_gaps' | 'plan_tasks' | 'design'
 
 export type TaskSignals = {
   kind: TaskKind
@@ -39,6 +39,7 @@ const STEPS: Record<TaskKind, readonly [number, number, number] | readonly [numb
   add_tests: [10, 30, 80],
   confirm_gaps: [5, 40],
   plan_tasks: [10, 30, 80],
+  design: [3, 8, 20],
 }
 
 /** Areas where a miss costs most: one tier more. */

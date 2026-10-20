@@ -11,9 +11,9 @@ export const TOOLS = {
   review: 'mcp__crew__review_submit',
 } as const
 
-export type CrewRole = 'pm' | 'qa' | 'techlead' | 'fullstack'
+export type CrewRole = 'pm' | 'qa' | 'uiux' | 'techlead' | 'fullstack'
 
-export const CREW_ROLES: readonly CrewRole[] = ['pm', 'qa', 'techlead', 'fullstack']
+export const CREW_ROLES: readonly CrewRole[] = ['pm', 'qa', 'uiux', 'techlead', 'fullstack']
 
 const SHARED = [
   '你是 crew 產品團隊的一員，跟其他角色透過看板和討論串合作，不直接對話。',
@@ -39,6 +39,13 @@ const QA_CARD = [
   '你是 QA。',
   '職責：為每一條驗收條件寫 test case（add_test_case，criteria 填它覆蓋的驗收條件編號）。',
   '原則：每個 test case 的步驟具體、預期結果可以判斷對錯；涵蓋正常、錯誤與邊界情況；一條驗收條件可以有多個 test case。驗收條件寫得無法測時，用 thread_post 問 PM，不要硬寫。',
+  SHARED,
+].join('\n\n')
+
+const UX_CARD = [
+  '你是 UI/UX 設計師。',
+  '職責：PM 拆好功能、QA 寫好 test case 之後，為每個功能畫一份設計稿（add_design），交給使用者核准；使用者退回的，照原因重畫。',
+  '原則：有畫面的（kind: screen），body 寫版面（文字或 ASCII 線框圖）、每個狀態（載入中、空的、錯誤、成功）、互動、文案和無障礙要點，讓全端照著就能做；沒有畫面的（kind: none，例如只有 API、函式或背景工作），body 寫為什麼沒有畫面、使用者從哪裡用到它。設計要對應驗收條件，不要加範圍外的東西；範圍有疑問用 thread_post 問 PM，需要產品決定用 ask_person。你不寫程式。',
   SHARED,
 ].join('\n\n')
 
@@ -77,6 +84,15 @@ export const AGENT_SPECS: Record<CrewRole, { name: string; description: string; 
     effort: 'medium',
     omitClaudeMd: true,
   },
+  uiux: {
+    name: 'uiux',
+    description: 'crew 的 UI/UX 設計師：為每個功能畫設計稿給使用者核准。只由 crew 啟動。',
+    prompt: UX_CARD,
+    tools: ['Read', TOOLS.read, TOOLS.write, TOOLS.post, TOOLS.thread, TOOLS.ask, TOOLS.save, TOOLS.search],
+    model: 'sonnet',
+    effort: 'medium',
+    omitClaudeMd: true,
+  },
   fullstack: {
     name: 'fullstack',
     description: 'crew 的全端工程師：在 crew 的 worktree 實作 Tech lead 拆好的任務並 commit。只由 crew 啟動。',
@@ -102,15 +118,17 @@ const OPS_SCHEMA = {
   items: {
     type: 'object',
     properties: {
-      op: { enum: ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement', 'add_test_case', 'add_task', 'drop_task'] },
+      op: { enum: ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement', 'add_test_case', 'add_task', 'drop_task', 'add_design', 'drop_design'] },
       title: { type: 'string' },
       summary: { type: 'string' },
       priority: { enum: ['P0', 'P1', 'P2'] },
-      feature: { type: 'string', description: '功能編號（add_criterion、link_requirements、add_task）' },
+      feature: { type: 'string', description: '功能編號（add_criterion、link_requirements、add_task、add_design）' },
+      kind: { enum: ['screen', 'none'], description: '設計稿：screen 有畫面，none 沒有畫面（add_design）' },
+      body: { type: 'string', description: '設計稿內容：版面、狀態、互動、文案；沒有畫面就寫為什麼（add_design）' },
       sources: { type: 'array', items: { type: 'string' }, description: '功能對應的 PRD 需求編號 R-…（add_feature）' },
       requirements: { type: 'array', items: { type: 'string' }, description: 'PRD 需求編號 R-…（link_requirements）' },
       text: { type: 'string', description: '驗收條件內容（add_criterion）' },
-      id: { type: 'string', description: '要移出的編號（drop_criterion、drop_feature、drop_requirement、drop_task）' },
+      id: { type: 'string', description: '要移出的編號（drop_criterion、drop_feature、drop_requirement、drop_task、drop_design）' },
       reason: { type: 'string' },
       criteria: { type: 'array', items: { type: 'string' }, description: '覆蓋或滿足的驗收條件編號（add_test_case、add_task）' },
       detail: { type: 'string', description: '要改哪些地方、和其他任務的先後（add_task）' },
@@ -135,7 +153,7 @@ export const TOOL_SPECS = [
   {
     name: 'board_write',
     description:
-      '寫 crew 看板，一次送出多筆操作，全部成功或全部不生效。PM：add_feature(title, summary, sources)、add_criterion(feature, text)、drop_criterion(id, reason)、drop_feature(id, reason)、link_requirements(feature, requirements)、drop_requirement(id, reason)。QA：add_test_case(criteria, title, steps, expected)。Tech lead：add_task(feature, criteria, title, detail, size)、drop_task(id, reason)。',
+      '寫 crew 看板，一次送出多筆操作，全部成功或全部不生效。PM：add_feature(title, summary, sources)、add_criterion(feature, text)、drop_criterion(id, reason)、drop_feature(id, reason)、link_requirements(feature, requirements)、drop_requirement(id, reason)。QA：add_test_case(criteria, title, steps, expected)。UI/UX：add_design(feature, title, kind, body)、drop_design(id, reason)。Tech lead：add_task(feature, criteria, title, detail, size)、drop_task(id, reason)。',
     inputSchema: { type: 'object', properties: { ops: OPS_SCHEMA }, required: ['ops'] },
   },
   {
@@ -143,7 +161,7 @@ export const TOOL_SPECS = [
     description: '在某個項目的討論串留言給另一個角色。對方下次被叫醒時會看到。',
     inputSchema: {
       type: 'object',
-      properties: { item: { type: 'string', description: '項目編號，例如 AC-003' }, to: { enum: ['pm', 'qa', 'techlead', 'fullstack'] }, text: { type: 'string' } },
+      properties: { item: { type: 'string', description: '項目編號，例如 AC-003' }, to: { enum: ['pm', 'qa', 'uiux', 'techlead', 'fullstack'] }, text: { type: 'string' } },
       required: ['item', 'to', 'text'],
     },
   },
@@ -183,7 +201,7 @@ export const TOOL_SPECS = [
         type: { enum: ['DEC', 'MEM', 'LES'] },
         text: { type: 'string', description: '300 字以內' },
         refs: { type: 'array', items: { type: 'string' }, description: '相關編號，例如 AC-003' },
-        roles: { type: 'array', items: { enum: ['pm', 'qa', 'techlead', 'fullstack'] }, description: '只給這些角色看；省略則全部' },
+        roles: { type: 'array', items: { enum: ['pm', 'qa', 'uiux', 'techlead', 'fullstack'] }, description: '只給這些角色看；省略則全部' },
         supersedes: { type: 'string', description: '被這條取代的記憶編號' },
       },
       required: ['type', 'text'],
@@ -197,14 +215,14 @@ export const TOOL_SPECS = [
   {
     name: 'crew',
     description:
-      '指揮 crew 產品團隊（PM、QA、Tech lead、全端），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM、QA、Tech lead 或全端；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作；test：用使用者設定的測試指令重跑測試（指令只能由使用者自己用 /crew test-command 設定）。角色的回覆和要使用者決定的事會再通知你。',
+      '指揮 crew 產品團隊（PM、QA、UI/UX、Tech lead、全端），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM、QA、UI/UX、Tech lead 或全端；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作；test：用使用者設定的測試指令重跑測試（指令只能由使用者自己用 /crew test-command 設定）；design：讀一份設計稿（設計稿只能由使用者自己用 /crew approve、/crew reject 核准或退回）。角色的回覆和要使用者決定的事會再通知你。',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { enum: ['start', 'ask', 'answer', 'status', 'remember', 'recall', 'rotate', 'resume', 'test'] },
+        action: { enum: ['start', 'ask', 'answer', 'status', 'remember', 'recall', 'rotate', 'resume', 'test', 'design'] },
         path: { type: 'string', description: 'PRD 檔案路徑（start）' },
-        role: { enum: ['pm', 'qa', 'techlead', 'fullstack'], description: 'ask、rotate 的對象' },
-        question: { type: 'string', description: '要回答的問題編號，例如 Q-01（answer）' },
+        role: { enum: ['pm', 'qa', 'uiux', 'techlead', 'fullstack'], description: 'ask、rotate 的對象' },
+        question: { type: 'string', description: '要回答的問題編號，例如 Q-01（answer）；設計稿編號，例如 SCR-001（design）' },
         text: { type: 'string', description: '問題、回答、偏好或關鍵字' },
       },
       required: ['action'],

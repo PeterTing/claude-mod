@@ -52,6 +52,25 @@ export type Task = {
 /** A review pinned to the commit the tech lead read: approved, or changes asked for. */
 export type TaskReview = { sha: string; verdict: 'approve' | 'changes'; notes?: string }
 
+/**
+ * A design the UI/UX designer made for a feature: a screen, with its layout,
+ * states and interactions, or no screen, with why. The person approves it.
+ */
+export type Design = {
+  id: string
+  title: string
+  kind: 'screen' | 'none'
+  body: string
+  /** Why the design left the plan, when it did. */
+  crew_dropped?: string
+  /** The person's decision on it, as crew recorded it. */
+  crew_decision?: DesignDecision
+  [key: string]: unknown
+}
+
+/** The person approved the design, or sent it back with why. */
+export type DesignDecision = { verdict: 'approved' | 'rejected'; reason?: string }
+
 export type PrdItem = {
   id: string
   title: string
@@ -64,6 +83,8 @@ export type PrdItem = {
   gaps: unknown[]
   /** Why the feature left the plan, when it did. */
   crew_dropped?: string
+  /** The UI/UX designer's designs for the feature. */
+  crew_designs?: unknown[]
   [key: string]: unknown
 }
 
@@ -91,6 +112,8 @@ export type Op =
   | { op: 'drop_feature'; id: string; reason: string }
   | { op: 'add_task'; feature: string; criteria: string[]; title: string; detail: string; size?: string }
   | { op: 'drop_task'; id: string; reason: string }
+  | { op: 'add_design'; feature: string; title: string; kind: string; body: string }
+  | { op: 'drop_design'; id: string; reason: string }
   | {
       op: 'add_test_case'
       criteria: string[]
@@ -114,9 +137,13 @@ const ALLOWED: Record<string, readonly Op['op'][]> = {
   pm: ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement'],
   qa: ['add_test_case'],
   techlead: ['add_task', 'drop_task'],
+  uiux: ['add_design', 'drop_design'],
 }
 
-const ROLE_LABEL: Record<string, string> = { pm: 'PM', qa: 'QA', techlead: 'Tech lead', fullstack: '全端' }
+const ROLE_LABEL: Record<string, string> = { pm: 'PM', qa: 'QA', techlead: 'Tech lead', fullstack: '全端', uiux: 'UI/UX' }
+
+/** The longest a design may be: it lives on the board, which every role reads. */
+const DESIGN_MAX = 6000
 
 const SIZES: readonly TaskSize[] = ['S', 'M', 'L', 'XL']
 
@@ -127,6 +154,24 @@ export const tasksOf = (item: PrdItem): Task[] =>
     if (typeof v !== 'object' || v === null || typeof v.id !== 'string' || typeof v.title !== 'string') return []
     return [{ ...v, id: v.id, title: v.title, status: typeof v.status === 'string' ? v.status : 'planned', acceptance_criteria: Array.isArray(v.acceptance_criteria) ? v.acceptance_criteria.filter((c): c is string => typeof c === 'string') : [], detail: typeof v.detail === 'string' ? v.detail : '' } as Task]
   })
+
+/** A feature's designs, read from what the board holds: entries without an id, a title, a kind and a body are not crew's to count. */
+export const designsOf = (item: PrdItem): Design[] =>
+  (Array.isArray(item.crew_designs) ? item.crew_designs : []).flatMap((entry): Design[] => {
+    const v = entry as Partial<Design> | null
+    if (typeof v !== 'object' || v === null || typeof v.id !== 'string' || typeof v.title !== 'string' || typeof v.body !== 'string' || (v.kind !== 'screen' && v.kind !== 'none')) return []
+    return [{ ...v, id: v.id, title: v.title, kind: v.kind, body: v.body } as Design]
+  })
+
+/** The person's decision on a design, when the mark is one crew could have written. */
+export const decisionOf = (d: Design): DesignDecision | undefined => {
+  const v = d.crew_decision as Partial<DesignDecision> | undefined
+  if (typeof v !== 'object' || v === null || (v.verdict !== 'approved' && v.verdict !== 'rejected')) return undefined
+  return { verdict: v.verdict, ...(typeof v.reason === 'string' ? { reason: v.reason } : {}) }
+}
+
+/** A feature's designs still in play: not dropped, not sent back. */
+export const liveDesignsOf = (item: PrdItem): Design[] => designsOf(item).filter(d => d.crew_dropped === undefined && decisionOf(d)?.verdict !== 'rejected')
 
 /** The tasks in the plan: in a feature in scope, not dropped, in the order the tech lead numbered them. */
 export const liveTasksOf = (board: Tracker): Task[] =>
@@ -330,6 +375,25 @@ const apply = (t: Tracker, op: Op, ctx: OpContext): string | OpResult => {
       recordDecision(t, ctx, { decision: `${op.id} 移出：${op.reason}`, reason: op.reason, task: op.id, feature: item.id })
       return { op: op.op, id: op.id }
     }
+    case 'add_design': {
+      const item = feature(op.feature)
+      if (item === undefined) return `add_design：找不到功能 ${op.feature}`
+      if (item.crew_dropped !== undefined) return `add_design：${op.feature} 已經移出範圍`
+      if (op.title.trim() === '') return `add_design：${op.feature} 的設計稿標題是空白的`
+      if (op.kind !== 'screen' && op.kind !== 'none') return 'add_design：kind 要是 screen（有畫面）或 none（沒有畫面）'
+      if (op.body.trim() === '') return `add_design：${op.feature} 的設計稿內容是空白的`
+      if (op.body.length > DESIGN_MAX) return `add_design：設計稿內容最多 ${DESIGN_MAX} 字`
+      // A dropped or sent-back design's id stays taken: threads and decisions point at it.
+      const id = next(t.prd_items.flatMap(i => designsOf(i).map(d => d.id)), 'SCR-')
+      item.crew_designs = [...(Array.isArray(item.crew_designs) ? item.crew_designs : []), { id, title: op.title.trim(), kind: op.kind, body: op.body.trim() }]
+      return { op: op.op, id }
+    }
+    case 'drop_design': {
+      const item = t.prd_items.find(i => designsOf(i).some(d => d.id === op.id))
+      if (item === undefined) return `drop_design：找不到設計稿 ${op.id}`
+      item.crew_designs = (item.crew_designs ?? []).map(d => ((d as { id?: unknown } | null)?.id === op.id ? { ...(d as object), crew_dropped: op.reason } : d))
+      return { op: op.op, id: op.id }
+    }
     case 'add_test_case': {
       const known = new Map(allCriteria(t).map(c => [c.id, c]))
       const missing = op.criteria.filter(id => !known.has(id))
@@ -435,6 +499,13 @@ export const gateG6 = (t: Tracker): GateResult => {
   return { covered: cases.length - gaps.length, total: cases.length, gaps }
 }
 
+/** G2: every feature in scope has a design the person approved: a screen, or no screen with why. */
+export const gateG2 = (t: Tracker): GateResult => {
+  const items = inScope(t)
+  const gaps = items.filter(i => !liveDesignsOf(i).some(d => decisionOf(d)?.verdict === 'approved')).map(i => ({ id: i.id, title: i.title }))
+  return { covered: items.length - gaps.length, total: items.length, gaps }
+}
+
 /** G5: every task in the plan has its newest commit approved by the tech lead. */
 export const gateG5 = (t: Tracker): GateResult => {
   const tasks = liveTasksOf(t)
@@ -482,6 +553,13 @@ export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): strin
       const plan = planning ? ` · ${tasks.length === 0 ? '還沒有任務' : `任務 ${tasks.map(x => x.id).join(', ')}`}` : ''
       lines.push(`  ${c.id} ${c.text} ← ${cases.length === 0 ? '沒有 test case' : cases.map(tc => `${tc.id}${caseMark(tc)}`).join(', ')}${plan}`)
     }
+    for (const d of designsOf(item)) {
+      const decision = decisionOf(d)
+      const where = decision === undefined ? '等你核准' : decision.verdict === 'approved' ? '你核准了' : `你退回了${decision.reason === undefined ? '' : `：${decision.reason}`}`
+      lines.push(d.crew_dropped !== undefined ? `  設計 ${d.id} ${d.title} — 移出：${d.crew_dropped}` : `  設計 ${d.id} ${d.title}（${d.kind === 'screen' ? '畫面' : '沒有畫面'}）· ${where}`)
+      // One feature's view carries the design itself; the whole board names it only.
+      if (scope.feature !== undefined && d.crew_dropped === undefined) lines.push(d.body.split('\n').map(l => `    ${l}`).join('\n'))
+    }
     for (const x of tasksOf(item)) {
       const size = x.size === undefined ? '' : `（${x.size}）`
       lines.push(
@@ -496,7 +574,7 @@ export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): strin
   return lines.join('\n')
 }
 
-const OP_NAMES = ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement', 'add_test_case', 'add_task', 'drop_task'] as const
+const OP_NAMES = ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement', 'add_test_case', 'add_task', 'drop_task', 'add_design', 'drop_design'] as const
 
 const isText = (v: unknown): v is string => typeof v === 'string'
 const isTextList = (v: unknown): v is string[] => Array.isArray(v) && v.every(isText)
@@ -557,6 +635,13 @@ export const parseOps = (raw: unknown): { ok: true; ops: Op[] } | { ok: false; e
         else ops.push({ op: 'add_task', feature: o.feature, criteria: o.criteria, title: o.title, detail: isText(o.detail) ? o.detail : '', ...(isText(o.size) ? { size: o.size } : {}) })
         return
       }
+      case 'add_design': {
+        const missing = need(['feature', 'title', 'kind', 'body'])
+        if (missing.length > 0) errors.push(`${at} add_design 缺少 ${missing.join('、')}`)
+        else ops.push({ op: 'add_design', feature: o.feature as string, title: o.title as string, kind: o.kind as string, body: o.body as string })
+        return
+      }
+      case 'drop_design':
       case 'drop_task':
       case 'drop_requirement':
       case 'drop_criterion':

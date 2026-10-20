@@ -8,6 +8,7 @@ import { barCells, percent } from './model'
 import type { Snapshot } from './model'
 import { bandText, bar } from './views'
 import { withCommits, withResults, withReviews } from './git'
+import { withDecisions } from './designs'
 import { requirementsOf } from './prd'
 
 const NOW = Date.UTC(2026, 9, 15, 6, 0, 0)
@@ -46,6 +47,7 @@ const LIVE: CrewLive = {
   roles: {
     pm: { agentId: 'a1', model: 'claude-sonnet-5-5', label: 'Sonnet', effort: 'high', tier: 'S', limit: 60_000, state: 'working', doing: '確認 AC-003', context: 8_000 },
     qa: { agentId: 'a2', model: 'claude-sonnet-5-5', label: 'Sonnet', effort: 'medium', tier: 'S', limit: 60_000, state: 'idle', doing: '—', context: 12_000 },
+    uiux: { state: 'idle', doing: '—', context: 0 },
     techlead: { state: 'idle', doing: '—', context: 0 },
     fullstack: { state: 'idle', doing: '—', context: 0 },
   },
@@ -80,14 +82,15 @@ describe('snapshotOf', () => {
     expect(g1).toMatchObject({ state: 'pass', covered: 2, total: 2 })
     expect(g4).toMatchObject({ state: 'gap', covered: 2, total: 3, detail: '1 個缺口' })
     expect(g4?.gaps[0]).toMatchObject({ id: 'AC-003', title: '到期當天取消', thread: 'AC-003' })
-    expect(s.gates.find(g => g.id === 'G2')).toMatchObject({ state: 'pending' })
+    // No designs yet: G2 has every feature as a gap.
+    expect(s.gates.find(g => g.id === 'G2')).toMatchObject({ state: 'gap', covered: 0, total: 2 })
   })
 
   test('counts progress over the stages built so far, and shows each feature', () => {
     const s = snapshotOf({ board: BOARD, live: LIVE, now: NOW })
     // Two features with criteria, two of three criteria tested, none planned into tasks yet.
-    // Units: 2 features, 3 criteria tested, 3 criteria planned, and 2 test cases run.
-    expect(s.progress).toMatchObject({ done: 4, total: 10 })
+    // Units: 2 features specced, 2 designed, 3 criteria tested, 3 criteria planned, and 2 test cases run.
+    expect(s.progress).toMatchObject({ done: 4, total: 12 })
     // The same seven stages, in the same order, as each requirement's row.
     expect(s.progress?.stages.map(st => st.label)).toEqual(['規格', '設計', '測試案例', '任務', '實作', 'Review', '測試結果'])
     expect(s.progress?.stages.find(st => st.label === '規格')).toMatchObject({ done: 2, total: 2, state: 'done' })
@@ -112,11 +115,11 @@ describe('snapshotOf', () => {
     expect(s.progress?.recent[0]).toMatchObject({ id: 'TC-002', role: 'qa', age: '2 分鐘前' })
   })
 
-  test('shows the two running roles and the three still to come', () => {
+  test('shows each of the five roles, the designer among them', () => {
     const s = snapshotOf({ board: BOARD, live: LIVE, now: NOW })
     expect(s.roles.map(r => r.id)).toEqual(['pm', 'uiux', 'fullstack', 'qa', 'techlead'])
     expect(s.roles.find(r => r.id === 'pm')).toMatchObject({ state: 'working', doing: '確認 AC-003', context: 8_000, limit: 60_000, route: { tier: 'S', model: 'Sonnet', effort: 'high' } })
-    expect(s.roles.find(r => r.id === 'uiux')).toMatchObject({ state: 'idle', doing: '第 4 階段加入' })
+    expect(s.roles.find(r => r.id === 'uiux')).toMatchObject({ state: 'idle', doing: '—' })
   })
 
   test('lists open questions only, and threads with who wrote to whom', () => {
@@ -188,12 +191,11 @@ describe('development status by PRD requirement', () => {
     expect(rows[3]?.dropped).toBe('下一版')
   })
 
-  test('marks the stages crew does not track yet as later, never as done', () => {
+  test('never marks a stage done that has nothing approved or passed yet', () => {
     const rows = snapshotOf({ board, live: emptyLive(), now: NOW, prd: { requirements: reqs } }).requirements ?? []
     expect(rows).toHaveLength(4)
-    expect(rows.every(r => r.layers.design.state === 'later')).toBe(true)
-    // Before any task or run, review and test results have nothing passed: never done.
-    expect(rows.every(r => r.layers.review.state === 'todo' && r.layers.runs.state !== 'done')).toBe(true)
+    // No design approved, no task reviewed, no test case passed: none of those is done.
+    expect(rows.every(r => r.layers.design.state !== 'done' && r.layers.review.state === 'todo' && r.layers.runs.state !== 'done')).toBe(true)
   })
 
   test('does not call test cases done while a feature that answers the requirement has no criteria', () => {
@@ -340,7 +342,7 @@ describe('the full-stack’s commits', () => {
     const snap = snapshotOf({ board: half, live: building, now: NOW })
     expect(snap.progress?.stages.find(st => st.label === '實作')).toMatchObject({ done: 1, total: 2, state: 'active' })
     expect(snap.roles.find(r => r.id === 'fullstack')?.doing).toBe('—')
-    expect(snap.roles.find(r => r.id === 'uiux')?.doing).toBe('第 4 階段加入')
+    expect(snap.roles.find(r => r.id === 'uiux')?.doing).toBe('—')
   })
 
   test('fill each requirement’s code column, under way while committed and never done by a commit alone', () => {
@@ -409,7 +411,8 @@ describe('the full-stack’s commits', () => {
   })
 
   describe('and crew’s test runs on them', () => {
-    const approved = withReviews(withCommits(planned, new Map([['TASK-001', ['abc1234def']], ['TASK-002', ['def5678abc']]])) ?? planned, new Map([['TASK-001', { sha: 'abc1234def', verdict: 'approve' as const }], ['TASK-002', { sha: 'def5678abc', verdict: 'approve' as const }]])) ?? planned
+    const drawn = withDecisions(apply(planned, [{ op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '卡片' }], 'uiux'), new Map([['SCR-001', { verdict: 'approved' as const }]])) ?? planned
+    const approved = withReviews(withCommits(drawn, new Map([['TASK-001', ['abc1234def']], ['TASK-002', ['def5678abc']]])) ?? drawn, new Map([['TASK-001', { sha: 'abc1234def', verdict: 'approve' as const }], ['TASK-002', { sha: 'def5678abc', verdict: 'approve' as const }]])) ?? drawn
     const ran = (result: 'passed' | 'failed', stale = false): Tracker => withResults(approved, new Map([['TC-001', { result, sha: 'def5678abc', run: '20261020-120000', ...(stale ? { stale: true as const } : {}) }]])) ?? approved
     const testing: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'testing', round: 0, retries: 0 } }
 
@@ -473,8 +476,68 @@ describe('percentages', () => {
     const s = snapshotOf({ board, live: emptyLive(), now: 0 })
     // Two of three criteria tested: 66, not 67.
     expect(s.progress?.features[0]?.percent).toBe(66)
-    // One feature with criteria and two of three tested, of eight with the test case: 37, not 38.
-    expect(s.progress).toMatchObject({ done: 3, total: 8 })
-    expect(s.prd?.progress).toBe(37)
+    // The PRD: a feature specced and designed, three criteria tested by one case, none planned: 5 of 9, 55, not 56.
+    const five = withDecisions(
+      apply(
+        apply(apply(newTracker('x'), [{ op: 'add_feature', title: 'A', summary: '' }, ...['a', 'b', 'c'].map(text => ({ op: 'add_criterion', feature: 'PRD-001', text }))], 'pm'), [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002', 'AC-003'], title: 't', steps: ['s'], expected: 'e' }], 'qa'),
+        [{ op: 'add_design', feature: 'PRD-001', title: 'A', kind: 'none', body: '沒有畫面' }],
+        'uiux',
+      ),
+      new Map([['SCR-001', { verdict: 'approved' as const }]]),
+    )
+    const p = snapshotOf({ board: five, live: emptyLive(), now: 0 })
+    expect(p.progress).toMatchObject({ done: 5, total: 9 })
+    expect(p.prd?.progress).toBe(55)
+  })
+})
+
+describe('the UI/UX designer’s designs', () => {
+  const reqs = requirementsOf('## 訂閱\n- 可以選月繳方案\n- 可以取消訂閱')
+  const [r1, r2] = reqs.map(r => r.id)
+  const split = apply(
+    newTracker('shop'),
+    [
+      { op: 'add_feature', title: '方案選擇', summary: '', sources: [r1 ?? ''] },
+      { op: 'add_feature', title: '取消訂閱', summary: '', sources: [r2 ?? ''] },
+      { op: 'add_criterion', feature: 'PRD-001', text: '可以選月繳' },
+      { op: 'add_criterion', feature: 'PRD-002', text: '可以取消' },
+    ],
+    'pm',
+  )
+  const designed = apply(
+    split,
+    [
+      { op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張卡片' },
+      { op: 'add_design', feature: 'PRD-002', title: '取消', kind: 'none', body: '後台處理' },
+    ],
+    'uiux',
+  )
+  const decide = (b: Tracker, d: [string, { verdict: 'approved' | 'rejected'; reason?: string }][]): Tracker => withDecisions(b, new Map(d)) ?? b
+  const approving: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'approving', round: 0, retries: 0 } }
+
+  test('make G2 and the 設計 stage from the person’s decisions, and count them toward the whole', () => {
+    const b = decide(designed, [['SCR-001', { verdict: 'approved' }], ['SCR-002', { verdict: 'rejected', reason: '要確認頁' }]])
+    const snap = snapshotOf({ board: b, live: approving, now: NOW, prd: { requirements: reqs } })
+    const g2 = snap.gates.find(g => g.id === 'G2')
+    expect(g2).toMatchObject({ state: 'active', covered: 1, total: 2, name: '每個有介面的功能都有畫面和各種狀態', fill: 'UI/UX 補', confirm: '你核准' })
+    expect(g2?.gaps).toEqual([{ id: 'PRD-002', title: '取消訂閱', status: '你退回了，UI/UX 重畫中' }])
+    expect(snap.progress?.stages.find(st => st.label === '設計')).toMatchObject({ done: 1, total: 2, state: 'active' })
+    expect(snap.requirements?.map(r => r.layers.design)).toEqual([
+      { state: 'done', note: '1/1' },
+      { state: 'doing', note: '0/1' },
+    ])
+    const before = snapshotOf({ board: designed, live: approving, now: NOW, prd: { requirements: reqs } }).progress
+    expect((snap.progress?.done ?? 0) - (before?.done ?? 0)).toBe(1)
+    expect(snapshotOf({ board: designed, live: approving, now: NOW }).gates.find(g => g.id === 'G2')?.gaps.map(g => g.status)).toEqual(['等你核准（SCR-001）', '等你核准（SCR-002）'])
+    expect(snapshotOf({ board: split, live: approving, now: NOW }).gates.find(g => g.id === 'G2')?.gaps.map(g => g.status)).toEqual(['還沒有設計稿', '還沒有設計稿'])
+  })
+
+  test('list each design on the board tab by where it stands, and the designer’s row as it runs', () => {
+    const b = decide(designed, [['SCR-001', { verdict: 'approved' }]])
+    const designing: CrewLive = { ...approving, flow: { stage: 'designing', round: 0, retries: 0 }, roles: { ...approving.roles, uiux: { state: 'working', doing: '畫設計稿', context: 9_000, label: 'Sonnet', tier: 'S', effort: 'medium' } } }
+    const snap = snapshotOf({ board: b, live: designing, now: NOW })
+    expect(snap.items.find(i => i.id === 'SCR-001')).toMatchObject({ owner: 'uiux', status: 'done', note: expect.stringMatching(/PRD-001・畫面 · 你核准了/) })
+    expect(snap.items.find(i => i.id === 'SCR-002')).toMatchObject({ owner: 'uiux', status: 'review', note: expect.stringMatching(/PRD-002・沒有畫面 · 等你核准/) })
+    expect(snap.roles.find(r => r.id === 'uiux')).toMatchObject({ state: 'working', doing: '畫設計稿', route: { tier: 'S', model: 'Sonnet', effort: 'medium' } })
   })
 })

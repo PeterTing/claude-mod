@@ -1,14 +1,14 @@
 import type { PromptOrigin, RenderPropsOf } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 
-import { build, command, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { build, command, designed, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
 
 describe('crew, PM and QA', () => {
   test('registers its tools and its roles when the session starts', async ($, on) => {
     const w = world($, on)
     await start($)
     expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'review_submit', 'memory_save', 'memory_search', 'crew'])
-    expect(w.registered.agents).toEqual(['pm', 'qa', 'techlead', 'fullstack'])
+    expect(w.registered.agents).toEqual(['pm', 'qa', 'uiux', 'techlead', 'fullstack'])
   })
 
   test('walks a PRD from split to every criterion covered', async ($, on) => {
@@ -43,14 +43,17 @@ describe('crew, PM and QA', () => {
 
     await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-002'], title: '取消後仍可用', steps: ['取消', '登入'], expected: '可以使用' }])
     await done($, 'a-qa-2')
-    // Every criterion tested: the tech lead breaks them into tasks.
-    expect(w.spawned[2]).toMatchObject({ subagentType: 'crew:techlead', model: 'opus' })
-    expect(w.spawned[2]?.prompt).toMatch(/2 條驗收條件[\s\S]*add_task/)
-    await write($, 'a-techlead-3', PLAN)
-    await done($, 'a-techlead-3')
+    // Every criterion tested: the designer designs each feature, and the person approves the designs.
+    expect(w.spawned[2]).toMatchObject({ subagentType: 'crew:uiux', model: 'sonnet' })
+    await designed($)
+    // Every design approved: the tech lead breaks the criteria into tasks.
+    expect(w.spawned[3]).toMatchObject({ subagentType: 'crew:techlead', model: 'opus' })
+    expect(w.spawned[3]?.prompt).toMatch(/2 條驗收條件[\s\S]*add_task/)
+    await write($, 'a-techlead-4', PLAN)
+    await done($, 'a-techlead-4')
     // Every criterion planned: the full-stack builds the tasks, one at a time.
-    expect(w.spawned[3]).toMatchObject({ subagentType: 'crew:fullstack', model: 'sonnet' })
-    expect(w.spawned[3]?.prompt).toMatch(/TASK-001[\s\S]*工作目錄：\/repo\/\.crew\/work\/prd（分支 crew\/prd）/)
+    expect(w.spawned[4]).toMatchObject({ subagentType: 'crew:fullstack', model: 'sonnet' })
+    expect(w.spawned[4]?.prompt).toMatch(/TASK-001[\s\S]*工作目錄：\/repo\/\.crew\/work\/prd（分支 crew\/prd）/)
     await build($)
     expect(w.toasts.at(-1)).toMatch(/G4 2\/2[\s\S]*G3 2\/2[\s\S]*G5 2\/2/)
 
@@ -70,8 +73,8 @@ describe('crew, PM and QA', () => {
       { op: 'add_test_case', criteria: ['AC-001'], title: '選月繳，餘額不足', steps: ['s'], expected: 'e' },
     ])
     const status = await $.command.run(command('status'))
-    // The PRD's requirement, two features with criteria, one criterion with a test case; two criteria still to plan into tasks.
-    expect(status.text).toMatch(/進度 44%（4\/9）/)
+    // The PRD's requirement, two features with criteria, one criterion with a test case; two designs, two criteria to plan, two cases to run.
+    expect(status.text).toMatch(/進度 36%（4\/11）/)
     const ui = await $.ui.mount({
       plugin: 'crew',
       surface: 'terminal',
@@ -98,9 +101,11 @@ describe('crew, PM and QA', () => {
     expect(status.text).toMatch(/confirming/)
 
     await done($, 'a-pm-1')
+    expect((await $.command.run(command('status'))).text).toMatch(/designing/)
+    await designed($)
     expect((await $.command.run(command('status'))).text).toMatch(/planning/)
-    await write($, 'a-techlead-3', PLAN)
-    await done($, 'a-techlead-3')
+    await write($, 'a-techlead-4', PLAN)
+    await done($, 'a-techlead-4')
     await build($)
     const after = await $.command.run(command('status'))
     expect(after.text).toMatch(/done/)
@@ -230,9 +235,10 @@ describe('crew, PM and QA', () => {
         props: { title: 'Crew', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 60 } } as unknown as RenderPropsOf['Pane'],
       })
       const text = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
-      expect(text).not.toMatch(/設計稿/)
+      // The real board, not the design preview: no preview label, and the designer's row is a real one.
+      expect(text).not.toMatch(/（設計稿）|示意資料/)
       expect(text).toMatch(/整體進度/)
-      expect(text).toMatch(/第 4 階段加入/)
+      expect(text).toMatch(/UI\/UX\n待命/)
       expect(await ui.find({ key: 'gate-G1' })).toBeDefined()
       await ui.unmount()
     }

@@ -1,6 +1,6 @@
 import type { CrewLive, CrewUsage } from '../types'
-import { approvedNow, criteriaOf, gateG1, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveTasksOf, passedNow, resultOf, reviewOf, tasksOf, tipOf } from './board'
-import type { GateResult, Task, TestCase, Tracker } from './board'
+import { approvedNow, criteriaOf, decisionOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveDesignsOf, liveTasksOf, passedNow, resultOf, reviewOf, tasksOf, tipOf } from './board'
+import type { GateResult, PrdItem, Task, TestCase, Tracker } from './board'
 import { estimateTokens } from './memory'
 import type { MemoryEntry } from './memory'
 import { droppedRequirements, gateG0, refsOf } from './prd'
@@ -15,6 +15,7 @@ export const emptyLive = (): CrewLive => ({
   roles: {
     pm: { state: 'idle', doing: '—', context: 0 },
     qa: { state: 'idle', doing: '—', context: 0 },
+    uiux: { state: 'idle', doing: '—', context: 0 },
     techlead: { state: 'idle', doing: '—', context: 0 },
     fullstack: { state: 'idle', doing: '—', context: 0 },
   },
@@ -54,8 +55,6 @@ const total = (u: CrewUsage | undefined): number => (u === undefined ? 0 : u.inp
 
 const TESTING: readonly CrewLive['flow']['stage'][] = ['writing_tests', 'confirming', 'adding_tests', 'escalated']
 
-const LATER = '第 4 階段加入'
-
 const gate = (
   id: string,
   result: GateResult,
@@ -76,19 +75,6 @@ const gate = (
   }
 }
 
-const later = (id: string, name: string): Gate => ({
-  id,
-  state: 'pending',
-  name,
-  fill: '—',
-  confirm: '—',
-  covered: 0,
-  total: 0,
-  gaps: [],
-  note: LATER,
-  checked: '—',
-})
-
 const stageOf = (label: string, r: GateResult, active: boolean): Stage => ({
   label,
   done: r.covered,
@@ -96,13 +82,9 @@ const stageOf = (label: string, r: GateResult, active: boolean): Stage => ({
   state: r.total > 0 && r.gaps.length === 0 ? 'done' : active ? 'active' : 'pending',
 })
 
-const pendingStage = (label: string): Stage => ({ label, done: 0, total: 0, state: 'pending' })
-
 const name = (who: string): string => (who === 'crew' ? 'crew' : (ROLE_NAMES[who as RoleId] ?? who))
 
 const MEMORY_ROWS = 40
-
-const NOT_YET: StageCell = { state: 'later' }
 
 /** Where a task's code stands with the tech lead: under review, approved, changes asked for, out of date, or waiting. */
 const reviewNote = (x: Task, flow: CrewLive['flow']): string | undefined => {
@@ -139,6 +121,16 @@ const runGap = (tc: TestCase): string => {
   if (r.stale === true) return '結果過期（之後又有 commit）'
   return `失敗（.crew/runs/${r.run}.log）`
 }
+
+/** Why a feature is not yet through G2: no design, one waiting for the person, or one sent back. */
+const designGap = (item: PrdItem): string => {
+  const waiting = liveDesignsOf(item).filter(d => decisionOf(d) === undefined)
+  if (waiting.length > 0) return `等你核准（${waiting.map(d => d.id).join('、')}）`
+  return designsOf(item).some(d => decisionOf(d)?.verdict === 'rejected') ? '你退回了，UI/UX 重畫中' : '還沒有設計稿'
+}
+
+/** A feature has a design the person approved. */
+const designed = (item: PrdItem): boolean => liveDesignsOf(item).some(d => decisionOf(d)?.verdict === 'approved')
 
 /** Criteria ids some test case covers. */
 const coveredCriteria = (board: Tracker): Set<string> => new Set(board.prd_items.flatMap(i => i.test_cases.flatMap(c => c.acceptance_criteria ?? [])))
@@ -182,7 +174,11 @@ const requirementRows = (board: Tracker, requirements: readonly Requirement[]): 
       ...(out === undefined ? {} : { dropped: out }),
       layers: {
         spec: { state: spec },
-        design: NOT_YET,
+        design: (() => {
+          const approved = answering.filter(designed).length
+          const started = answering.filter(f => designsOf(f).length > 0).length
+          return answering.length === 0 ? { state: 'todo' as const, note: '0/0' } : { state: approved === answering.length ? ('done' as const) : started > 0 ? ('doing' as const) : ('todo' as const), note: `${approved}/${answering.length}` }
+        })(),
         cases: { state: cases === 'done' && spec !== 'done' ? 'doing' : cases, note: `${tested}/${criteria.length}` },
         tasks: { state: tasks === 'done' && spec !== 'done' ? 'doing' : tasks, note: `${withTask}/${criteria.length}` },
         // A commit says code is there, not that it is right: done waits for the tech lead to approve the newest commit.
@@ -227,6 +223,7 @@ export const snapshotOf = ({
   const liveTasks = board === null ? [] : liveTasksOf(board)
   const g5 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG5(board)
   const g6 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG6(board)
+  const g2 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG2(board)
   const cases = board === null ? [] : liveCasesOf(board)
   const built: GateResult = {
     covered: liveTasks.filter(x => (x.crew_commits ?? []).length > 0).length,
@@ -259,12 +256,12 @@ export const snapshotOf = ({
       : {
           // Code counts toward the whole, and as done once the tech lead approved its newest commit: a commit alone is not.
           // Each test case counts too, as done once it passed in crew's latest run on the newest commit.
-          done: (g0?.requirements.covered ?? 0) + g1.covered + g4.covered + g3.covered + g5.covered + g6.covered,
-          total: (g0?.requirements.total ?? 0) + g1.total + g4.total + g3.total + built.total + g6.total,
+          done: (g0?.requirements.covered ?? 0) + g1.covered + g2.covered + g4.covered + g3.covered + g5.covered + g6.covered,
+          total: (g0?.requirements.total ?? 0) + g1.total + g2.total + g4.total + g3.total + built.total + g6.total,
           // The seven stages of each requirement's row, in its order, over the whole board.
           stages: [
             stageOf('規格', split, stage === 'splitting'),
-            pendingStage('設計'),
+            stageOf('設計', g2, stage === 'designing' || stage === 'approving'),
             // Test cases are done only once the spec is: a requirement still without features has nothing to test yet.
             { ...stageOf('測試案例', g4, testing), ...(split.gaps.length > 0 && g4.total > 0 && g4.gaps.length === 0 ? { state: testing ? ('active' as const) : ('pending' as const) } : {}) },
             // The plan is done only once the spec is, as test cases are.
@@ -286,7 +283,6 @@ export const snapshotOf = ({
         }
 
   const roleRow = (id: RoleId): RoleRow => {
-    if (id === 'uiux') return { id, state: 'idle', doing: LATER, context: 0, limit: 60_000, today: 0 }
     const r = live.roles[id]
     return {
       id,
@@ -299,6 +295,25 @@ export const snapshotOf = ({
     }
   }
 
+  // The designs: the designer's until the person decides; approved, done.
+  const ux = live.roles.uiux
+  const designItems: Item[] = (board?.prd_items ?? [])
+    .filter(i => i.crew_dropped === undefined)
+    .flatMap(i =>
+      designsOf(i)
+        .filter(d => d.crew_dropped === undefined)
+        .map(d => {
+          const decision = decisionOf(d)
+          return {
+            id: d.id,
+            title: d.title,
+            owner: 'uiux' as const,
+            status: decision === undefined ? ('review' as const) : decision.verdict === 'approved' ? ('done' as const) : ('doing' as const),
+            route: { tier: ux.tier ?? 'S', model: ux.label ?? 'Sonnet', effort: ux.effort ?? 'medium' },
+            note: `${i.id}・${d.kind === 'screen' ? '畫面' : '沒有畫面'} · ${decision === undefined ? '等你核准' : decision.verdict === 'approved' ? '你核准了' : `你退回了${decision.reason === undefined ? '' : `：${decision.reason}`}`}`,
+          }
+        }),
+    )
   const items: Item[] = (board?.prd_items ?? [])
     .filter(i => i.crew_dropped === undefined)
     .map(item => {
@@ -350,7 +365,7 @@ export const snapshotOf = ({
     for (const x of tasksOf(item)) titles.set(x.id, x.title)
   }
 
-  const crewRoles: RoleId[] = ['pm', 'qa', 'techlead', 'fullstack']
+  const crewRoles: RoleId[] = ['pm', 'qa', 'uiux', 'techlead', 'fullstack']
   const usage: UsageRow[] = crewRoles
     .filter(r => live.usage[r] !== undefined)
     .map(r => {
@@ -374,7 +389,10 @@ export const snapshotOf = ({
         : [
             ...(g0 === undefined ? [] : [gate('G0', g0, stage === 'splitting', { name: 'PRD 每條需求都有對應的功能', fill: 'PM 補', confirm: 'crew 對照 PRD 檔案' }, live.threads)]),
             gate('G1', g1, stage === 'splitting', { name: '每個功能都有驗收條件', fill: 'PM 補', confirm: 'PM 自查' }, live.threads),
-            later('G2', '每個有介面的功能都有畫面和各種狀態'),
+            {
+              ...gate('G2', g2, stage === 'designing' || stage === 'approving', { name: '每個有介面的功能都有畫面和各種狀態', fill: 'UI/UX 補', confirm: '你核准' }, live.threads),
+              gaps: (board?.prd_items ?? []).filter(i => i.crew_dropped === undefined && !designed(i)).map(i => ({ id: i.id, title: i.title, status: designGap(i) })),
+            },
             gate('G3', g3, stage === 'planning', { name: '每條驗收條件都拆好任務', fill: 'Tech lead 補', confirm: 'Tech lead 自查' }, live.threads),
             gate('G4', g4, stage === 'writing_tests' || stage === 'adding_tests', { name: '每條驗收條件都有 test case', fill: 'QA 補', confirm: 'PM 確認缺口' }, live.threads),
             {
@@ -387,7 +405,7 @@ export const snapshotOf = ({
             },
           ],
     decisions: live.questions.filter(q => q.status === 'open').map(q => ({ id: q.id, question: q.question, from: q.from, age: ageOf(q.t, now) })),
-    items: [...items, ...taskItems],
+    items: [...items, ...designItems, ...taskItems],
     threads: Object.entries(live.threads).map(([item, messages]) => ({
       item,
       title: titles.get(item) ?? item,
@@ -403,7 +421,7 @@ export const snapshotOf = ({
       .map(m => ({ id: m.id, type: m.type, text: m.text, source: m.source, refs: m.refs, ...(m.supersededBy !== undefined ? { supersededBy: m.supersededBy } : {}) })),
     carrying: crewRoles
       .map(r => {
-        const ids = live.roles[r as 'pm' | 'qa' | 'techlead' | 'fullstack'].given ?? []
+        const ids = live.roles[r as 'pm' | 'qa' | 'uiux' | 'techlead' | 'fullstack'].given ?? []
         const known = memories.filter(m => ids.includes(m.id))
         return { role: r, ids, tokens: known.reduce((n, m) => n + estimateTokens(m.text), 0) }
       })

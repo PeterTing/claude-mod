@@ -1,4 +1,4 @@
-import { approvedNow, criteriaOf, gateG1, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveTasksOf, resultOf, reviewOf, tipOf } from './board'
+import { approvedNow, criteriaOf, decisionOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveDesignsOf, liveTasksOf, resultOf, reviewOf, tasksOf, tipOf } from './board'
 import type { Task } from './board'
 import type { GateGap, Tracker } from './board'
 import { gateG0, refsOf, requirementList } from './prd'
@@ -13,10 +13,23 @@ import type { Route } from './router'
  * three rounds the person decides. Every gate is computed in code.
  */
 
-export type FlowStage = 'idle' | 'splitting' | 'writing_tests' | 'confirming' | 'adding_tests' | 'planning' | 'building' | 'reviewing' | 'testing' | 'done' | 'escalated'
+export type FlowStage =
+  | 'idle'
+  | 'splitting'
+  | 'writing_tests'
+  | 'confirming'
+  | 'adding_tests'
+  | 'designing'
+  | 'approving'
+  | 'planning'
+  | 'building'
+  | 'reviewing'
+  | 'testing'
+  | 'done'
+  | 'escalated'
 
 /** The roles the flow gives work to. */
-export type FlowRole = 'pm' | 'qa' | 'techlead' | 'fullstack'
+export type FlowRole = 'pm' | 'qa' | 'uiux' | 'techlead' | 'fullstack'
 
 export type FlowState = {
   stage: FlowStage
@@ -44,12 +57,12 @@ export type FlowState = {
   runs?: number
 }
 
-type ResumeAt = 'splitting' | 'confirming' | 'planning' | 'building' | 'reviewing' | 'testing'
+type ResumeAt = 'splitting' | 'confirming' | 'designing' | 'planning' | 'building' | 'reviewing' | 'testing'
 
 export const INITIAL: FlowState = { stage: 'idle', round: 0, retries: 0 }
 
 /** The stages in which a role is at work on the PRD: a new start waits, a restart resumes. */
-export const RUNNING: readonly FlowStage[] = ['splitting', 'writing_tests', 'confirming', 'adding_tests', 'planning', 'building', 'reviewing', 'testing']
+export const RUNNING: readonly FlowStage[] = ['splitting', 'writing_tests', 'confirming', 'adding_tests', 'designing', 'planning', 'building', 'reviewing', 'testing']
 
 /** `requirements`: the PRD's requirements as it stands now, which G0 holds the board to; absent, G0 is not checked. */
 export type FlowEvent =
@@ -95,6 +108,8 @@ export type FlowEvent =
    * `error`, why it could not run.
    */
   | { type: 'tests_ran'; board: Tracker; output?: string; error?: string; requirements?: readonly Requirement[] }
+  /** The person approved or sent back designs: `board` carries the decisions. */
+  | { type: 'designs_decided'; board: Tracker; requirements?: readonly Requirement[] }
   /** Claude Code started again on a flow the last session left running: its roles are gone. */
   | { type: 'resume'; board: Tracker; prd: { path: string; size: number; text?: string }; requirements?: readonly Requirement[] }
 
@@ -107,12 +122,14 @@ export type FlowAction =
   | { type: 'review'; task: string; sha: string; text: string; route: Route }
   /** crew runs the person's test command on its branch, and tells the flow how it went. */
   | { type: 'run_tests' }
+  /** The designs that wait for the person's approval: crew asks for each once. */
+  | { type: 'approve'; ids: readonly string[] }
   | { type: 'status'; text: string }
   | { type: 'done'; text: string }
 
 export type StepResult = { state: FlowState; actions: FlowAction[] }
 
-export type Inbox = { pm?: readonly string[]; qa?: readonly string[]; techlead?: readonly string[]; fullstack?: readonly string[] }
+export type Inbox = { pm?: readonly string[]; qa?: readonly string[]; uiux?: readonly string[]; techlead?: readonly string[]; fullstack?: readonly string[] }
 
 const MAX_ROUNDS = 3
 const MAX_RETRIES = 2
@@ -172,7 +189,7 @@ const testsPrompt = (count: number): string =>
 const planPrompt = (count: number): string =>
   [
     `看板上有 ${count} 條驗收條件，QA 都寫好 test case 了。請把它們拆成實作任務。`,
-    '1. 用 board_read 看全部的功能、驗收條件和 test case。',
+    '1. 用 board_read 看全部的功能、驗收條件、test case 和使用者核准的設計稿（有畫面的任務要照設計稿做）。',
     '2. 用 board_write 的 add_task 寫任務：feature 填功能編號，criteria 填這個任務做完後滿足的驗收條件編號，title 寫要做什麼，detail 寫要改哪些地方、和其他任務的先後，size 填 S、M、L 或 XL。每條驗收條件都要有任務對應。',
     '3. 技術上做不到、或需要 PM 取捨的，用 thread_post 問 PM（item 填驗收條件編號）；需要產品決定的用 ask_person。不要自己改驗收條件。',
     '4. 完成後用一句話回報拆了幾個任務。',
@@ -230,12 +247,15 @@ const realign = (state: FlowState, gaps: readonly GateGap[]): StepResult => {
 const finish = (state: FlowState, board: Tracker, requirements?: readonly Requirement[]): StepResult => {
   const g0 = requirements === undefined ? undefined : gateG0(board, requirements)
   if (g0 !== undefined && g0.gaps.length > 0) return realign(state, g0.gaps)
+  // The screens come before the plan: a design the person approved for every feature.
+  if (gateG2(board).gaps.length > 0) return designStep(state, board)
   const g3 = gateG3(board)
   if (g3.gaps.length > 0) return plan(state, g3)
   const work = advance(state, board)
   if (work !== undefined) return work
   const g6 = gateG6(board)
   if (g6.gaps.length > 0) return runTests(state)
+  const g2 = gateG2(board)
   const g4 = gateG4(board)
   const g5 = gateG5(board)
   const { building: _, fixing: _f, reviewing: _r, reviews: _n, runs: _u, ...rest } = state
@@ -244,10 +264,73 @@ const finish = (state: FlowState, board: Tracker, requirements?: readonly Requir
     actions: [
       {
         type: 'done',
-        text: `PM＋QA＋Tech lead＋全端 完成：每條驗收條件都有 test case（G4 ${g4.covered}/${g4.total}）和任務（G3 ${g3.covered}/${g3.total}），每個任務都通過 review（G5 ${g5.covered}/${g5.total}），test case 全部通過（G6 ${g6.covered}/${g6.total}）。`,
+        text: `crew 完成：每個功能都有你核准的設計稿（G2 ${g2.covered}/${g2.total}），每條驗收條件都有 test case（G4 ${g4.covered}/${g4.total}）和任務（G3 ${g3.covered}/${g3.total}），每個任務都通過 review（G5 ${g5.covered}/${g5.total}），test case 全部通過（G6 ${g6.covered}/${g6.total}）。`,
       },
     ],
   }
+}
+
+/** The features in scope with no design in play: none yet, or all dropped or sent back. */
+const undesigned = (board: Tracker) => board.prd_items.filter(i => i.crew_dropped === undefined && liveDesignsOf(i).length === 0)
+
+/** The designs in play that the person has not decided on. */
+const undecided = (board: Tracker): string[] =>
+  board.prd_items.filter(i => i.crew_dropped === undefined).flatMap(i => liveDesignsOf(i).filter(d => decisionOf(d) === undefined).map(d => d.id))
+
+const uxRoute = (size: number): Route => routeFor('uiux', tierFor({ kind: 'design', size: Math.max(1, size) }))
+
+/** What the UI/UX designer is asked to design: each feature with its criteria, and why a design was sent back. */
+const designPrompt = (board: Tracker, items: ReturnType<typeof undesigned>, opening: string): string => {
+  const lines = items.map(i => {
+    const back = designsOf(i).filter(d => decisionOf(d)?.verdict === 'rejected')
+    const why = back.map(d => `（你的 ${d.id} 被使用者退回，原因：${decisionOf(d)?.reason ?? '沒有寫'}）`).join('')
+    return `- ${i.id} ${i.title}${why}：${criteriaOf(i).map(c => `${c.id} ${c.text}`).join('；')}`
+  })
+  return [
+    `${opening}請為這 ${items.length} 個功能畫設計稿，給使用者核准：`,
+    ...lines,
+    '1. 用 board_read 看功能、驗收條件和 test case。',
+    '2. 每個功能用 board_write 的 add_design 寫一份：有畫面的，kind 填 screen，body 寫版面（文字或 ASCII 線框圖都可以）、每個狀態（載入中、空的、錯誤、成功）、互動和文案；沒有畫面的（例如只有 API、函式或背景工作），kind 填 none，body 寫為什麼沒有畫面、使用者怎麼用到它。',
+    '3. 被退回的照使用者的原因重畫，用 add_design 寫新的一份；不要的設計稿用 drop_design 移出。',
+    '4. 需要產品決定用 ask_person；設計問題可以用 thread_post 問 PM。完成後用一句話回報。',
+  ].join('\n')
+}
+
+/**
+ * The designs before the plan: features without a design go to the UI/UX
+ * designer; once every feature has one, the person approves each, and what
+ * they send back goes to the designer again.
+ */
+const designStep = (state: FlowState, board: Tracker, opening = ''): StepResult => {
+  const need = undesigned(board)
+  if (need.length > 0) {
+    const fresh = board.prd_items.every(i => designsOf(i).length === 0)
+    const next: FlowState = { ...state, stage: 'designing', retries: state.stage === 'designing' ? state.retries : 0, round: 0 }
+    const text = designPrompt(board, need, opening)
+    const route = uxRoute(need.length)
+    return { state: next, actions: [fresh && opening === '' ? { type: 'spawn', role: 'uiux', route, prompt: text } : { type: 'message', role: 'uiux', item: need[0]?.id, text, route }] }
+  }
+  return { state: { ...state, stage: 'approving', retries: 0, round: 0 }, actions: [{ type: 'approve', ids: undecided(board) }] }
+}
+
+/** The UI/UX designer's run ended: features still without a design go back to it once, then to the person; otherwise the person approves. */
+const afterDesign = (state: FlowState, board: Tracker, inbox: Inbox = {}, requirements?: readonly Requirement[], by: FlowRole = 'uiux', end: RunEnd = {}): StepResult => {
+  if (by !== 'uiux') {
+    // The PM answers the designer's question: the designer hears it once its run is over.
+    if ((end.working ?? []).includes('uiux')) return { state, actions: [] }
+    const forUx = inbox.uiux ?? []
+    if (forUx.length > 0 && state.round < MAX_ROUNDS) return { state: { ...state, round: state.round + 1 }, actions: [{ type: 'message', role: 'uiux', item: forUx[0], text: threadNotice(ROLE_LABEL[by], forUx), route: uxRoute(1) }] }
+    return { state, actions: [] }
+  }
+  const forPm = inbox.pm ?? []
+  if (forPm.length > 0 && state.round < MAX_ROUNDS) {
+    return { state: { ...state, round: state.round + 1 }, actions: [{ type: 'message', role: 'pm', item: forPm[0], text: threadNotice('UI/UX', forPm), route: routeFor('pm', tierFor({ kind: 'confirm_gaps', size: forPm.length })) }] }
+  }
+  const need = undesigned(board)
+  if (need.length === 0) return finish({ ...state, retries: 0 }, board, requirements)
+  if (state.retries >= MAX_RETRIES - 1) return escalate({ ...state, retries: state.retries + 1 }, `UI/UX 兩次都沒有為 ${need.map(i => i.id).join('、')} 畫設計稿。要怎麼處理？`, need[0]?.id, 'designing')
+  const again = designStep(state, board, '還有功能沒有設計稿。')
+  return { ...again, state: { ...again.state, retries: state.retries + 1 } }
 }
 
 /** crew runs the person's test command on its branch; the run's end takes the flow on. */
@@ -322,10 +405,15 @@ const fsRoute = (task: Task): Route => routeFor('fullstack', task.size ?? 'M')
 const buildPrompt = (board: Tracker, task: Task, opening: string): string => {
   const criteria = board.prd_items.flatMap(criteriaOf).filter(c => task.acceptance_criteria.includes(c.id))
   const cases = board.prd_items.flatMap(i => i.test_cases).filter(c => (c.acceptance_criteria ?? []).some(a => task.acceptance_criteria.includes(a)))
+  const feature = board.prd_items.find(i => tasksOf(i).some(t => t.id === task.id))
+  const designs = feature === undefined ? [] : liveDesignsOf(feature).filter(d => decisionOf(d)?.verdict === 'approved')
   return [
     `${opening}請實作 ${task.id} ${task.title}${task.size === undefined ? '' : `（大小 ${task.size}）`}。`,
     ...(task.detail === '' ? [] : [`要做的事：${task.detail}`]),
     `對應的驗收條件：\n${criteria.map(c => `- ${c.id} ${c.text}`).join('\n')}`,
+    ...(feature === undefined || designs.length === 0
+      ? []
+      : [`使用者核准的設計稿：${designs.map(d => `${d.id} ${d.title}（${d.kind === 'screen' ? '畫面' : '沒有畫面'}）`).join('、')}。照著做；用 board_read（feature: ${feature.id}）看內容。`]),
     ...(cases.length === 0 ? [] : [`它們的 test case：${cases.map(c => `${c.id}${c.title === undefined ? '' : ` ${c.title}`}`).join('、')}（用 board_read 看步驟和預期結果）`]),
     '規則：',
     '1. 只在 crew 附上的工作目錄裡改程式，不要切換或改動其他分支，也不要 push。',
@@ -478,7 +566,7 @@ const afterBuild = (state: FlowState, board: Tracker, inbox: Inbox = {}, require
   return finish(state, board, requirements)
 }
 
-const ROLE_LABEL: Record<FlowRole, string> = { pm: 'PM', qa: 'QA', techlead: 'Tech lead', fullstack: '全端' }
+const ROLE_LABEL: Record<FlowRole, string> = { pm: 'PM', qa: 'QA', uiux: 'UI/UX', techlead: 'Tech lead', fullstack: '全端' }
 
 const tlRoute = (size: number): Route => routeFor('techlead', tierFor({ kind: 'plan_tasks', size: Math.max(1, size) }))
 
@@ -654,7 +742,7 @@ const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered'
       actions: [{ ...message, role: 'fullstack', item: state.building, route: fsRoute(task) } as FlowAction],
     }
   }
-  const to: FlowRole = resumeAt === 'planning' || resumeAt === 'reviewing' ? 'techlead' : resumeAt === 'building' ? 'fullstack' : 'pm'
+  const to: FlowRole = resumeAt === 'planning' || resumeAt === 'reviewing' ? 'techlead' : resumeAt === 'building' ? 'fullstack' : resumeAt === 'designing' ? 'uiux' : 'pm'
   const reviewed = resumeAt === 'reviewing' && event.board !== undefined && state.reviewing !== undefined ? liveTasks(event.board).find(t => t.id === state.reviewing?.task) : undefined
   const resumed: FlowAction = {
     ...message,
@@ -670,7 +758,9 @@ const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered'
           ? task === undefined
             ? routeFor('fullstack', 'M')
             : fsRoute(task)
-          : routeFor('pm', tierFor({ kind: 'confirm_gaps', size: 1 })),
+          : to === 'uiux'
+            ? uxRoute(1)
+            : routeFor('pm', tierFor({ kind: 'confirm_gaps', size: 1 })),
   } as FlowAction
   const { resumeAt: _, ...rest } = state
   return {
@@ -721,6 +811,12 @@ const resume = (was: FlowState, event: Extract<FlowEvent, { type: 'resume' }>): 
       }
     case 'testing':
       return runTests(state)
+    case 'designing':
+    case 'approving': {
+      if (g4.gaps.length > 0) return afterPlan(state, event.board, {}, event.requirements)
+      if (gateG2(event.board).gaps.length === 0) return finish(state, event.board, event.requirements)
+      return designStep(state, event.board, state.stage === 'designing' ? 'Claude Code 重開過。' : '')
+    }
     case 'building':
     case 'reviewing': {
       // The tasks go on from the first one not approved: built, fixed or reviewed afresh.
@@ -785,6 +881,11 @@ export const answeredOf = (board: Tracker, requirements: readonly Requirement[])
 export const step = (state: FlowState, event: FlowEvent): StepResult => {
   if (event.type === 'answered') return answered(state, event)
   if (event.type === 'tests_ran') return afterRun(state, event)
+  if (event.type === 'designs_decided') {
+    // A decision takes a flow that waits for it on; one made at another time only marks the board.
+    if (state.stage !== 'approving') return { state, actions: [] }
+    return finish(state, event.board, event.requirements)
+  }
   if (event.type === 'resume') return resume(state, event)
   if (event.type === 'start') {
     if (RUNNING.includes(state.stage)) {
@@ -827,8 +928,11 @@ const afterRole = (state: FlowState, event: Extract<FlowEvent, { type: 'role_don
       ...(event.working === undefined ? {} : { working: event.working }),
     })
   }
-  // While the tests run, a role's run ending changes nothing: the run's end takes the flow on.
-  if (state.stage === 'testing') return { state, actions: [] }
+  // While the tests run, or the person decides on designs, a role's run ending changes nothing.
+  if (state.stage === 'testing' || state.stage === 'approving') return { state, actions: [] }
+  if (state.stage === 'designing' && role !== 'qa') {
+    return afterDesign(state, board, inbox, requirements, role, { ...(event.working === undefined ? {} : { working: event.working }) })
+  }
   if (state.stage === 'reviewing' && role !== 'qa') {
     return afterReview(state, board, inbox, requirements, role, {
       ...(event.report === undefined ? {} : { report: event.report }),

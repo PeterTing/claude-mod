@@ -18,7 +18,12 @@ export const PRD = '# 會員訂閱\n\n使用者可以選月繳方案，可以隨
 export type Spawn = { subagentType: string; name?: string; description: string; model?: string; prompt: string; cwd?: string }
 
 /** The world a test made last: what `build` commits into. */
-const current: { commit?: (subject: string, branch?: string) => string; clock?: { advance: (ms: number) => Promise<unknown> } } = {}
+const current: {
+  commit?: (subject: string, branch?: string) => string
+  clock?: { advance: (ms: number) => Promise<unknown> }
+  spawned?: { subagentType: string }[]
+  disk?: Map<string, string>
+} = {}
 
 export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', denySpawnOf = '', stopped = [] as string[] } = {}) => {
   const clock = mock.clock(on, { now: NOW })
@@ -269,6 +274,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   const board = () => JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? 'null') as Tracker | null
   current.commit = commit
   current.clock = clock
+  current.spawned = spawned
+  current.disk = disk
   return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, tests }
 }
 
@@ -322,15 +329,35 @@ export const paneText = async ($: Engine, tab?: string) => {
 }
 
 /** The full-stack builds each task in turn: a commit that does it on crew's branch, then the end of its run. */
+type BoardFile = { prd_items: { id: string; title: string; crew_dropped?: string; crew_designs?: { id: string; crew_dropped?: string; crew_decision?: { verdict: string } }[] }[] }
+
+const boardFile = (): BoardFile => JSON.parse(current.disk?.get(`${ROOT}/prd-tracker.json`) ?? '{"prd_items":[]}') as BoardFile
+
+/** The latest agent crew started for a role, by the test world's numbering. */
+export const agentOf = (role: string): string => `a-${role}-${(current.spawned ?? []).map(s => s.subagentType).lastIndexOf(`crew:${role}`) + 1}`
+
+/**
+ * The UI/UX designer designs every feature that has none (a feature with no
+ * new screen), its run ends, and the person approves every design waiting.
+ */
+export const designed = async ($: Engine) => {
+  const agentId = agentOf('uiux')
+  const need = boardFile().prd_items.filter(i => i.crew_dropped === undefined && !(i.crew_designs ?? []).some(d => d.crew_dropped === undefined && d.crew_decision?.verdict !== 'rejected'))
+  if (need.length > 0) await write($, agentId, need.map(i => ({ op: 'add_design', feature: i.id, title: `${i.title} 畫面`, kind: 'none', body: '沒有新畫面：用既有頁面。' })))
+  await done($, agentId)
+  const waiting = boardFile().prd_items.flatMap(i => (i.crew_designs ?? []).filter(d => d.crew_dropped === undefined && d.crew_decision === undefined).map(d => d.id))
+  if (waiting.length > 0) await $.command.run(command(`approve ${waiting.join(' ')}`))
+}
+
 /** The tech lead sends its verdict on the task it reviews, and its run ends. */
-export const approve = async ($: Engine, task: string, agentId = 'a-techlead-3', verdict: 'approve' | 'changes' = 'approve', notes?: string) => {
+export const approve = async ($: Engine, task: string, agentId = 'a-techlead-4', verdict: 'approve' | 'changes' = 'approve', notes?: string) => {
   const r = await $.tool.call({ tool: 'mcp__crew__review_submit', tool_use_id: `r-${Math.random()}`, agentId, task, verdict, ...(notes === undefined ? {} : { notes }) } as never)
   await done($, agentId)
   return r as { result: unknown }
 }
 
 /** The full-stack commits each task and the tech lead approves it; then the tests crew runs on the clock pass. */
-export const build = async ($: Engine, ids: readonly string[] = ['TASK-001', 'TASK-002'], agentId = 'a-fullstack-4', techlead = 'a-techlead-3') => {
+export const build = async ($: Engine, ids: readonly string[] = ['TASK-001', 'TASK-002'], agentId = 'a-fullstack-5', techlead = 'a-techlead-4') => {
   for (const id of ids) {
     current.commit?.(`${id}: 完成 ${id}`)
     await done($, agentId)
