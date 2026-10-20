@@ -495,6 +495,15 @@ const isTuning = (x: unknown): x is CrewTuning => {
   )
 }
 
+const COUNTERS = ['input', 'output', 'cacheRead', 'cacheWrite', 'wakes', 'rotations'] as const
+
+const isBase = (x: unknown): boolean => {
+  if (typeof x !== 'object' || x === null) return false
+  const b = x as { day?: unknown; role?: unknown; total?: unknown }
+  const role = b.role as Record<string, unknown> | null
+  return typeof b.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.day) && typeof b.total === 'number' && typeof role === 'object' && role !== null && COUNTERS.every(k => typeof role[k] === 'number')
+}
+
 /**
  * The brain's tunings a restart reads back, as crew kept them: each still of
  * its shape and at or above the person's floor for its role, the actions
@@ -521,7 +530,9 @@ function savedTunings(tuned: unknown, tunings: unknown): { tuned: Record<string,
         typeof t.wakes === 'number' &&
         typeof t.at === 'number',
     )
-    .slice(-50)
+    // The numbers an action was taken at, kept only whole: the numbers since are measured from them.
+    .map(t => (t.base === undefined || isBase(t.base) ? t : (({ base: _, ...rest }) => rest)(t)))
+    .slice(-30)
   return { tuned: kept, tunings: list }
 }
 
@@ -1513,6 +1524,7 @@ async function tune($: any, input: { role?: unknown; model?: unknown; effort?: u
   }
   const id = await applyTuning($, role, change, text, reason)
   await update($, live, s => ({ ...s, tunings: [...(s.tunings ?? []), { id, role, text, change, reason, before, wakes, at: t, base }].slice(-30) }))
+  await saveState($)
   return `已處置（${id}）：${text}。`
 }
 
@@ -2473,7 +2485,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
   }
   if (verb === 'approve' || verb === 'reject') {
     // A design is the person's to approve, typed by them: not the brain's, another plugin's or a peer's to decide for them.
-    if (!typed) return '設計稿要使用者自己在右側面板核准或退回。'
+    if (!typed) return rest.length === 1 && /^Q-\d+$/.test(rest[0] ?? '') ? '大腦的建議要使用者自己在右側面板核准或不要。' : '設計稿要使用者自己在右側面板核准或退回。'
     // The brain's proposal on usage, approved or not by the person's own word.
     if (rest.length === 1 && /^Q-\d+$/.test(rest[0] ?? '')) return decideTuning($, rest[0] ?? '', verb === 'approve')
     if (verb === 'approve') {

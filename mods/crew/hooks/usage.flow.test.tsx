@@ -180,6 +180,16 @@ describe('the brain’s actions on usage', () => {
     expect(saved.tunings?.some(t => t.pending === true)).toBe(false)
   })
 
+  test('keep an action the brain took on its own for a restart, at once', async ($, on) => {
+    const w = world($, on)
+    w.store.set(`settings:${ROOT}`, { openOnLoad: true, tuning: 'auto' })
+    await start($)
+    expect(String((await crew($, { action: 'tune', role: 'fullstack', effort: 'max', text: 'x' })).result)).toMatch(/已處置（DEC-\d+）/)
+    const saved = w.store.get(`state:${ROOT}`) as { tuned?: Record<string, unknown>; tunings?: { id: string }[] }
+    expect(saved.tuned?.fullstack).toEqual({ effort: 'max' })
+    expect(saved.tunings?.map(t => t.id)).toEqual([expect.stringMatching(/^DEC-\d+$/)])
+  })
+
   test('let the person settle a proposal kept over a restart, and keep an action taken before it', async ($, on) => {
     const w = world($, on)
     w.store.set(`state:${ROOT}`, {
@@ -191,7 +201,11 @@ describe('the brain’s actions on usage', () => {
       ],
       lead: 'person',
       tuned: { pm: { model: 'opus' } },
-      tunings: [{ id: 'Q-01', pending: true, role: 'fullstack', text: '全端之後的工作改用 Opus', change: { model: 'opus' }, reason: 'x', before: '今日佔 80%', wakes: 0, at: NOW }],
+      tunings: [
+        { id: 'Q-01', pending: true, role: 'fullstack', text: '全端之後的工作改用 Opus', change: { model: 'opus' }, reason: 'x', before: '今日佔 80%', wakes: 0, at: NOW },
+        // An action whose numbers at the time came back broken: shown without them.
+        { id: 'DEC-001', role: 'pm', text: 'PM 之後的工作改用 Opus', change: { model: 'opus' }, reason: 'x', before: '今日佔 50%', wakes: 0, at: NOW, base: { day: DAY, role: { input: 'x' }, total: 'x' } },
+      ],
     })
     await start($)
     const ui = await paneUi($)
@@ -203,9 +217,22 @@ describe('the brain’s actions on usage', () => {
     expect(w.toasts.at(-1)).toMatch(/Q-02 的建議已經失效/)
     expect(await textOf(ui)).not.toMatch(/大腦建議/)
     await ui.unmount()
+    let tokens = await paneUi($)
+    await tokens.press({ key: 'tab-tokens' })
+    expect(await textOf(tokens)).toMatch(/DEC-001 PM 之後的工作改用 Opus[\s\S]*處置前 今日佔 50%/)
+    await tokens.unmount()
     // The PM's tuning, taken before the restart, still runs its work.
     await $.command.run(command('start docs/PRD.md'))
     expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:pm', model: 'opus' })
+    // Once it ran, the numbers after its action are whole ones.
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    tokens = await paneUi($)
+    await tokens.press({ key: 'tab-tokens' })
+    const after = /DEC-001[^\n]*\n[^\n]*/.exec(await textOf(tokens))?.[0] ?? ''
+    expect(after).toMatch(/處置前 今日佔 50%/)
+    expect(after).not.toMatch(/NaN|undefined/)
+    await tokens.unmount()
   })
 
   test('change nothing when a proposal is sent back', async ($, on) => {
@@ -229,7 +256,7 @@ describe('the brain’s actions on usage', () => {
     await tested($)
     const id = /(Q-\d+)/.exec(String((await crew($, { action: 'tune', role: 'fullstack', model: 'opus', text: 'x' })).result))?.[1] ?? ''
     const peer = (await $.command.run({ ...command(`approve ${id}`), origin: { kind: 'peer' } } as never)) as { text: string }
-    expect(peer.text).toMatch(/要使用者自己/)
+    expect(peer.text).toMatch(/大腦的建議要使用者自己在右側面板核准或不要/)
     await write($, 'a-techlead-4', PLAN)
     await done($, 'a-techlead-4')
     expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:fullstack', model: 'sonnet' })
