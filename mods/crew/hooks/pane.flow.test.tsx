@@ -43,6 +43,18 @@ describe('crew from its pane', () => {
     await ui.unmount()
   })
 
+  test('a control whose work fails says so, as crew’s own answer to the press', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    const ui = await paneUi($)
+    await ui.press({ key: 'tab-settings' })
+    w.broken.store = 'settings:'
+    await ui.press({ key: 'tuning-auto' })
+    expect(w.toasts.at(-1)).toMatch(/crew：沒有完成：.*ENOSPC/)
+    expect(w.toasts.join('\n')).not.toMatch(/沒有接上|還在處理/)
+    await ui.unmount()
+  })
+
   test('starts a PRD typed in the field', async ($, on) => {
     const w = world($, on)
     await start($)

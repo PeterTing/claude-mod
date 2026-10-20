@@ -44,6 +44,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   on('store.get', (_$, e) => ({ value: store.get((e as { key: string }).key) }))
   on('store.set', (_$, e) => {
     const { key, value } = e as { key: string; value: unknown }
+    if (broken.store !== '' && key.startsWith(broken.store)) return { deny: `${broken.reason}, store '${key}'` }
     store.set(key, JSON.parse(JSON.stringify(value)))
     return { value: undefined }
   })
@@ -106,8 +107,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   }
   /** The person's test command as crew runs it: what it prints and how it exits, and each run's words and folder. */
   const tests = { exitCode: 0, stdout: '', stderr: '', runs: [] as { argv: string[]; cwd?: string; env?: Record<string, string> }[], fails: '', ms: 0 }
-  /** Writes under this path fail, as on a full disk. */
-  const broken = { writes: '', reason: 'ENOSPC: no space left on device', reads: '' }
+  /** Writes under this path fail, as on a full disk; so do writes of store keys that start with `store`. */
+  const broken = { writes: '', reason: 'ENOSPC: no space left on device', reads: '', store: '' }
   let shas = 0
   /**
    * Each branch's reflog, oldest first: the commits git moved it to. A branch a

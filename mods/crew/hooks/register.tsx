@@ -2650,13 +2650,18 @@ function paneActions($: any, snap: Snapshot): Actions {
   }
 }
 
+/** The pane's controls whose work crew's hooks are doing: how many. */
+const pane = { working: 0 }
+
 /**
  * What the real pane's controls hold themselves: the moves of the view. crew's
  * work is done in its press, input and select hooks (paneWork); a control they
  * did not take says so, rather than start work as crew's own code.
  */
 function drawnActions($: any): Actions {
-  const missed = () => $.ui.toast('crew：這個控制沒有接上 crew 的處理，沒有做任何事。請回報這個問題。')
+  // A hook past its time budget has the engine run the control's own handler while crew's work goes on.
+  const missed = () =>
+    $.ui.toast(pane.working > 0 ? 'crew：還在處理，完成時會通知你。' : 'crew：這個控制沒有接上 crew 的處理，沒有做任何事。請回報這個問題。')
   return {
     ...viewMoves($),
     pick: missed,
@@ -2688,17 +2693,26 @@ function drawnActions($: any): Actions {
  */
 async function paneWork($: any, key: string, value?: string): Promise<boolean> {
   if (await read($, isDemo)) return false
-  const l = await read($, live)
-  const view = {
-    tab: await read($, tab),
-    scenario: await read($, scenario),
-    thread: await read($, thread),
-    gate: await read($, gate),
-    asking: await read($, asking),
-    confirming: await read($, confirming),
+  pane.working += 1
+  try {
+    const l = await read($, live)
+    const view = {
+      tab: await read($, tab),
+      scenario: await read($, scenario),
+      thread: await read($, thread),
+      gate: await read($, gate),
+      asking: await read($, asking),
+      confirming: await read($, confirming),
+    }
+    const snap = await liveSnapshot($, await loadBoard($), l)
+    return await actOn(paneActions($, snap), view, snap, key, value)
+  } catch (err) {
+    // Said here: a hook that throws is skipped, and the control's own handler cannot tell why.
+    $.ui.toast(`crew：沒有完成：${cut(squeeze(String(err)), 200)}`)
+    return true
+  } finally {
+    pane.working -= 1
   }
-  const snap = await liveSnapshot($, await loadBoard($), l)
-  return actOn(paneActions($, snap), view, snap, key, value)
 }
 
 /** What the real pane draws: the board and crew's record, with what the pane itself holds (settings, the start screen, an open design, a search). */
