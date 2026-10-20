@@ -128,7 +128,9 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree') return ok('true\n')
     if (args[0] === 'rev-parse' && args[1] === '--verify') {
       const name = args[3] ?? ''
-      if (name === 'HEAD^{commit}') return top('HEAD') === undefined ? fail() : ok(`${top('HEAD')}\n`)
+      // In a worktree, HEAD is the worktree's own branch.
+      const head = dir !== ROOT && git.worktrees.has(dir) ? (git.worktrees.get(dir) ?? 'HEAD') : 'HEAD'
+      if (name === 'HEAD^{commit}') return top(head) === undefined ? fail() : ok(`${top(head)}\n`)
       const branch = name.replace('refs/heads/', '').replace('^{commit}', '')
       return git.branches.has(branch) ? ok(`${top(branch) ?? 'x'}\n`) : fail()
     }

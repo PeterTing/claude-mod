@@ -209,4 +209,35 @@ describe('crew’s test runs', () => {
     expect(w.tests.runs.length).toBe(2)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
   })
+
+  test('do not run on a worktree with changes not committed, nor off the newest commit: the result would not be the commit’s', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    await approve($, 'TASK-001')
+    w.commit('TASK-002: 取消流程')
+    await done($, 'a-fullstack-5')
+    // Something was changed after the last commit, and is not committed.
+    w.git.dirty = ' M src/plan.ts\n'
+    await approve($, 'TASK-002')
+    await tested()
+    expect(w.tests.runs).toEqual([])
+    expect((await $.command.run(command('status'))).text).toMatch(/escalated[\s\S]*待你決定 1/)
+    expect(w.toasts.some(t => /有一件事等你決定/.test(t))).toBe(true)
+    expect(await paneText($, 'progress')).toMatch(/→ 測試結果 0\/1/)
+    // The worktree is clean again but on another commit: still not run.
+    w.git.dirty = ''
+    w.git.branches.set('elsewhere', [{ sha: 'ddd0001', subject: 'x' }])
+    w.git.worktrees.set(`${ROOT}/.crew/work/prd`, 'elsewhere')
+    await $.command.run(command('test'))
+    await tested()
+    expect(w.tests.runs).toEqual([])
+    // Back on the newest commit: the tests run.
+    w.git.worktrees.set(`${ROOT}/.crew/work/prd`, 'crew/prd')
+    await $.command.run(command('test'))
+    await tested()
+    expect(w.tests.runs).toHaveLength(1)
+  })
 })

@@ -813,6 +813,23 @@ describe('the PRD as the flow holds the board to it', () => {
       expect(r.actions.some(a => a.type === 'ask_person' && /review 退回/.test(a.question))).toBe(true)
     })
 
+    test('asks the person once the review has sent a task back three times, counting through each fix', () => {
+      const base = plannedTwo()
+      const shas = ['aaaaaa1', 'aaaaaa2', 'aaaaaa3', 'aaaaaa4', 'aaaaaa5']
+      const at = (n: number, reviewedAt: string) => reviewed(withCommits(base, new Map([['TASK-001', shas.slice(0, n).reverse()]])) ?? base, 'TASK-001', reviewedAt, 'changes', '再改')
+      let s: FlowState = { stage: 'reviewing', round: 0, retries: 0, building: 'TASK-001', reviewing: { task: 'TASK-001', sha: shas[0] ?? '' } }
+      const stages: string[] = []
+      for (let i = 1; i <= 4; i++) {
+        // The tech lead asks for changes on the commit it read; the full-stack commits a fix, which is reviewed next.
+        s = step(s, { type: 'role_done', role: 'techlead', board: at(i, shas[i - 1] ?? '') }).state
+        stages.push(s.stage)
+        if (s.stage !== 'building') break
+        s = step(s, { type: 'role_done', role: 'fullstack', board: at(i + 1, shas[i - 1] ?? '') }).state
+        expect(s).toMatchObject({ stage: 'reviewing', reviewing: { sha: shas[i] } })
+      }
+      expect(stages).toEqual(['building', 'building', 'building', 'escalated'])
+    })
+
     test('reviews a task again once a commit lands after its approval', () => {
       const approved = reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve')
       const later = withCommits(approved, new Map([['TASK-001', ['fed0002', 'abc0000']], ['TASK-002', ['abc0001']]])) ?? approved

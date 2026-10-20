@@ -248,4 +248,16 @@ describe('the tech lead’s review', () => {
     expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
     expect(await paneText($, 'progress')).toMatch(/→ Review 0\/2/)
   })
+
+  test('masks a secret the tech lead quotes in its notes before the board, which is in git, holds them', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    const r = await approve($, 'TASK-001', 'a-techlead-4', 'changes', '第 12 行寫死了 sk-ant-api03-abcdefghijklmnopqrstuvwx，改用環境變數')
+    expect(String(r.result)).toMatch(/已記下/)
+    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).not.toMatch(/sk-ant-api03-abc/)
+    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).toMatch(/改用環境變數/)
+  })
 })

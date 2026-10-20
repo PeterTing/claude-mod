@@ -67,7 +67,10 @@ const MARKS: readonly [RegExp, Outcome][] = [
   [/\.\.\.\s*ok\s*$/, 'passed'],
 ]
 
-const outcomeOf = (line: string): Outcome | undefined => MARKS.find(([mark]) => mark.test(line))?.[1]
+/** A test the runner skipped or holds as to-do (TAP's `# SKIP`, `# TODO`) did not run: it has no result. */
+const SKIPPED = /#\s*(?:SKIP|TODO)\b/i
+
+const outcomeOf = (line: string): Outcome | undefined => (SKIPPED.test(line) ? undefined : MARKS.find(([mark]) => mark.test(line))?.[1])
 
 /**
  * The test case ids a line names, as the board writes them: `TC-001`, also

@@ -61,6 +61,11 @@ describe('results by test case', () => {
     expect(Object.fromEntries(resultsOf(output, IDS, 'TC-'))).toEqual({ 'TC-001': 'passed', 'TC-002': 'passed', 'TC-003': 'passed' })
   })
 
+  test('take a skipped or to-do test for no result', () => {
+    const output = ['ok 1 - TC-001 adds # SKIP not ready', 'not ok 2 - TC-002 subtracts # TODO later', 'ok 3 - TC-003 # skip', 'ok 4 - TC-004 adds'].join('\n')
+    expect(Object.fromEntries(resultsOf(output, IDS, 'TC-'))).toEqual({ 'TC-004': 'passed' })
+  })
+
   test('follow the board’s own test case prefix', () => {
     expect(Object.fromEntries(resultsOf('✓ T-001 a\n✗ T_002 b', ['T-001', 'T-002'], 'T-'))).toEqual({ 'T-001': 'passed', 'T-002': 'failed' })
   })
