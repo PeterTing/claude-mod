@@ -80,7 +80,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
    */
   const git = {
     repo: true,
-    branches: new Map<string, { sha: string; subject: string }[]>([['HEAD', [{ sha: 'c0ffee'.padEnd(40, '0'), subject: 'init' }]]]),
+    branches: new Map<string, { sha: string; subject: string; files?: string[] }[]>([['HEAD', [{ sha: 'c0ffee'.padEnd(40, '0'), subject: 'init' }]]]),
     worktrees: new Map<string, string>(),
     commands: [] as string[][],
     /** What `git status --porcelain` says in crew's worktree: changes not committed. */
@@ -96,10 +96,10 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   const broken = { writes: '' }
   let shas = 0
   /** A commit the full-stack made on a branch (crew's, by default the PRD's). */
-  const commit = (subject: string, branch = 'crew/prd') => {
+  const commit = (subject: string, branch = 'crew/prd', files?: string[]) => {
     shas += 1
     const sha = (0xabc0000 + shas).toString(16).padStart(7, '0')
-    git.branches.set(branch, [{ sha, subject }, ...(git.branches.get(branch) ?? [])])
+    git.branches.set(branch, [{ sha, subject, ...(files === undefined ? {} : { files }) }, ...(git.branches.get(branch) ?? [])])
     return sha
   }
   on('process.run', (_$, e) => {
@@ -154,7 +154,22 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
       // Each commit as `git show` prints it: its sha, its subject, and a diff.
       const shas = args.slice(1, args.indexOf('--') === -1 ? undefined : args.indexOf('--')).filter(a => !a.startsWith('-'))
       const all = [...git.branches.values()].flat()
-      return ok(shas.map(sha => `commit ${sha}\n${all.find(c => c.sha === sha)?.subject ?? ''}\n\n diff of ${sha}\n`).join('\n'))
+      return ok(
+        shas
+          .map(sha => {
+            const c = all.find(x => x.sha === sha)
+            return `commit ${sha}\n${c?.subject ?? ''}\n\n diff of ${sha}\n${(c?.files ?? []).map(f => `diff --git a/${f} b/${f}\n`).join('')}`
+          })
+          .join('\n'),
+      )
+    }
+    if (args[0] === 'for-each-ref') {
+      // The person's branches, as `refs/heads/<name> <sha>`; HEAD stands for the checkout's own.
+      return ok([...git.branches].filter(([b]) => b !== 'HEAD').map(([b, cs]) => `refs/heads/${b} ${cs[0]?.sha ?? ''}`).join('\n'))
+    }
+    if (args[0] === 'merge-base' && args[1] === '--is-ancestor') {
+      const of = (args[3] ?? '').replace('refs/heads/', '')
+      return (git.branches.get(of) ?? []).some(c => c.sha === args[2]) ? ok() : { value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
     if (args[0] === 'log') {
       const end = args.indexOf('--')
