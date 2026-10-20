@@ -2052,7 +2052,7 @@ async function watch($: any) {
     try {
       do {
         watching.again = false
-        await look($)
+        await lookAtPrd($)
       } while (watching.again)
     } catch (err) {
       // Said once in a toast; a check that keeps failing also shows in the pane's time of the last check falling behind.
@@ -2067,7 +2067,7 @@ async function watch($: any) {
 
 const NO_DRIFT = { added: [] as Requirement[], removed: [] as Requirement[] }
 
-async function look($: any) {
+async function lookAtPrd($: any) {
   // A /crew start is moving the board to a PRD: its own look follows.
   if (starting.busy) return
   const l = await read($, live)
