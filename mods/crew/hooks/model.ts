@@ -163,8 +163,15 @@ export type Progress = {
 /** A reminder crew sent the brain: what it saw, against which line, and when. */
 export type Alert = { text: string; at: string }
 
-/** What the brain did about a reminder: the decision it wrote, and the numbers before it and since. */
-export type BrainAction = { id: string; text: string; before: string; after?: string }
+/**
+ * What the brain did about a reminder: the decision it wrote, and the numbers
+ * before it and since; or, when the person has the brain ask first, what it
+ * proposes and the question that waits for them.
+ */
+export type BrainAction = { id: string; text: string; before: string; after?: string; pending?: string }
+
+/** How the brain's actions on usage are taken: on its own, or once the person approves each. */
+export type Tuning = 'auto' | 'ask'
 
 /**
  * crew while it stays on: when its heartbeat (a look in code, no model) last
@@ -199,6 +206,8 @@ export type Snapshot = {
   actions: readonly BrainAction[]
   /** crew's heartbeat, its last restart and the brain's digest; none before crew has looked. */
   resident?: Resident
+  /** Whether the brain acts on usage on its own or asks the person first. */
+  tuning?: Tuning
   /** Memories attached to starts and wakes: how many times, and their average size. */
   injected?: { count: number; average: number }
   /** The PRD's requirements, each with how far its development is. */

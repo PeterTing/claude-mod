@@ -245,6 +245,7 @@ describe('/crew demo', () => {
       const ui = await $.ui.mount(pane(surface))
       await ui.press({ key: 'tab-tokens' })
       const calm = await shown(ui)
+      expect(calm).toMatch(/大腦處置：自動（大腦自己處置，事後記成決定） · \/crew tuning ask 改成先問你/)
       expect(calm).toMatch(/大腦處置（不能為了省 token 跳過關卡、測試或 review）/)
       expect(calm).toMatch(/DEC-15 全端輪替，門檻 100K → 80K[\s\S]*處置前 命中率 52% · context 96K → 現在 命中率 81% · context 8K/)
       await ui.press({ key: 'scenario-attention' })
@@ -252,8 +253,11 @@ describe('/crew demo', () => {
       expect(loud).toMatch(/提醒已送大腦（同一條件一小時最多一次）/)
       expect(loud).toMatch(/全端今日佔 46%（超過 40%） · 12:41/)
       expect(loud).toMatch(/全端快取命中率 52%（低於 60%）/)
-      // An action the brain just took has no numbers since yet.
-      expect(loud).toMatch(/DEC-16 全端下一個項目改用 Sonnet・high[\s\S]*處置前 今日佔 46% → 之後的數字等下一輪/)
+      // Asked first: the brain's proposal waits for the person, with the numbers it would act on.
+      expect(loud).toMatch(/大腦處置：先問你（大腦提出建議，你核准才執行） · \/crew tuning auto 改成自動/)
+      expect(loud).toMatch(/建議 全端下一個項目改用 Sonnet・high[\s\S]*處置前 今日佔 46% → 等你核准：\/crew approve Q-04/)
+      await ui.press({ key: 'tab-overview' })
+      expect(await shown(ui)).toMatch(/Q-04 大腦建議：全端下一個項目改用 Sonnet・high/)
       await ui.press({ key: 'scenario-normal' })
       await ui.press({ key: 'tab-overview' })
       await ui.unmount()
@@ -316,7 +320,8 @@ describe('/crew demo', () => {
     await ui.press({ key: 'scenario-attention' })
     await ui.unmount()
     const line = await shown(await $.ui.mount(band('terminal')))
-    expect(line.indexOf('待你決定 1')).toBeLessThan(line.indexOf('PM'))
+    expect(line).toMatch(/待你決定 2/)
+    expect(line.indexOf('待你決定 2')).toBeLessThan(line.indexOf('PM'))
     expect(line).toMatch(/⚠ PRD 對不上 2[\s\S]*⚠ 3 則提醒/)
   })
 

@@ -209,6 +209,7 @@ const NORMAL: Snapshot = {
   brainShare: 0.09,
   alerts: [],
   actions: [{ id: 'DEC-15', text: '全端輪替，門檻 100K → 80K', before: '命中率 52% · context 96K', after: '命中率 81% · context 8K' }],
+  tuning: 'auto',
   resident: { checked: '2 分鐘前', next: '3 分鐘後', digest: { sent: '12:30', queued: 2, next: '13:00' } },
   requirements: REQUIREMENTS,
   alignment: { covered: 14, total: 14, gaps: 0, added: 0, removed: 0, prdChanged: '2 小時前', checked: '剛剛' },
@@ -229,9 +230,12 @@ const ATTENTION: Snapshot = {
     { text: '全端快取命中率 52%（低於 60%）：喚醒間隔太長，對話整份重寫快取', at: '12:41' },
     { text: 'PM 和 QA 在 AC-007 來回 7 次（超過 6 次）', at: '12:20' },
   ],
-  actions: [
-    ...NORMAL.actions,
-    { id: 'DEC-16', text: '全端下一個項目改用 Sonnet・high（TASK-15 照舊用 Opus・xhigh）', before: '今日佔 46%' },
+  // The person has the brain ask first: its proposal waits as a question.
+  tuning: 'ask',
+  actions: [...NORMAL.actions, { id: 'Q-04', text: '全端下一個項目改用 Sonnet・high（TASK-15 照舊用 Opus・xhigh）', before: '今日佔 46%', pending: 'Q-04' }],
+  decisions: [
+    ...NORMAL.decisions,
+    { id: 'Q-04', question: '大腦建議：全端下一個項目改用 Sonnet・high（TASK-15 照舊用 Opus・xhigh）。/crew approve Q-04 核准，/crew reject Q-04 不要', from: 'brain', age: '剛剛' },
   ],
   resident: {
     checked: '1 分鐘前',

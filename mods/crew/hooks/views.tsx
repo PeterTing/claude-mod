@@ -520,17 +520,23 @@ function Tokens({ el, snap }: { el: Elements; snap: Snapshot }) {
           {snap.chores !== undefined && snap.chores > 0 ? ` · 記憶整理 ${tokens(snap.chores)} tok` : ''}
         </Text>
       )}
+      {snap.tuning !== undefined && (
+        <Text dimColor>
+          {snap.tuning === 'auto'
+            ? '大腦處置：自動（大腦自己處置，事後記成決定） · /crew tuning ask 改成先問你'
+            : '大腦處置：先問你（大腦提出建議，你核准才執行） · /crew tuning auto 改成自動'}
+        </Text>
+      )}
       {snap.alerts.length > 0 && Alerts({ el, alerts: snap.alerts })}
       {snap.actions.length > 0 && (
         <Box flexDirection="column">
           <Text color="suggestion">大腦處置（不能為了省 token 跳過關卡、測試或 review）</Text>
           {snap.actions.map(a => (
             <Box flexDirection="column">
-              <Text>
-                {a.id} {a.text}
-              </Text>
+              <Text>{a.pending === undefined ? `${a.id} ${a.text}` : `建議 ${a.text}`}</Text>
               <Text dimColor>
-                {'  '}處置前 {a.before} → {a.after === undefined ? '之後的數字等下一輪' : `現在 ${a.after}`}
+                {'  '}處置前 {a.before} →{' '}
+                {a.pending !== undefined ? `等你核准：/crew approve ${a.pending}` : a.after === undefined ? '之後的數字等下一輪' : `現在 ${a.after}`}
               </Text>
             </Box>
           ))}
