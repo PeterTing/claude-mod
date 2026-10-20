@@ -216,6 +216,61 @@ describe('/crew demo', () => {
     }
   })
 
+  test('shows crew’s checks while it stays on: the heartbeat, a restart and the brain’s digest', async ($, on) => {
+    stage(on)
+    await demoOn($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount(pane(surface))
+      const calm = await shown(ui)
+      expect(calm).toMatch(/常駐 ✓ 心跳 2 分鐘前 · 下次 3 分鐘後 · 大腦摘要 12:30 送出，2 則等 13:00/)
+      // The line is on every tab, as the PRD's is.
+      await ui.press({ key: 'tab-board' })
+      expect(await shown(ui)).toMatch(/常駐 ✓/)
+      await ui.press({ key: 'tab-overview' })
+      await ui.press({ key: 'scenario-attention' })
+      const found = await shown(ui)
+      expect(found).toMatch(/常駐 ⚠ 心跳 1 分鐘前發現：crew 的分支在角色工作以外多了 1 個 commit（TASK-12）→ 已排給 Tech lead review/)
+      expect(found).toMatch(/重開接續：13:02 從 building 接續（全端，TASK-15）/)
+      await ui.press({ key: 'scenario-empty' })
+      expect(await shown(ui)).toMatch(/常駐 ✓ 心跳 剛剛 · 下次 5 分鐘後/)
+      await ui.press({ key: 'scenario-normal' })
+      await ui.unmount()
+    }
+  })
+
+  test('shows each reminder sent to the brain with its time, and each of the brain’s actions with the numbers before and since', async ($, on) => {
+    stage(on)
+    await demoOn($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount(pane(surface))
+      await ui.press({ key: 'tab-tokens' })
+      const calm = await shown(ui)
+      expect(calm).toMatch(/大腦處置（不能為了省 token 跳過關卡、測試或 review）/)
+      expect(calm).toMatch(/DEC-15 全端輪替，門檻 100K → 80K[\s\S]*處置前 命中率 52% · context 96K → 現在 命中率 81% · context 8K/)
+      await ui.press({ key: 'scenario-attention' })
+      const loud = await shown(ui)
+      expect(loud).toMatch(/提醒已送大腦（同一條件一小時最多一次）/)
+      expect(loud).toMatch(/全端今日佔 46%（超過 40%） · 12:41/)
+      expect(loud).toMatch(/全端快取命中率 52%（低於 60%）/)
+      // An action the brain just took has no numbers since yet.
+      expect(loud).toMatch(/DEC-16 全端下一個項目改用 Sonnet・high[\s\S]*處置前 今日佔 46% → 之後的數字等下一輪/)
+      await ui.press({ key: 'scenario-normal' })
+      await ui.press({ key: 'tab-overview' })
+      await ui.unmount()
+    }
+  })
+
+  test('opens on a situation and a tab named in the command', async ($, on) => {
+    stage(on)
+    expect((await $.command.run(command('demo attention tokens'))).text).toMatch(/設計稿/)
+    const ui = await $.ui.mount(pane('terminal'))
+    const text = await shown(ui)
+    expect(text).toMatch(/提醒已送大腦/)
+    expect(text).toMatch(/命中率/)
+    await ui.unmount()
+    expect((await $.command.run(command('demo calm'))).text).toMatch(/用法：\/crew demo \[normal\|empty\|attention\] \[overview\|progress\|board\|threads\|memory\|tokens\]/)
+  })
+
   test('switches to the empty and attention situations', async ($, on) => {
     stage(on)
     await demoOn($)

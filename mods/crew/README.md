@@ -67,7 +67,7 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 | `/crew consolidate [YYYY-MM-DD]` | Haiku reads a day's log and saves facts and lessons nobody saved. This also runs by itself once a day for the previous day. |
 | `/crew status` | One-line summary. |
 | `/crew reset` | Forgets this session's flow and roles. The board, threads and memory are kept. |
-| `/crew demo` | The design preview with sample data. `/crew demo off` closes it. |
+| `/crew demo [normal\|empty\|attention] [overview\|progress\|board\|threads\|memory\|tokens]` | The design preview with sample data, opened on a situation and tab if you name them. `/crew demo off` closes it. |
 
 **After upgrading from 0.1.0.** A board crew finished then has no tasks, so its progress counts the plan as not done. Run `/crew start <PRD file>` once: crew checks the board without a new split, and the tech lead plans the tasks.
 

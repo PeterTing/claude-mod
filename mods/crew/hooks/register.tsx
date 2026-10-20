@@ -1827,9 +1827,16 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
       await $.ui.close({ id: PANE })
       return '已關閉 crew 設計稿。'
     }
+    // A situation and a tab may be named: /crew demo attention tokens.
+    const SITUATIONS = ['normal', 'empty', 'attention'] as const
+    const TABS = ['overview', 'progress', 'board', 'threads', 'memory', 'tokens'] as const
+    const [asked = 'normal', page = 'overview'] = rest
+    const situation = SITUATIONS.find(x => x === asked)
+    const opened = TABS.find(x => x === page)
+    if (situation === undefined || opened === undefined) return `用法：/crew demo [${SITUATIONS.join('|')}] [${TABS.join('|')}]，或 /crew demo off 關閉。`
     await update($, isDemo, () => true)
-    await update($, tab, () => 'overview')
-    await update($, scenario, () => 'normal')
+    await update($, tab, () => opened)
+    await update($, scenario, () => situation)
     await update($, thread, () => null)
     await update($, gate, () => null)
     await $.ui.open({ id: PANE, title: 'Crew（設計稿）' })

@@ -263,6 +263,7 @@ function Header({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapshot;
       {isDemo && <Text color="warning">設計稿・示意資料　/crew demo off 關閉</Text>}
       <Text bold>{prd}</Text>
       {snap.alignment !== undefined && Alignment({ el, a: snap.alignment })}
+      {snap.resident !== undefined && ResidentLine({ el, r: snap.resident })}
       {isDemo && (
         <Box flexDirection="row" gap={1}>
           <Text dimColor>示意情境</Text>
@@ -299,6 +300,27 @@ function Alignment({ el, a }: { el: Elements; a: NonNullable<Snapshot['alignment
     <Text color={ok ? 'success' : 'warning'}>
       對準 PRD {a.covered}/{a.total} {ok ? '✓' : `⚠${drift}`} · PRD 更新於 {a.prdChanged} · 即時檢查 {a.checked}
     </Text>
+  )
+}
+
+/** crew while it stays on: the heartbeat and what it found, a restart, and the brain's digest. */
+function ResidentLine({ el, r }: { el: Elements; r: NonNullable<Snapshot['resident']> }) {
+  const { Box, Text } = el
+  const digest = r.digest === undefined ? '' : ` · 大腦摘要 ${r.digest.sent} 送出，${r.digest.queued} 則等 ${r.digest.next}`
+  return (
+    <Box flexDirection="column">
+      {r.found === undefined ? (
+        <Text dimColor>
+          常駐 ✓ 心跳 {r.checked} · 下次 {r.next}
+          {digest}
+        </Text>
+      ) : (
+        <Text color="warning">
+          常駐 ⚠ 心跳 {r.checked}發現：{r.found}
+        </Text>
+      )}
+      {r.resumed !== undefined && <Text dimColor>重開接續：{r.resumed}</Text>}
+    </Box>
   )
 }
 
@@ -342,14 +364,7 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
           {openGate !== undefined && GateDetail({ el, g: openGate, act })}
         </Box>
       )}
-      {snap.alerts.length > 0 && (
-        <Box flexDirection="column">
-          <Text color="warning">提醒已送大腦</Text>
-          {snap.alerts.map(a => (
-            <Text>· {a}</Text>
-          ))}
-        </Box>
-      )}
+      {snap.alerts.length > 0 && Alerts({ el, alerts: snap.alerts })}
       {snap.decisions.length > 0 && (
         <Box flexDirection="column">
           <Text color="warning">待你決定（{snap.decisions.length}）</Text>
@@ -505,19 +520,36 @@ function Tokens({ el, snap }: { el: Elements; snap: Snapshot }) {
           {snap.chores !== undefined && snap.chores > 0 ? ` · 記憶整理 ${tokens(snap.chores)} tok` : ''}
         </Text>
       )}
-      {snap.alerts.length > 0 && (
+      {snap.alerts.length > 0 && Alerts({ el, alerts: snap.alerts })}
+      {snap.actions.length > 0 && (
         <Box flexDirection="column">
-          <Text color="warning">提醒已送大腦</Text>
-          {snap.alerts.map(a => (
-            <Text>· {a}</Text>
+          <Text color="suggestion">大腦處置（不能為了省 token 跳過關卡、測試或 review）</Text>
+          {snap.actions.map(a => (
+            <Box flexDirection="column">
+              <Text>
+                {a.id} {a.text}
+              </Text>
+              <Text dimColor>
+                {'  '}處置前 {a.before} → {a.after === undefined ? '之後的數字等下一輪' : `現在 ${a.after}`}
+              </Text>
+            </Box>
           ))}
         </Box>
       )}
-      {snap.actions.map(a => (
-        <Box flexDirection="row" gap={1}>
-          <Text color="suggestion">大腦處置</Text>
-          <Text>{a}</Text>
-        </Box>
+    </Box>
+  )
+}
+
+/** The reminders sent to the brain, each with when. */
+function Alerts({ el, alerts }: { el: Elements; alerts: Snapshot['alerts'] }) {
+  const { Box, Text } = el
+  return (
+    <Box flexDirection="column">
+      <Text color="warning">提醒已送大腦（同一條件一小時最多一次）</Text>
+      {alerts.map(a => (
+        <Text>
+          · {a.text} · {a.at}
+        </Text>
       ))}
     </Box>
   )

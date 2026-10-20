@@ -208,7 +208,8 @@ const NORMAL: Snapshot = {
   ],
   brainShare: 0.09,
   alerts: [],
-  actions: ['DEC-15 TASK-12 拆成 12a／12b，全端門檻 100K → 80K'],
+  actions: [{ id: 'DEC-15', text: '全端輪替，門檻 100K → 80K', before: '命中率 52% · context 96K', after: '命中率 81% · context 8K' }],
+  resident: { checked: '2 分鐘前', next: '3 分鐘後', digest: { sent: '12:30', queued: 2, next: '13:00' } },
   requirements: REQUIREMENTS,
   alignment: { covered: 14, total: 14, gaps: 0, added: 0, removed: 0, prdChanged: '2 小時前', checked: '剛剛' },
 }
@@ -224,10 +225,21 @@ const ATTENTION: Snapshot = {
     i.id === 'TASK-15' ? { ...i, status: 'blocked', note: '測試失敗 2 次：從 L 升級到 XL（Opus・xhigh），等 Tech lead 看 ADR-02' } : i,
   ),
   alerts: [
-    'PRD 剛改了：新增「可以暫停訂閱」，移除「取消要客服確認」；PM 正在同步看板',
-    '全端今日佔 46%，快取命中率 52%（喚醒間隔太長，對話整份重寫快取）',
-    'TASK-15 升到 XL 後改用 Opus・xhigh，這個項目已用 64K tok',
+    { text: '全端今日佔 46%（超過 40%）', at: '12:41' },
+    { text: '全端快取命中率 52%（低於 60%）：喚醒間隔太長，對話整份重寫快取', at: '12:41' },
+    { text: 'PM 和 QA 在 AC-007 來回 7 次（超過 6 次）', at: '12:20' },
   ],
+  actions: [
+    ...NORMAL.actions,
+    { id: 'DEC-16', text: '全端下一個項目改用 Sonnet・high（TASK-15 照舊用 Opus・xhigh）', before: '今日佔 46%' },
+  ],
+  resident: {
+    checked: '1 分鐘前',
+    next: '4 分鐘後',
+    found: 'crew 的分支在角色工作以外多了 1 個 commit（TASK-12）→ 已排給 Tech lead review',
+    resumed: '13:02 從 building 接續（全端，TASK-15）',
+    digest: { sent: '12:30', queued: 0, next: '13:00' },
+  },
   gates: NORMAL.gates.map(g =>
     g.id === 'G0'
       ? {
@@ -272,6 +284,7 @@ const EMPTY: Snapshot = {
   brainShare: 0,
   alerts: [],
   actions: [],
+  resident: { checked: '剛剛', next: '5 分鐘後' },
 }
 
 export const DEMO = { normal: NORMAL, empty: EMPTY, attention: ATTENTION } as const

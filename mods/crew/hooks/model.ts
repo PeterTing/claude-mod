@@ -160,6 +160,25 @@ export type Progress = {
   recent: readonly { id: string; title: string; role: RoleId; age: string }[]
 }
 
+/** A reminder crew sent the brain: what it saw, against which line, and when. */
+export type Alert = { text: string; at: string }
+
+/** What the brain did about a reminder: the decision it wrote, and the numbers before it and since. */
+export type BrainAction = { id: string; text: string; before: string; after?: string }
+
+/**
+ * crew while it stays on: when its heartbeat (a look in code, no model) last
+ * looked and looks next, what it found and did; where a restart went on from;
+ * and the brain's digest of the roles' routine news.
+ */
+export type Resident = {
+  checked: string
+  next: string
+  found?: string
+  resumed?: string
+  digest?: { sent: string; queued: number; next: string }
+}
+
 /** Everything the panes draw, at one moment. */
 export type Snapshot = {
   prd: { id: string; title: string; progress: number } | null
@@ -176,8 +195,10 @@ export type Snapshot = {
   tiers: readonly { tier: Tier; tokens: number }[]
   /** The brain's share of today's tokens, 0 to 1. */
   brainShare: number
-  alerts: readonly string[]
-  actions: readonly string[]
+  alerts: readonly Alert[]
+  actions: readonly BrainAction[]
+  /** crew's heartbeat, its last restart and the brain's digest; none before crew has looked. */
+  resident?: Resident
   /** Memories attached to starts and wakes: how many times, and their average size. */
   injected?: { count: number; average: number }
   /** The PRD's requirements, each with how far its development is. */
