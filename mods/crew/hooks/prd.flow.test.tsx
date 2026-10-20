@@ -92,6 +92,25 @@ describe('the board held to the PRD', () => {
     expect((await $.command.run(command('status'))).text).toMatch(/對準 PRD ✓/)
   })
 
+  test('starts the PM afresh for a PRD change at crew’s next frame, never from the look’s timer, and once for two changes', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await finished($)
+    await $.command.run(command('rotate pm'))
+    const before = w.spawned.length
+    w.disk.set(PRD_PATH, CHANGED)
+    await w.clock.advance(10_000)
+    expect(w.toasts.some(t => /PRD 改了（新增 1、移除 0 條需求）/.test(t))).toBe(true)
+    expect(w.spawned).toHaveLength(before)
+    // A second change before any frame: the PM is still to start once, on the PRD as it stands.
+    w.disk.set(PRD_PATH, `${CHANGED}\n\n使用者可以取消訂閱。`)
+    await w.clock.advance(10_000)
+    expect(w.spawned).toHaveLength(before)
+    await $.command.run(command('status'))
+    expect(w.spawned.slice(before).map(s => s.subagentType)).toEqual(['crew:pm'])
+    expect(w.spawned.at(-1)?.prompt).toMatch(/取消訂閱/)
+  })
+
   test('picks up a PRD changed while Claude Code was closed', async ($, on) => {
     const w = world($, on)
     await start($)

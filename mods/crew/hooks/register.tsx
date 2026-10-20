@@ -648,8 +648,8 @@ const withUnread = (l: CrewLive, role: CrewRole, text: string, item?: string): s
  * the work and its recent thread lines go first, the work last. With a reason,
  * it replaces the role's agent (a rotation) and carries its last report.
  */
-async function startRole($: any, role: CrewRole, asked: Route, given: string, reason?: string, run: 'flow' | 'person' = 'flow', now = false) {
-  if (!now && timers.running > 0) return waitForFrame($, { role, asked, given, ...(reason === undefined ? {} : { reason }), run })
+async function startRole($: any, role: CrewRole, asked: Route, given: string, reason?: string, run: 'flow' | 'person' = 'flow', timed = false) {
+  if (timed) return waitForFrame($, { role, asked, given, ...(reason === undefined ? {} : { reason }), run })
   const work = await withWorkdir($, role, given)
   if (work === undefined) return
   const l = await read($, live)
@@ -754,50 +754,42 @@ async function withWorkdir($: any, role: CrewRole, work: string): Promise<string
   return `${work}\n\n${WORKDIR}${wd.dir}（分支 ${wd.branch}）。所有修改和 git 指令都在這個目錄裡做，例如 git -C ${wd.dir} commit。`
 }
 
-/**
+/*
  * A timer's callback is crew's own code, outside any hook: an agent it starts
  * runs as crew's own, and the engine skips every crew hook for it (its tools
- * answer nothing, its turns end unseen). So timer work is counted, and a role
- * it starts waits for crew's next frame: a redraw, a command, a turn's end.
+ * answer nothing, its turns end unseen). So the work a timer does says so
+ * (`timed`, down every call from the timer to `startRole`), and a role it
+ * starts waits for a frame of the engine's: a command, a prompt, a tool call,
+ * a turn's end or a press in the pane. Work from a hook at the same time is
+ * not held.
  */
-const timers = { running: 0 }
-
-/** Runs a timer's work, counted. */
-async function onTimer(work: () => Promise<unknown>) {
-  timers.running += 1
-  try {
-    await work()
-  } finally {
-    timers.running -= 1
-  }
-}
 
 type WaitingStart = { role: CrewRole; asked: Route; given: string; reason?: string; run: 'flow' | 'person' }
 
-/** Roles a timer asked to start, for the PRD crew followed then. */
+/** Roles a timer asked to start, for the PRD crew followed then: one per role, the newest. */
 const waitingStarts: { start: WaitingStart; prd: string | null }[] = []
 
 async function waitForFrame($: any, start: WaitingStart) {
-  waitingStarts.push({ start, prd: (await read($, live)).prdPath })
-  // The change redraws crew's band and pane: the next frame is near.
-  await update($, live, s => ({ ...s, waiting: waitingStarts.length }))
+  const prd = (await read($, live)).prdPath
+  waitingStarts.splice(0, waitingStarts.length, ...waitingStarts.filter(w => w.start.role !== start.role), { start, prd })
 }
 
-/** Starts the roles a timer asked for, in a frame of the engine's or the person's: the PRD's own, if it is still the one followed. */
+/**
+ * Starts the roles a timer asked for, in a frame of the engine's or the
+ * person's: the PRD's own, if it is still the one followed. No hold meets a
+ * waiting start: the heartbeat holds no flow while one waits, and a restart
+ * or reload starts the module, and its list, anew.
+ */
 async function startWaiting($: any) {
   if (waitingStarts.length === 0) return
   await serial('starts', async () => {
     const due = waitingStarts.splice(0)
     const prd = (await read($, live)).prdPath
-    for (const w of due) if (w.prd === prd) await startRole($, w.start.role, w.start.asked, w.start.given, w.start.reason, w.start.run, true)
-    await update($, live, s => {
-      const { waiting: _, ...rest } = s
-      return rest
-    })
+    for (const w of due) if (w.prd === prd) await startRole($, w.start.role, w.start.asked, w.start.given, w.start.reason, w.start.run)
   })
 }
 
-async function deliver($: any, role: CrewRole, asked: Route, given: string, item?: string, run: 'flow' | 'person' = 'flow') {
+async function deliver($: any, role: CrewRole, asked: Route, given: string, item?: string, run: 'flow' | 'person' = 'flow', timed = false) {
   const work = await withWorkdir($, role, given)
   if (work === undefined) return
   const l0 = await read($, live)
@@ -808,7 +800,7 @@ async function deliver($: any, role: CrewRole, asked: Route, given: string, item
   const busy = state.state === 'working' && state.agentId !== undefined
   const plan = busy ? ({ kind: 'wake' } as const) : wakePlan(state, route, { forced: state.rotate === true })
   if (plan.kind !== 'wake' || state.agentId === undefined) {
-    await startRole($, role, route, work, plan.kind === 'rotate' ? plan.reason : undefined, run)
+    await startRole($, role, route, work, plan.kind === 'rotate' ? plan.reason : undefined, run, timed)
     return
   }
   const text = withUnread(l0, role, work, item)
@@ -823,7 +815,7 @@ async function deliver($: any, role: CrewRole, asked: Route, given: string, item
   if (!sent.isDelivered) {
     // A role that cannot be woken starts again; the pack carries what it needs.
     $.ui.log(`crew: starting ${role} again: ${sent.reason ?? ''}`)
-    await startRole($, role, route, text, `原本的對話叫不醒：${sent.reason ?? '沒有原因'}`, run)
+    await startRole($, role, route, text, `原本的對話叫不醒：${sent.reason ?? '沒有原因'}`, run, timed)
     return
   }
   await update($, live, l => ({
@@ -853,7 +845,7 @@ async function deliver($: any, role: CrewRole, asked: Route, given: string, item
  * does anything for a role whose run is the person's: that run's end is an
  * answer, not the flow's work. Work starts one task at a time.
  */
-async function handOver($: any, role: CrewRole, works: readonly CrewWork[]) {
+async function handOver($: any, role: CrewRole, works: readonly CrewWork[], timed = false) {
   for (const [i, work] of works.entries()) {
     const r = (await read($, live)).roles[role]
     const busy = r.state === 'working' && r.agentId !== undefined
@@ -863,12 +855,12 @@ async function handOver($: any, role: CrewRole, works: readonly CrewWork[]) {
       return
     }
     const route = work.route as Route
-    if (work.kind === 'spawn') await startRole($, role, route, work.text, undefined, work.run ?? 'flow')
-    else await deliver($, role, route, work.text, work.item, work.run ?? 'flow')
+    if (work.kind === 'spawn') await startRole($, role, route, work.text, undefined, work.run ?? 'flow', timed)
+    else await deliver($, role, route, work.text, work.item, work.run ?? 'flow', timed)
   }
 }
 
-async function execute($: any, actions: readonly FlowAction[]) {
+async function execute($: any, actions: readonly FlowAction[], timed = false) {
   for (const action of actions) {
     if (action.type === 'spawn' || action.type === 'message') {
       const l = await read($, live)
@@ -879,7 +871,7 @@ async function execute($: any, actions: readonly FlowAction[]) {
       const text = action.type === 'message' && action.data !== undefined ? `${said}\n\n${action.data}` : said
       const run = action.type === 'message' && action.person === true ? 'person' : 'flow'
       const work: CrewWork = { kind: action.type, route: action.route, text, run, ...(action.type === 'message' && action.item !== undefined ? { item: action.item } : {}) }
-      await handOver($, action.role, [work])
+      await handOver($, action.role, [work], timed)
     } else if (action.type === 'ask_person') {
       await ask($, 'crew', action.question, action.item)
     } else if (action.type === 'approve') {
@@ -896,7 +888,7 @@ async function execute($: any, actions: readonly FlowAction[]) {
       // The thread keeps the request; the diff goes to the tech lead alone, never into the repo's threads.
       await post($, { item: action.task, from: 'crew', to: 'techlead', text: `請 review ${action.task}（commit ${action.sha.slice(0, 7)}），用 review_submit 送出結論。`, kind: 'route' })
       const text = `${action.text}\n\n${await reviewMaterial($, action.task, action.sha)}`
-      await handOver($, 'techlead', [{ kind: 'message', route: action.route, text, run: 'flow', item: action.task }])
+      await handOver($, 'techlead', [{ kind: 'message', route: action.route, text, run: 'flow', item: action.task }], timed)
     } else {
       $.ui.toast(`crew：${action.text}`)
       // The work the brain started is done: it hears at once; a step along the way waits for its digest.
@@ -938,13 +930,16 @@ const laterTests = ($: any) => {
   testing.asked = asked
   $.clock.after(0, () => {
     if (testing.asked === asked) testing.asked = undefined
-    return onTimer(() => runTests($))
+    return runTests($)
   })
   const lost = () => {
     if (testing.asked === asked) testing.asked = undefined
   }
   Promise.resolve($.clock.sleep(LOST_TIMER)).then(lost, lost)
 }
+
+/** A test run always runs on its own timer (laterTests): what it tells the flow, the flow does as a timer's work. */
+const ON_TIMER = true
 
 /**
  * Runs the person's test command in crew's worktree, records each test case's
@@ -978,7 +973,7 @@ async function runSafely($: any): Promise<string> {
     const error = `crew 跑測試時出錯：${cut(squeeze(String(err)), 200)}`
     try {
       const board = await loadBoard($)
-      if (board !== null) await feed($, { type: 'tests_ran', board, error })
+      if (board !== null) await feed($, { type: 'tests_ran', board, error }, ON_TIMER)
     } catch (again) {
       $.ui.log(`crew: could not tell the flow the test run failed: ${String(again)}`, { to: 'debug' })
     }
@@ -994,7 +989,7 @@ async function runOnce($: any): Promise<string> {
     const open = (): Promise<number> => read($, live).then((s: CrewLive) => s.questions.filter(q => q.status === 'open').length)
     const before = await open()
     const board = await loadBoard($)
-    if (board !== null) await feed($, { type: 'tests_ran', board, error, ...(requirements === undefined ? {} : { requirements }) })
+    if (board !== null) await feed($, { type: 'tests_ran', board, error, ...(requirements === undefined ? {} : { requirements }) }, ON_TIMER)
     // The person hears why once: in the question the flow asks them, or else in a notice of its own.
     if ((await open()) <= before) $.ui.toast(`crew：${redact(error)}`)
     return error
@@ -1057,7 +1052,7 @@ async function runOnce($: any): Promise<string> {
   await note($, { kind: 'tests', run: name, sha: tip, exit: r.exitCode, passed: g6.covered, total: g6.total })
   const said = `測試跑完（${shown}，commit ${tip.slice(0, 7)}，exit ${r.exitCode}）：test case 通過 ${g6.covered}/${g6.total}。證據在 .crew/runs/${name}.log。`
   $.ui.toast(`crew：${said}`)
-  await feed($, { type: 'tests_ran', board, output: output.slice(-TEST_OUTPUT), ...(requirements === undefined ? {} : { requirements }) })
+  await feed($, { type: 'tests_ran', board, output: output.slice(-TEST_OUTPUT), ...(requirements === undefined ? {} : { requirements }) }, ON_TIMER)
   return said
 }
 
@@ -1280,7 +1275,7 @@ async function consolidateDue($: any) {
 }
 
 /** Moves the flow one event on; one event at a time, so two roles ending together cannot overwrite each other's step. */
-async function feed($: any, event: FlowEvent) {
+async function feed($: any, event: FlowEvent, timed = false) {
   await serial('flow', async () => {
     const before = (await read($, live)).flow
     const r = step(before, event)
@@ -1291,7 +1286,7 @@ async function feed($: any, event: FlowEvent) {
       return { ...going, flow: r.state }
     })
     await saveState($)
-    await execute($, r.actions)
+    await execute($, r.actions, timed)
   })
 }
 
@@ -1488,9 +1483,9 @@ const REMIND_AFTER_MS = 2 * 3_600_000
 /** What the heartbeat did: the stop it last woke a role for, and its timer. */
 const heart: { woke?: string; timer?: { cancel: () => void } } = {}
 
-/** A running flow stopped with nobody at work, nothing queued and nothing waiting for the person: where it stopped. */
+/** A running flow stopped with nobody at work, nothing queued, no start waiting for a frame and nothing waiting for the person: where it stopped. */
 function stoppedKey(l: CrewLive): string | undefined {
-  if (ending.count > 0 || waking.count > 0 || testsUnderWay()) return undefined
+  if (ending.count > 0 || waking.count > 0 || testsUnderWay() || waitingStarts.length > 0) return undefined
   return stopKey(l, RUNNING)
 }
 
@@ -1503,17 +1498,17 @@ const testsUnderWay = (): boolean => testing.busy === true || testing.asked !== 
  * takes on what came after it (a commit, a result out of date); a question the
  * person left for two hours is brought up once. The pane says what it found.
  */
-async function heartbeat($: any, acting = true) {
+async function heartbeat($: any, onTimer: boolean) {
   const now = await $.clock.now()
   // The look when Claude Code starts only says crew is on: what goes on is the person's to say, in the pane.
-  const found = acting ? await lookAfter($, now) : []
+  const found = onTimer ? await lookAfter($, now) : []
   await update($, live, s => {
     const { found: _, ...was } = s.resident ?? { checkedAt: now }
     return { ...s, resident: { ...was, checkedAt: now, ...(found.length === 0 ? {} : { found: found.join('；') }) } }
   })
 }
 
-/** What the heartbeat finds and does, in the pane's words. */
+/** What the heartbeat finds and does on its timer, in the pane's words. */
 async function lookAfter($: any, now: number): Promise<string[]> {
   const found: string[] = []
   try {
@@ -1529,7 +1524,7 @@ async function lookAfter($: any, now: number): Promise<string[]> {
         found.push(`${where}，叫醒過一次還是停住 → 等你決定`)
       } else {
         heart.woke = key
-        const said = await resumeFlow($, false)
+        const said = await resumeFlow($, false, ON_TIMER)
         const role = STAGE_ROLE[l.flow.stage] ?? '角色'
         const woke = l.flow.stage === 'testing' ? '重跑測試' : waitingStarts.length > 0 ? `會叫醒 ${role} 接續（Claude Code 有下一個動作時開始）` : `已叫醒 ${role} 接續`
         found.push(said.startsWith('接續') ? `${where}，沒有角色在工作 → ${woke}（第 1 次）` : `${where}，沒有角色在工作，沒有接續：${said}`)
@@ -1539,7 +1534,7 @@ async function lookAfter($: any, now: number): Promise<string[]> {
       const board = await loadBoard($)
       if (board !== null) {
         const requirements = (await prdView($))?.requirements
-        await feed($, { type: 'look', board, ...(requirements === undefined ? {} : { requirements }) })
+        await feed($, { type: 'look', board, ...(requirements === undefined ? {} : { requirements }) }, ON_TIMER)
         const after = (await read($, live)).flow.stage
         if (after === 'reviewing') found.push('流程完成後多了新的 commit → 已排給 Tech lead review')
         else if (after === 'testing') found.push('流程完成後測試結果過期 → 重跑測試')
@@ -1627,7 +1622,7 @@ async function prdCandidates($: any): Promise<{ path: string; title: string }[]>
 }
 
 /** Starts the roles of a running flow again, fresh, from what the board shows; says what it did. */
-async function resumeFlow($: any, fresh = true): Promise<string> {
+async function resumeFlow($: any, fresh = true, timed = false): Promise<string> {
   const l = await read($, live)
   if (!RUNNING.includes(l.flow.stage) || l.prdPath === null) {
     await update($, live, s => {
@@ -1668,7 +1663,7 @@ async function resumeFlow($: any, fresh = true): Promise<string> {
   $.ui.toast(`crew：接續 ${l.prdPath}（${l.flow.stage}）`)
   await note($, { kind: 'resume', path: l.prdPath, stage: l.flow.stage })
   const requirements = (await prdView($))?.requirements
-  await feed($, { type: 'resume', board, prd: { path: l.prdPath, size: text.length, text: text.slice(0, 4_000) }, ...(requirements === undefined ? {} : { requirements }) })
+  await feed($, { type: 'resume', board, prd: { path: l.prdPath, size: text.length, text: text.slice(0, 4_000) }, ...(requirements === undefined ? {} : { requirements }) }, timed)
   return `接續 ${l.prdPath}（${l.flow.stage}）。`
 }
 
@@ -2042,7 +2037,7 @@ async function settleBaseline($: any, path: string, requirements: readonly Requi
  * the PM to sync, and the pane redraws with the time crew looked. One look at a
  * time; one asked for during a look runs right after it.
  */
-async function watch($: any) {
+async function watch($: any, timed = false) {
   if (watching.busy) {
     watching.again = true
     return
@@ -2052,7 +2047,7 @@ async function watch($: any) {
     try {
       do {
         watching.again = false
-        await lookAtPrd($)
+        await lookAtPrd($, timed)
       } while (watching.again)
     } catch (err) {
       // Said once in a toast; a check that keeps failing also shows in the pane's time of the last check falling behind.
@@ -2067,7 +2062,7 @@ async function watch($: any) {
 
 const NO_DRIFT = { added: [] as Requirement[], removed: [] as Requirement[] }
 
-async function lookAtPrd($: any) {
+async function lookAtPrd($: any, timed: boolean) {
   // A /crew start is moving the board to a PRD: its own look follows.
   if (starting.busy) return
   const l = await read($, live)
@@ -2111,7 +2106,7 @@ async function lookAtPrd($: any) {
         if (l.lead === 'brain') tellBrain(text, 'digest')
         await note($, { kind: 'prd_changed', added: drift.added.map(r => r.id), removed: drift.removed.map(r => r.id), ...(unlinked ? { unlinked } : {}) })
       }
-      await feed($, { type: 'prd_changed', board, requirements, added: drift.added, removed: drift.removed, key, ...(unlinked ? { unlinked } : {}) })
+      await feed($, { type: 'prd_changed', board, requirements, added: drift.added, removed: drift.removed, key, ...(unlinked ? { unlinked } : {}) }, timed)
     }
     if (doubt === '' && (moved || baseline.length === 0)) {
       await settleBaseline($, path, requirements)
@@ -2276,16 +2271,19 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     if (q.from === 'crew' && q.item !== undefined && /^SCR-\d+$/.test(q.item)) return `${q.item} 是設計稿：請在右側面板核准，或寫原因退回。`
     // So does the brain's proposal on usage: the brain cannot settle its own.
     if (q.from === 'brain' && q.item === 'tune') return '大腦的建議要使用者自己在右側面板核准或不要。'
-    await update($, live, l => ({ ...l, questions: l.questions.map(x => (x.id === id ? { ...x, status: 'answered' as const, answer } : x)) }))
     // An answer the brain relays is recorded as the brain's, so it can be traced.
     const decided = by === 'brain' ? `使用者決定（經大腦轉達）：${answer}` : `使用者決定：${answer}`
     if (q.from === 'brain') {
+      await update($, live, l => ({ ...l, questions: l.questions.map(x => (x.id === id ? { ...x, status: 'answered' as const, answer } : x)) }))
       // The brain's own question: the answer is a decision on record and news for the brain, not the flow's.
       await remember($, { type: 'DEC', text: `${decided}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `${by} ${q.id}` })
       await saveState($)
       if (by === 'person') tellBrain(`使用者回答了你的問題 ${q.id}：${quoted(answer)}`)
       return `已記下 ${id} 的回答。`
     }
+    // An answer goes on with the flow; one held for the person goes on by their own word, as 接續 does.
+    if ((await read($, live)).paused !== undefined && !typed) return `流程暫停中：${id} 要使用者自己在右側面板回答，或按［接續］後再轉達。`
+    await update($, live, l => ({ ...l, questions: l.questions.map(x => (x.id === id ? { ...x, status: 'answered' as const, answer } : x)) }))
     // A role's own question goes back to that role; the flow's own question, to the role its stage waits on.
     const waiting = (await read($, live)).flow.resumeAt
     const askedBy: CrewRole = isCrewRole(q.from)
@@ -2584,8 +2582,8 @@ function paneActions($: any, snap: Snapshot): Actions {
   // Done in full before it resolves: in the hook that took the press, so a role it starts is the engine's to run.
   const person = async (verb: string, rest: string[]) => {
     try {
-      await startWaiting($)
       said(await crewVerb($, verb, rest, 'person', true))
+      await startWaiting($)
     } catch (err) {
       said(`沒有完成：${cut(squeeze(String(err)), 200)}`)
     }
@@ -2816,7 +2814,7 @@ export const register: Register = on => {
     // From now on crew looks after its work every few minutes; the first look only says it is on.
     await heartbeat($, false)
     heart.timer?.cancel()
-    heart.timer = $.clock.every(HEARTBEAT_MS, () => void onTimer(() => heartbeat($)))
+    heart.timer = $.clock.every(HEARTBEAT_MS, () => void heartbeat($, true))
     // The roles' routine news goes to the brain every half hour, in one message.
     digest.nextAt = (await $.clock.now()) + DIGEST_MS
     digest.timer?.cancel()
@@ -2826,7 +2824,7 @@ export const register: Register = on => {
     await update($, live, l => ({ ...l, signals: { ...l.signals, prdVersion: '' } }))
     await watch($)
     watching.timer?.cancel()
-    watching.timer = $.clock.every(WATCH_MS, () => void onTimer(() => watch($)))
+    watching.timer = $.clock.every(WATCH_MS, () => void watch($, true))
     // Notes no role notice came for go out on their own after a minute. One timer per session, even after a reload.
     brain.timer?.cancel()
     brain.timer = $.clock.every(BRAIN_TICK_MS, () => {
@@ -2843,19 +2841,22 @@ export const register: Register = on => {
   for (const role of CREW_ROLES) on('agent.offer', { agent: `crew:${role}` }, ($, e, next) => (waking.count > 0 ? next(e) : { isOffered: false }))
 
   on('command.run', { command: 'crew' }, async ($, e) => {
-    await startWaiting($)
     // A command typed while the session is still starting waits for crew's roles and tools.
     await boot.ready
     const [verb = '', ...rest] = e.args.trim().split(/\s+/).filter(Boolean)
     // The person's own Enter at the prompt, or their Remote Control client: what only they may do is taken from these alone.
     const kind = (e as { origin?: { kind?: string } }).origin?.kind
-    return { text: await crewVerb($, verb, rest, 'person', kind === 'composer' || kind === 'bridge') }
+    const text = await crewVerb($, verb, rest, 'person', kind === 'composer' || kind === 'bridge')
+    // After the command: a reset or another PRD lets the starts a timer left for the old work go.
+    await startWaiting($)
+    return { text }
   })
 
   // A role's single tool output past 10K tokens is a usage reminder for the brain.
   on('tool.call', async ($, e: any, next) => {
-    await startWaiting($)
     const r = await next(e)
+    // After the call, as after a command: the crew tool's own reset or start comes first.
+    await startWaiting($)
     const role = e.agentId === undefined ? undefined : (await read($, live)).agents[e.agentId]
     if (role !== undefined) {
       // Measured as the model reads it: the result's text, else the result itself.

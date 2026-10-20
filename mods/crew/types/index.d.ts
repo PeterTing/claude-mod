@@ -166,8 +166,6 @@ export type CrewLive = {
   declined?: boolean
   /** Questions the heartbeat already brought up to the person. */
   reminded?: string[]
-  /** Roles a timer asked to start, waiting for crew's next frame (a redraw): how many. */
-  waiting?: number
 }
 
 export type CrewTuning = { model?: 'haiku' | 'sonnet' | 'opus'; effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; limit?: number }

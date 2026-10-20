@@ -116,6 +116,32 @@ describe('crew from its pane', () => {
     await ui.unmount()
   })
 
+  test('keeps a held flow held when the brain relays an answer: the person answers in the pane, and that goes on', async ($, on) => {
+    const w = world($, on)
+    let t = newTracker('repo')
+    for (const [by, ops] of [
+      ['pm', SPLIT],
+      ['qa', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }]],
+      ['techlead', PLAN],
+    ] as const) {
+      const r = applyOps(t, ops as unknown as Op[], { by, today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
+      if (!r.ok) throw new Error(r.errors.join())
+      t = r.tracker
+    }
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(t))
+    const question = { id: 'Q-01', question: '金額上限多少？', from: 'fullstack', status: 'open', t: 0 }
+    w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, questions: [question], lead: 'person' })
+    await start($)
+    const r = (await $.tool.call({ tool: 'mcp__crew__crew', tool_use_id: 'a', action: 'answer', question: 'Q-01', text: '一萬' } as never)) as { result: unknown }
+    expect(String(r.result)).toMatch(/流程暫停中/)
+    expect(w.spawned).toEqual([])
+    const ui = await paneUi($)
+    expect(await textOf(ui)).toMatch(/要接續嗎/)
+    await ui.input({ key: 'answer-Q-01', text: '一萬' })
+    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:fullstack'])
+    await ui.unmount()
+  })
+
   test('answers a role’s question, and approves or sends back a design, in the pane', async ($, on) => {
     const w = world($, on)
     await start($)

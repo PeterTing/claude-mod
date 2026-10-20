@@ -97,6 +97,28 @@ describe('crew’s test runs', () => {
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
   })
 
+  test('start the full-stack afresh for a failed run at crew’s next frame, never from the run’s timer', async ($, on) => {
+    const w = world($, on)
+    w.tests.stdout = 'tests/test_plan.py::test_TC_001 FAILED\nAssertionError: 方案價格錯誤'
+    w.tests.exitCode = 1
+    await start($)
+    await planned($)
+    for (const id of ['TASK-001', 'TASK-002']) {
+      w.commit(`${id}: 完成 ${id}`)
+      await done($, 'a-fullstack-5')
+      await approve($, id)
+    }
+    // The full-stack is to start from a fresh context next time; the run goes on crew's timer.
+    await $.command.run(command('rotate fullstack'))
+    const before = w.spawned.length
+    await tested()
+    expect(w.tests.runs).toHaveLength(1)
+    expect(w.spawned).toHaveLength(before)
+    await $.command.run(command('status'))
+    expect(w.spawned.slice(before).map(s => s.subagentType)).toEqual(['crew:fullstack'])
+    expect(w.spawned.at(-1)?.prompt).toMatch(/TC-001 t：失敗/)
+  })
+
   test('mark a result out of date once a commit lands after the run', async ($, on) => {
     const w = world($, on)
     await start($)
@@ -342,6 +364,27 @@ describe('crew’s test runs', () => {
     }
     await w.clock.advance(5_000)
     expect(w.tests.runs).toHaveLength(3)
+  })
+
+  test('let a role the person starts while a run is under way start at once, and only once', { timeoutMs: 60_000 }, async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await build($)
+    w.tests.ms = 60_000
+    await $.command.run(command('test'))
+    await tested()
+    // The run is under way on crew's timer while the person asks QA, which starts fresh.
+    expect(w.tests.runs).toHaveLength(2)
+    await $.command.run(command('rotate qa'))
+    const before = w.spawned.length
+    await $.command.run(command('ask qa 這個 test case 要怎麼補？'))
+    expect(w.spawned.slice(before)).toMatchObject([{ subagentType: 'crew:qa' }])
+    // The run's end and the heartbeats after it start no second QA.
+    await w.clock.advance(60_000)
+    await w.clock.advance(600_000)
+    await $.command.run(command('status'))
+    expect(w.spawned.slice(before).filter(s => s.subagentType === 'crew:qa')).toHaveLength(1)
   })
 
   test('mask a broken run’s reason in its notice', async ($, on) => {
