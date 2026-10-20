@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
-import { approve, build, command, designed, done, paneText, PLAN, resumed, ROOT, SPLIT, start, tested, world, write } from './world'
+import { agentOf, approve, build, command, designed, done, paneText, PLAN, resumed, ROOT, SPLIT, start, tested, world, write } from './world'
 
 /** crew runs the person's test command on its branch; each test case passes or not by what the run printed. */
 
@@ -145,6 +145,40 @@ describe('crew’s test runs', () => {
     expect(w.spawned).toHaveLength(before + 1)
     expect(w.sent.at(-1)).toMatchObject({ to: agent })
     expect(w.sent.at(-1)?.text).toMatch(/TC-001 t：失敗/)
+  })
+
+  test('hand a waiting fix on another model to the agent the person’s question woke, after the answer', async ($, on) => {
+    const w = world($, on)
+    w.tests.stdout = 'tests/test_plan.py::test_TC_001 FAILED\nAssertionError: 方案價格錯誤'
+    w.tests.exitCode = 1
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
+    await done($, 'a-qa-2')
+    await designed($)
+    // TASK-001 is large (Opus), TASK-002 small (Sonnet): the full-stack ends on Sonnet, and a fix of TASK-001 needs Opus.
+    await write($, 'a-techlead-4', [
+      { op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '方案頁', detail: '', size: 'L' },
+      { op: 'add_task', feature: 'PRD-002', criteria: ['AC-002'], title: '取消流程', detail: '', size: 'S' },
+    ])
+    await done($, 'a-techlead-4')
+    for (const id of ['TASK-001', 'TASK-002']) {
+      w.commit(`${id}: 完成 ${id}`)
+      await done($, agentOf('fullstack'))
+      await approve($, id, agentOf('techlead'))
+    }
+    const before = w.spawned.length
+    await tested()
+    expect(w.spawned).toHaveLength(before)
+    // The person asks the idle agent the fix would replace: it is woken for the question, and kept.
+    const asked = agentOf('fullstack')
+    await $.command.run(command('ask fullstack 為什麼失敗？'))
+    expect(w.spawned).toHaveLength(before)
+    expect(agentOf('fullstack')).toBe(asked)
+    await done($, asked, '失敗是因為價格少乘了稅率。')
+    expect((await $.command.run(command('thread ASK-01'))).text).toMatch(/少乘了稅率/)
   })
 
   test('mark a result out of date once a commit lands after the run', async ($, on) => {

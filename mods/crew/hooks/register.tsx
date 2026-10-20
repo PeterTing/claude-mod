@@ -766,12 +766,14 @@ async function withWorkdir($: any, role: CrewRole, work: string): Promise<string
 
 type WaitingStart = { role: CrewRole; asked: Route; given: string; reason?: string; run: 'flow' | 'person' }
 
-/** Roles a timer asked to start, for the PRD crew followed then and the agent the role had: one per role, the newest. */
+/** Roles a timer asked to start, for the PRD crew followed then and the agent the role was at work in: one per role, the newest. */
 const waitingStarts: { start: WaitingStart; prd: string | null; agent?: string }[] = []
 
 async function waitForFrame($: any, start: WaitingStart) {
   const l = await read($, live)
-  const agent = l.roles[start.role].agentId
+  // The agent the role is at work in, one the timer could not wake: a frame finds the role at work in another to let the start go.
+  const r = l.roles[start.role]
+  const agent = r.state === 'working' ? r.agentId : undefined
   waitingStarts.splice(0, waitingStarts.length, ...waitingStarts.filter(w => w.start.role !== start.role), { start, prd: l.prdPath, ...(agent === undefined ? {} : { agent }) })
 }
 
@@ -781,10 +783,10 @@ async function waitForFrame($: any, start: WaitingStart) {
  * followed. No hold meets a waiting start: the heartbeat holds no flow while
  * one waits, and a restart or reload starts the module, and its list, anew.
  *
- * A role the frame's own work set to work, in an agent other than the one
- * it had, is not started again: on the flow's run, the flow gave it its
- * stage's work and takes the next step when it ends; on the person's
- * question, the waiting work follows the answer. The agent it had, one the
+ * A role the frame's own work set to work, in a new agent or one it woke, is
+ * not started again: on the flow's run, the flow gave it its stage's work and
+ * takes the next step when it ends; on the person's question, the waiting
+ * work follows the answer. An agent the role was already at work in, one the
  * timer could not wake, is replaced as the timer asked.
  */
 async function startWaiting($: any) {
