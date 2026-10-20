@@ -459,6 +459,74 @@ describe('the full-stack', () => {
     expect(w.toasts.some(t => /全端這一輪期間，crew 的檔案 prd-tracker\.json 被 crew 以外的人改了/.test(t))).toBe(true)
   })
 
+  test('says a change to crew’s memory during the full-stack’s run, and blames no run for a change made before it began', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await $.tool.call({ tool: 'mcp__crew__memory_save', tool_use_id: 'm', agentId: 'a-techlead-4', type: 'MEM', text: '金流用 Stripe' } as never)
+    const memory = `${ROOT}/.crew/memory/memories.jsonl`
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    // Changed between the full-stack's runs, before TASK-002 is handed over: not the next run's doing,
+    // though crew writes the board over the change meanwhile.
+    w.disk.set(memory, `${w.disk.get(memory) ?? ''}{"id":"MEM-099","type":"MEM","text":"手改"}\n`)
+    w.disk.set(`${ROOT}/prd-tracker.json`, (w.disk.get(`${ROOT}/prd-tracker.json`) ?? '').replace('"取消流程"', '"取消流程（改）"'))
+    await approve($, 'TASK-001')
+    w.commit('TASK-002: 取消流程')
+    await done($, 'a-fullstack-5')
+    expect(w.toasts.some(t => /crew 以外/.test(t))).toBe(false)
+    // Changed while the full-stack fixes a failed test run: told after that run.
+    w.tests.stdout = '✗ TC-001 fails'
+    await approve($, 'TASK-002')
+    await tested()
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-fullstack-5' })
+    w.disk.set(memory, `${w.disk.get(memory) ?? ''}{"id":"MEM-100","type":"MEM","text":"又手改"}\n`)
+    w.tests.stdout = ''
+    w.commit('TASK-001: 修好 TC-001')
+    await done($, 'a-fullstack-5')
+    expect(w.toasts.some(t => /crew 的檔案 \.crew\/memory\/memories\.jsonl 被 crew 以外的人改了/.test(t))).toBe(true)
+  })
+
+  test('reads none of its own files through a link, and counts one made a link, or one it cannot read, as changed', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    const board = `${ROOT}/prd-tracker.json`
+    // During the full-stack's run, the board becomes a link out of the repo.
+    w.disk.set('/home/someone/secret.txt', 'secret')
+    w.links.set(board, '/home/someone/secret.txt')
+    const before = w.reads.get(board) ?? 0
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    expect(w.reads.get(board) ?? 0).toBe(before)
+    expect(w.toasts.some(t => /crew 的檔案 prd-tracker\.json 被 crew 以外的人改了/.test(t))).toBe(true)
+  })
+
+  test('still ends the full-stack’s run when one of its own files cannot be read', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    // The board is now a folder: reading it fails.
+    const text = w.disk.get(`${ROOT}/prd-tracker.json`) ?? ''
+    w.disk.delete(`${ROOT}/prd-tracker.json`)
+    w.disk.set(`${ROOT}/prd-tracker.json/x`, '')
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    expect(w.toasts.some(t => /crew 的檔案 prd-tracker\.json 被 crew 以外的人改了/.test(t))).toBe(true)
+    expect(text).not.toBe('')
+  })
+
+  test('counts its memory as changed when reading it fails, rather than stopping there', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await $.tool.call({ tool: 'mcp__crew__memory_save', tool_use_id: 'm', agentId: 'a-techlead-4', type: 'MEM', text: '金流用 Stripe' } as never)
+    w.broken.reads = `${ROOT}/.crew/memory/memories.jsonl`
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    expect(w.toasts.some(t => /crew 的檔案 \.crew\/memory\/memories\.jsonl 被 crew 以外的人改了/.test(t))).toBe(true)
+  })
+
   test('says when another of the person’s branches moved during the full-stack’s run', async ($, on) => {
     const w = world($, on)
     w.git.branches.set('feature-x', [{ sha: 'f00d001', subject: 'mine' }])
@@ -468,17 +536,27 @@ describe('the full-stack', () => {
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-5')
     expect(w.toasts.some(t => /全端這一輪期間，你的分支 feature-x 動了/.test(t))).toBe(true)
+    await approve($, 'TASK-001')
+    // A branch deleted during the next run is said too.
+    w.git.branches.delete('feature-x')
+    w.commit('TASK-002: 取消流程')
+    await done($, 'a-fullstack-5')
+    expect(w.toasts.filter(t => /你的分支 feature-x 動了/.test(t))).toHaveLength(2)
   })
 
   test('tells the tech lead, and the person, when crew’s commits change the board or crew’s folder', async ($, on) => {
     const w = world($, on)
     await start($)
     await planned($)
-    w.commit('TASK-001: 方案頁', 'crew/prd', ['src/plan.ts', 'prd-tracker.json', '.crew/memory/memories.jsonl'])
+    w.commit('TASK-001: 方案頁', 'crew/prd', ['src/plan.ts', 'prd-tracker.json', '.crew/memory/memories.jsonl', '.crew/threads/my notes.jsonl'])
     await done($, 'a-fullstack-5')
     expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
-    expect(w.sent.at(-1)?.text).toMatch(/改到了 crew 的檔案（prd-tracker\.json、\.crew\/memory\/memories\.jsonl）[\s\S]*changes/)
-    expect(w.toasts.some(t => /TASK-001 的 commit 改到了 crew 的檔案/.test(t))).toBe(true)
+    expect(w.sent.at(-1)?.text).toMatch(/改到了 crew 的檔案（prd-tracker\.json、\.crew\/memory\/memories\.jsonl、\.crew\/threads\/my notes\.jsonl）[\s\S]*changes/)
+    expect(w.toasts.filter(t => /TASK-001 的 commit 改到了 crew 的檔案/.test(t))).toHaveLength(1)
+    // The tech lead's run ends with no verdict and it is asked again: the person was told already.
+    await done($, 'a-techlead-4')
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
+    expect(w.toasts.filter(t => /TASK-001 的 commit 改到了 crew 的檔案/.test(t))).toHaveLength(1)
   })
 
   test('takes no branch of crew’s name for its own once it no longer holds the commit crew last saw', async ($, on) => {
@@ -490,11 +568,69 @@ describe('the full-stack', () => {
     await approve($, 'TASK-001')
     // The branch is deleted, and one of the same name comes back from elsewhere, with a planted commit.
     w.git.branches.set('crew/prd', [{ sha: 'bad0001', subject: 'TASK-002: 別人的東西' }])
+    await w.clock.advance(40_000)
     await done($, 'a-fullstack-5')
     expect(await paneText($, 'progress')).toMatch(/→ 實作 1\/2/)
-    expect(w.toasts.some(t => /crew\/prd 已經不是 crew 自己的分支/.test(t))).toBe(true)
+    // Said once, though crew looked again.
+    expect(w.toasts.filter(t => /crew\/prd 已經不是 crew 自己的分支/.test(t))).toHaveLength(1)
     // The next work gets a branch of crew's own.
     const fresh = w.git.commands.filter(c => c.includes('worktree') && c.includes('-b')).at(-1) ?? []
     expect(fresh[fresh.indexOf('-b') + 1]).toMatch(/^crew\/prd-[0-9a-f]{6}$/)
+  })
+
+  test('takes a commit off its task once crew’s branch is reset to drop it, and keeps the newest commit it saw as the one its branch must hold', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    const key = `work:${ROOT}:docs/PRD.md`
+    const base = w.git.branches.get('crew/prd')?.[0]?.sha ?? ''
+    // A new branch must hold the commit it was made from.
+    expect((w.store.get(key) as { last?: string }).last).toBe(base)
+    const sha = w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    await approve($, 'TASK-001')
+    expect((w.store.get(key) as { last?: string }).last).toBe(sha)
+    // The person resets crew's branch to where it started: TASK-001's commit is on it no more.
+    w.reset(base)
+    await w.clock.advance(40_000)
+    const task = (JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[]; crew_review?: unknown }[] }[] }).prd_items.flatMap(i => i.tasks ?? []).find(t => t.id === 'TASK-001')
+    expect(task?.crew_commits).toBeUndefined()
+    expect(task?.crew_review).toBeUndefined()
+    expect(await paneText($, 'progress')).toMatch(/→ 實作 0\/2/)
+    // The branch is still crew's: a reset is no branch made again.
+    expect(w.toasts.some(t => /不是 crew 自己的分支/.test(t))).toBe(false)
+  })
+
+  test('does not take a file merely named like crew’s own for one', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.commit('TASK-001: 方案頁', 'crew/prd', ['prd-tracker.json.bak', '.crewx/a.ts', 'src/.crew/b.ts'])
+    await done($, 'a-fullstack-5')
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
+    expect(w.sent.at(-1)?.text).not.toMatch(/改到了 crew 的檔案/)
+    expect(w.toasts.some(t => /改到了 crew 的檔案/.test(t))).toBe(false)
+  })
+
+  test('keeps its branch when the full-stack amends a commit on it, and reviews the amended commit alone', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    const first = w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    await approve($, 'TASK-001', 'a-techlead-4', 'changes', '缺錯誤處理')
+    // The full-stack folds the fix into its commit: the branch no longer holds the commit crew saw, but its reflog does.
+    const amended = w.amend('TASK-001: 方案頁（含錯誤處理）')
+    await done($, 'a-fullstack-5')
+    expect(w.toasts.some(t => /不是 crew 自己的分支/.test(t))).toBe(false)
+    expect(w.git.commands.filter(c => c.includes('worktree') && c.includes('-b'))).toHaveLength(1)
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
+    const text = w.sent.at(-1)?.text ?? ''
+    expect(text).toMatch(new RegExp(`請 review TASK-001 方案頁（commit ${amended}）`))
+    // The commit the amend replaced is on no branch now: it is not shown again.
+    expect(text).toMatch(new RegExp(`diff of ${amended}`))
+    expect(text).not.toMatch(new RegExp(`diff of ${first}`))
+    await approve($, 'TASK-001')
+    expect(w.sent.at(-1)?.text).toMatch(/請實作 TASK-002/)
   })
 })

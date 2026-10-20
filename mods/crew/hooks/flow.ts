@@ -59,6 +59,8 @@ export type FlowState = {
   tips?: string
   /** Features whose design the person sent back after their tasks were planned: the tech lead checks them once redesigned. */
   redesigned?: string[]
+  /** Features the tech lead was asked to check against their new design: asked again until its run ends. */
+  rechecking?: string[]
 }
 
 type ResumeAt = 'splitting' | 'confirming' | 'designing' | 'planning' | 'building' | 'reviewing' | 'testing'
@@ -254,7 +256,7 @@ const finish = (state: FlowState, board: Tracker, requirements?: readonly Requir
   if (g0 !== undefined && g0.gaps.length > 0) return realign(state, g0.gaps)
   // The screens come before the plan: a design the person approved for every feature.
   if (gateG2(board).gaps.length > 0) return designStep(state, board)
-  if ((state.redesigned ?? []).length > 0) return replan(state, board)
+  if ((state.redesigned ?? []).length > 0 || (state.rechecking ?? []).length > 0) return replan(state, board)
   const g3 = gateG3(board)
   if (g3.gaps.length > 0) return plan(state, g3)
   const work = advance(state, board)
@@ -278,18 +280,34 @@ const finish = (state: FlowState, board: Tracker, requirements?: readonly Requir
 
 /** The tech lead checks the tasks of features redesigned after they were planned, against the newly approved design. */
 const replan = (state: FlowState, board: Tracker): StepResult => {
-  const items = board.prd_items.filter(i => (state.redesigned ?? []).includes(i.id) && i.crew_dropped === undefined)
-  const { redesigned: _, ...rest } = state
+  const ids = new Set([...(state.redesigned ?? []), ...(state.rechecking ?? [])])
+  const items = board.prd_items.filter(i => ids.has(i.id) && i.crew_dropped === undefined)
+  const { redesigned: _, rechecking: _r, ...rest } = state
   if (items.length === 0) return finish(rest, board)
   const text = [
     `使用者核准了這些功能的新設計稿：${items.map(i => `${i.id} ${i.title}`).join('、')}。`,
     `請用 board_read（feature: ${items[0]?.id ?? ''}）看新的設計稿，檢查這些功能的任務還對不對：要調整就用 add_task 或 drop_task，不用調整就直接回報。`,
   ].join('\n')
-  return { state: { ...rest, stage: 'planning', retries: 0, round: 0 }, actions: [{ type: 'message', role: 'techlead', item: items[0]?.id, text, route: tlRoute(items.length) }] }
+  return {
+    state: { ...rest, stage: 'planning', rechecking: items.map(i => i.id), retries: 0, round: 0 },
+    actions: [{ type: 'message', role: 'techlead', item: items[0]?.id, text, route: tlRoute(items.length) }],
+  }
 }
 
 /** Each task's newest commit, in one line: what a test-run fix is measured against. */
 const tipsOf = (board: Tracker): string => liveTasks(board).map(t => `${t.id}:${tipOf(t) ?? ''}`).join(',')
+
+/** A commit landed since the tips were taken: a task with a newer commit, or one with a commit where it had none. A task added or dropped is no commit. */
+const movedSince = (board: Tracker, tips: string): boolean => {
+  const was = new Map(tips.split(',').map(entry => [entry.slice(0, entry.indexOf(':')), entry.slice(entry.indexOf(':') + 1)] as const))
+  return liveTasks(board).some(t => {
+    const tip = tipOf(t)
+    return tip !== undefined && (was.get(t.id) ?? '') !== tip
+  })
+}
+
+/** A run of the full-stack's that was for a task the plan dropped: its end is no attempt at the task it moves to. */
+const NOT_AN_ATTEMPT = -1
 
 /** The features in scope with no design in play: none yet, or all dropped or sent back. */
 const undesigned = (board: Tracker) => board.prd_items.filter(i => i.crew_dropped === undefined && liveDesignsOf(i).length === 0)
@@ -497,10 +515,8 @@ const review = (state: FlowState, board: Tracker, task: Task, sha: string, openi
 
 /** The review asked for changes: the full-stack makes them, and its next commit is reviewed; past three, the person decides. */
 const fix = (state: FlowState, task: Task, sha: string, notes: string): StepResult => {
-  const asked = state.building === task.id && state.fixing === sha
-  // Already asked for: the full-stack's own run end takes it on.
-  if (asked && state.stage === 'building') return { state, actions: [] }
   // Asked for before the flow went to plan new criteria: asked again, but the review sent the task back only once.
+  const asked = state.building === task.id && state.fixing === sha
   const n = asked ? (state.reviews ?? 1) : (state.building === task.id || state.reviewing?.task === task.id ? (state.reviews ?? 0) : 0) + 1
   const { reviewing: _, ...rest } = state
   if (n > MAX_REVIEWS) {
@@ -566,14 +582,14 @@ const afterBuild = (state: FlowState, board: Tracker, inbox: Inbox = {}, require
   // The task's work is in once it has a commit, and, when a review asked for changes, a newer one than it read;
   // a test-run fix is in once any task has a new commit, since the fix may be in another task's code.
   const tip = asked === undefined ? undefined : tipOf(asked)
-  const landed = state.tips !== undefined ? tipsOf(board) !== state.tips : tip !== undefined && (state.fixing === undefined || tip !== state.fixing)
+  const landed = state.tips !== undefined ? movedSince(board, state.tips) : tip !== undefined && (state.fixing === undefined || tip !== state.fixing)
   if (state.building !== undefined && asked === undefined && (end.working ?? []).includes('fullstack')) {
     // The task in hand left the plan while the full-stack was on it: the next task reaches it as a message,
     // and that run's end is no attempt at the next task.
     const next = finish(state, board, requirements)
     if (next.state.stage !== 'building' || next.state.building === state.building) return next
     const actions = next.actions.map((a): FlowAction => (a.type === 'spawn' && a.role === 'fullstack' ? { type: 'message', role: 'fullstack', ...(next.state.building === undefined ? {} : { item: next.state.building }), text: a.prompt, route: a.route } : a))
-    return { state: { ...next.state, retries: -1 }, actions }
+    return { state: { ...next.state, retries: NOT_AN_ATTEMPT }, actions }
   }
   if (asked !== undefined && by === 'fullstack' && landed && end.unclean === true) {
     // A commit is there, and so are changes not committed: the task is not done until its work is all in.
@@ -921,14 +937,15 @@ export const step = (state: FlowState, event: FlowEvent): StepResult => {
   if (event.type === 'answered') return answered(state, event)
   if (event.type === 'tests_ran') return afterRun(state, event)
   if (event.type === 'designs_decided') {
-    // A decision takes a flow that waits for it on.
-    if (state.stage === 'approving') return finish(state, event.board, event.requirements)
-    // A design sent back at another time: its feature is designed again, and, once its tasks are planned,
-    // the tech lead checks them against the new design. A finished flow opens again for it.
+    // A design sent back for a feature whose tasks are planned: the feature is designed again, and the tech lead
+    // checks those tasks against the new design once it is approved.
     const back = undesigned(event.board).filter(i => liveTasks({ ...event.board, prd_items: [i] }).length > 0).map(i => i.id)
-    if (back.length === 0 && undesigned(event.board).length === 0) return { state, actions: [] }
     const redesigned = [...new Set([...(state.redesigned ?? []), ...back])]
     const marked: FlowState = redesigned.length === 0 ? state : { ...state, redesigned }
+    // A decision takes a flow that waits for it on.
+    if (state.stage === 'approving') return finish(marked, event.board, event.requirements)
+    // At another time, a finished flow opens again for it; one under way only marks it.
+    if (back.length === 0 && undesigned(event.board).length === 0) return { state, actions: [] }
     if (state.stage === 'done') return designStep(marked, event.board)
     return { state: marked, actions: [] }
   }
@@ -965,7 +982,11 @@ const afterRole = (state: FlowState, event: Extract<FlowEvent, { type: 'role_don
   const { requirements } = event
   if (role === 'qa' && (state.stage === 'writing_tests' || state.stage === 'adding_tests')) return afterTests(state, board, inbox, requirements)
   if (role === 'pm' && state.stage === 'confirming') return afterConfirm(state, board, inbox, requirements)
-  if (role === 'techlead' && state.stage === 'planning') return afterPlan(state, board, inbox, requirements)
+  if (role === 'techlead' && state.stage === 'planning') {
+    // The tech lead's run is over: the tasks it was asked to check against a new design are checked.
+    const { rechecking: _, ...checked } = state
+    return afterPlan(checked, board, inbox, requirements)
+  }
   if (role === 'pm' && state.stage === 'planning') return afterPmInPlanning(state, board, inbox, requirements)
   if (state.stage === 'building' && role !== 'qa') {
     return afterBuild(state, board, inbox, requirements, role, {

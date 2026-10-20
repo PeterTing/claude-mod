@@ -26,7 +26,19 @@ const current: {
 } = {}
 
 export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', denySpawnOf = '', stopped = [] as string[] } = {}) => {
-  const clock = mock.clock(on, { now: NOW })
+  /** The next so many `$.clock.after` dispatches are refused, as another plugin's hook can refuse them. */
+  const refuse = { timers: 0 }
+  const timed = ((event: string, ...rest: unknown[]) => {
+    const register = on as unknown as (event: string, ...rest: unknown[]) => unknown
+    if (event !== 'clock.after') return register(event, ...rest)
+    const hook = rest.at(-1) as (...args: unknown[]) => unknown
+    return register(event, ...rest.slice(0, -1), (...args: unknown[]) => {
+      if (refuse.timers === 0) return hook(...args)
+      refuse.timers -= 1
+      return { deny: 'refused by another plugin' }
+    })
+  }) as unknown as On
+  const clock = mock.clock(timed, { now: NOW })
   /** crew's own store, which outlives sessions and is not in the repo. */
   const store = new Map<string, unknown>([[`tests:${ROOT}`, { argv: ['npm', 'test'] }]])
   on('store.get', (_$, e) => ({ value: store.get((e as { key: string }).key) }))
@@ -93,18 +105,51 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     ref: 'refs/heads/main',
   }
   /** The person's test command as crew runs it: what it prints and how it exits, and each run's words and folder. */
-  const tests = { exitCode: 0, stdout: '', stderr: '', runs: [] as { argv: string[]; cwd?: string; env?: Record<string, string> }[], fails: '' }
+  const tests = { exitCode: 0, stdout: '', stderr: '', runs: [] as { argv: string[]; cwd?: string; env?: Record<string, string> }[], fails: '', ms: 0 }
   /** Writes under this path fail, as on a full disk. */
-  const broken = { writes: '' }
+  const broken = { writes: '', reason: 'ENOSPC: no space left on device', reads: '' }
   let shas = 0
+  /**
+   * Each branch's reflog, oldest first: the commits git moved it to. A branch a
+   * test sets outright is one made anew, with a reflog of its own.
+   */
+  const reflogs = new Map<string, string[]>()
+  const reflogOf = (branch: string): string[] => {
+    const top = git.branches.get(branch)?.[0]?.sha
+    if (top === undefined) return []
+    const log = reflogs.get(branch) ?? []
+    if (log.at(-1) === top) return log
+    reflogs.set(branch, [top])
+    return [top]
+  }
+  const nextSha = () => {
+    shas += 1
+    return (0xabc0000 + shas).toString(16).padStart(7, '0')
+  }
   /** A commit the full-stack made on a branch (crew's, by default the PRD's). */
   const commit = (subject: string, branch = 'crew/prd', files?: string[]) => {
-    shas += 1
-    const sha = (0xabc0000 + shas).toString(16).padStart(7, '0')
+    const moves = reflogOf(branch)
+    const sha = nextSha()
     git.branches.set(branch, [{ sha, subject, ...(files === undefined ? {} : { files }) }, ...(git.branches.get(branch) ?? [])])
+    reflogs.set(branch, [...moves, sha])
     return sha
   }
-  on('process.run', (_$, e) => {
+  /** The branch moved back to one of its commits, as `git reset --hard` does: the commits above it are on it no more. */
+  const reset = (sha: string, branch = 'crew/prd') => {
+    const moves = reflogOf(branch)
+    const cs = git.branches.get(branch) ?? []
+    git.branches.set(branch, cs.slice(Math.max(0, cs.findIndex(c => c.sha === sha))))
+    reflogs.set(branch, [...moves, sha])
+  }
+  /** The branch's newest commit made again, as `git commit --amend` does: a new commit in its place. */
+  const amend = (subject: string, branch = 'crew/prd') => {
+    const moves = reflogOf(branch)
+    const sha = nextSha()
+    git.branches.set(branch, [{ sha, subject }, ...(git.branches.get(branch) ?? []).slice(1)])
+    reflogs.set(branch, [...moves, sha])
+    return sha
+  }
+  on('process.run', async (_$, e) => {
     const argv = (e as { argv: string[] }).argv
     git.commands.push([...argv])
     const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
@@ -114,6 +159,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
       const init = (e as { init?: { cwd?: string; env?: Record<string, string> } }).init
       tests.runs.push({ argv: [...argv], ...(init?.cwd === undefined ? {} : { cwd: init.cwd }), ...(init?.env === undefined ? {} : { env: init.env }) })
       if (tests.fails !== '') return { deny: tests.fails }
+      // A run that takes this long, by the test's clock, so requests can meet one under way.
+      if (tests.ms > 0) await clock.sleep(tests.ms)
       // Unless a test says what the run prints, every test case on the board passes, named by its id.
       const board = JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? '{"prd_items":[]}') as { prd_items: { test_cases?: { id: string }[] }[] }
       const all = board.prd_items.flatMap(i => i.test_cases ?? []).map(c => `✓ ${c.id} passes`).join('\n')
@@ -173,10 +220,17 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
       const of = (args[3] ?? '').replace('refs/heads/', '')
       return (git.branches.get(of) ?? []).some(c => c.sha === args[2]) ? ok() : { value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
+    if (args[0] === 'log' && args[1] === '-g') {
+      // The reflog of the branch named, newest first.
+      const name = (args.find(a => a.startsWith('refs/heads/')) ?? '').replace('refs/heads/', '')
+      return ok([...reflogOf(name)].reverse().join('\n'))
+    }
     if (args[0] === 'log') {
       const end = args.indexOf('--')
       const not = args.indexOf('--not')
       const refs = args.slice(4, not === -1 ? end : not).map(r => r.replace('refs/heads/', ''))
+      // As in git, a branch that is not there is an error, not an empty log.
+      if (refs.some(r => !git.branches.has(r))) return { value: { exitCode: 128, stdout: '', stderr: `fatal: bad revision '${refs.find(r => !git.branches.has(r)) ?? ''}'`, isStdoutTruncated: false, isStderrTruncated: false } }
       const negated = not === -1 ? [] : args.slice(not + 1, end)
       // `--not <sha>`: that commit and those beneath it.
       const beneath = new Set(
@@ -203,11 +257,12 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   const reads = new Map<string, number>()
   on('fs.read', async (_$, e) => {
     reads.set(e.path, (reads.get(e.path) ?? 0) + 1)
+    if (broken.reads !== '' && e.path.startsWith(broken.reads)) return { deny: `EACCES: permission denied, open '${e.path}'` }
     if (slow.ms > 0 && e.path.endsWith('.md')) await clock.sleep(slow.ms)
     return disk.has(resolve(e.path)) ? { value: disk.get(resolve(e.path)) ?? '' } : { deny: `ENOENT ${e.path}` }
   })
   on('fs.write', (_$, e) => {
-    if (broken.writes !== '' && e.path.startsWith(broken.writes)) return { deny: `ENOSPC: no space left on device, write '${e.path}'` }
+    if (broken.writes !== '' && e.path.startsWith(broken.writes)) return { deny: `${broken.reason}, write '${e.path}'` }
     // Writes follow links, as a real file system's do.
     disk.set(resolve(e.path), e.text)
     return { value: undefined }
@@ -299,7 +354,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   current.clock = clock
   current.spawned = spawned
   current.disk = disk
-  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, tests, broken }
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, amend, reset, tests, broken, refuse }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)

@@ -86,6 +86,8 @@ export type CrewFlow = {
   tips?: string
   /** Features whose design the person sent back after their tasks were planned. */
   redesigned?: string[]
+  /** Features the tech lead was asked to check against their new design, until its run ends. */
+  rechecking?: string[]
 }
 
 /** Work the flow gave a role while it was busy answering the person: handed over when that turn ends. */

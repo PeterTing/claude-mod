@@ -381,6 +381,17 @@ describe('edges', () => {
 })
 
 describe('answers while the flow waits for the person', () => {
+  test('go on with the role the flow waited at, on the route it gets there', () => {
+    const b = board(SPLIT, [tc(['AC-001', 'AC-002'])])
+    // The tech lead plans on the route its plan of one criterion takes; the designer on its own.
+    const toTl = step({ stage: 'escalated', round: 0, retries: 2, resumeAt: 'planning' }, { type: 'answered', question: 'q', answer: 'a', escalation: true, board: b })
+    const tl = step({ stage: 'planning', round: 0, retries: 0 }, { type: 'resume', board: planned(SPLIT, [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001'] }]), prd: { path: 'docs/PRD.md', size: 600 } })
+    expect(toTl.actions[0]).toMatchObject({ type: 'message', role: 'techlead', route: (tl.actions[0] as { route: unknown }).route })
+    const toUx = step({ stage: 'escalated', round: 0, retries: 2, resumeAt: 'designing' }, { type: 'answered', question: 'q', answer: 'a', escalation: true, board: bare(SPLIT, [tc(['AC-001', 'AC-002'])]) })
+    const ux = step({ stage: 'designing', round: 0, retries: 0 }, { type: 'resume', board: bare([...SPLIT.slice(0, 2)], [tc(['AC-001'])]), prd: { path: 'docs/PRD.md', size: 600 } })
+    expect(toUx.actions[0]).toMatchObject({ type: 'message', role: 'uiux', route: (ux.actions[0] as { route: unknown }).route })
+  })
+
   const waiting: FlowState = { stage: 'escalated', round: 3, retries: 0, resumeAt: 'confirming' }
 
   test('a role’s own question answered meanwhile goes to that role, and the flow keeps waiting', () => {
@@ -768,8 +779,12 @@ describe('the PRD as the flow holds the board to it', () => {
       // The person sets things right: the tests run again.
       const again = step(broken.state, { type: 'answered', question: 'q', answer: '指令設好了', escalation: true, board: all })
       expect(again).toMatchObject({ state: { stage: 'testing' }, actions: [{ type: 'run_tests' }] })
-      // A run that lands while the flow waits takes it on.
-      expect(step(broken.state, { type: 'tests_ran', board: passedOf(all) }).state.stage).toBe('done')
+      // A run that lands while the flow waits takes it on, and waits no more.
+      const landed = step(broken.state, { type: 'tests_ran', board: passedOf(all) }).state
+      expect(landed.stage).toBe('done')
+      expect(landed.resumeAt).toBeUndefined()
+      // The person's answer gives the full-stack three runs afresh.
+      expect(step({ ...third.state, building: 'TASK-001' }, { type: 'answered', question: 'q', answer: '再修', escalation: true, board: all }).state).toMatchObject({ stage: 'building', runs: 0 })
     })
 
     test('has the full-stack fix a third failed run, and asks the person only after it', () => {
@@ -805,6 +820,31 @@ describe('the PRD as the flow holds the board to it', () => {
       expect(step({ stage: 'testing', round: 0, retries: 0 }, { type: 'resume', board: all, prd: { path: 'docs/PRD.md', size: 600 } })).toMatchObject({ state: { stage: 'testing' }, actions: [{ type: 'run_tests' }] })
     })
 
+    test('does not count a task the tech lead adds or drops while the full-stack fixes the tests as the fix', () => {
+      const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
+      const fix = step({ stage: 'testing', round: 0, retries: 0 }, { type: 'tests_ran', board: passedOf(all, ['TC-001']) })
+      const more = applyOps(all, [{ op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '方案頁補強', detail: '', size: 'S' } as Op], ctx('techlead'))
+      if (!more.ok) throw new Error(more.errors.join())
+      const r = step(fix.state, { type: 'role_done', role: 'fullstack', board: more.tracker })
+      expect(r.state).toMatchObject({ stage: 'building', building: 'TASK-001', retries: 1 })
+      expect((r.actions[0] as { text: string }).text).toMatch(/TASK-001 還沒有新的 commit/)
+    })
+
+    test('sends the full-stack back when, after a test-run fix, the review asks for changes and its run brings no commit', () => {
+      const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
+      let s = step({ stage: 'testing', round: 0, retries: 0 }, { type: 'tests_ran', board: passedOf(all, ['TC-001']) }).state
+      // The fix lands under TASK-002's id, and the tech lead asks for changes on it.
+      const moved = withCommits(all, new Map([['TASK-001', ['abc0000']], ['TASK-002', ['fff0002', 'abc0001']]])) ?? all
+      s = step(s, { type: 'role_done', role: 'fullstack', board: moved }).state
+      expect(s).toMatchObject({ stage: 'reviewing', reviewing: { task: 'TASK-002', sha: 'fff0002' } })
+      const asked = reviewed(moved, 'TASK-002', 'fff0002', 'changes', '少了邊界')
+      s = step(s, { type: 'role_done', role: 'techlead', board: asked }).state
+      expect(s).toMatchObject({ stage: 'building', building: 'TASK-002', fixing: 'fff0002' })
+      const r = step(s, { type: 'role_done', role: 'fullstack', board: asked })
+      expect(r.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', item: 'TASK-002' })
+      expect((r.actions[0] as { text: string }).text).toMatch(/TASK-002 還沒有新的 commit/)
+    })
+
     test('counts a test-run fix committed under another task’s id', () => {
       const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
       const fix = step({ stage: 'testing', round: 0, retries: 0 }, { type: 'tests_ran', board: passedOf(all, ['TC-001']) })
@@ -813,6 +853,13 @@ describe('the PRD as the flow holds the board to it', () => {
       const moved = withCommits(all, new Map([['TASK-001', ['abc0000']], ['TASK-002', ['fff0002', 'abc0001']]])) ?? all
       const r = step(fix.state, { type: 'role_done', role: 'fullstack', board: moved })
       expect(r.state).toMatchObject({ stage: 'reviewing', reviewing: { task: 'TASK-002', sha: 'fff0002' } })
+    })
+
+    test('starts the next task afresh when the plan drops the one in hand while the full-stack is idle', () => {
+      const r = applyOps(plannedTwo(), [{ op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '方案頁新版', detail: '', size: 'S' }, { op: 'drop_task', id: 'TASK-001', reason: '改成 TASK-003' }] as Op[], ctx('techlead'))
+      if (!r.ok) throw new Error(r.errors.join())
+      const moved = step({ stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, { type: 'role_done', role: 'techlead', board: r.tracker })
+      expect(moved.state).toMatchObject({ stage: 'building', building: 'TASK-002', retries: 0 })
     })
 
     test('does not count the full-stack’s run for a task the plan dropped as an attempt at the next one', () => {
@@ -1157,6 +1204,45 @@ describe('a design sent back after the work is done', () => {
     expect(replan.state.redesigned).toBeUndefined()
     expect(replan.actions[0]).toMatchObject({ type: 'message', role: 'techlead', item: 'PRD-001' })
     expect((replan.actions[0] as { text: string }).text).toMatch(/PRD-001 方案選擇[\s\S]*新的設計稿[\s\S]*add_task[\s\S]*drop_task/)
+  })
+
+  test('keeps the tasks to check until the tech lead’s run ends, through a restart', () => {
+    const back = reject(planned2(), 'SCR-001', '要有比較表')
+    const r = step({ stage: 'done', round: 0, retries: 0 }, { type: 'designs_decided', board: back })
+    const drawn = applyOps(back, [{ op: 'add_design', feature: 'PRD-001', title: '比較表', kind: 'screen', body: '表格' } as Op], ctx('uiux'))
+    if (!drawn.ok) throw new Error(drawn.errors.join())
+    const approved = withDecisions(drawn.tracker, new Map(drawn.tracker.prd_items.flatMap(i => designsOf(i)).map(d => [d.id, d.id === 'SCR-001' ? { verdict: 'rejected' as const, reason: '要有比較表' } : { verdict: 'approved' as const }]))) ?? drawn.tracker
+    const replan = step({ ...r.state, stage: 'approving' }, { type: 'designs_decided', board: approved })
+    // Claude Code restarts before the tech lead's run ends: it is asked again.
+    const again = step(replan.state, { type: 'resume', board: approved, prd: { path: 'docs/PRD.md', size: 600 } })
+    expect(again.actions[0]).toMatchObject({ type: 'message', role: 'techlead', item: 'PRD-001' })
+    expect((again.actions[0] as { text: string }).text).toMatch(/新的設計稿/)
+    // Its run ends: the check is done, and the tasks go on.
+    const on = step(replan.state, { type: 'role_done', role: 'techlead', board: approved })
+    expect(on.state.stage).toBe('building')
+    expect(on.state.rechecking).toBeUndefined()
+  })
+
+  test('asks no check for a feature dropped since its design was sent back, nor marks one with no tasks', () => {
+    const back = reject(planned2(), 'SCR-001', '要有比較表')
+    const r = step({ stage: 'done', round: 0, retries: 0 }, { type: 'designs_decided', board: back })
+    expect(r.state.redesigned).toEqual(['PRD-001'])
+    // The PM drops PRD-001 meanwhile: the plan goes on without the tech lead checking it.
+    const gone = applyOps(planned2(), [{ op: 'drop_feature', id: 'PRD-001', reason: '不做了' }] as Op[], ctx('pm'))
+    if (!gone.ok) throw new Error(gone.errors.join())
+    const on = step({ ...r.state, stage: 'approving' }, { type: 'designs_decided', board: gone.tracker })
+    expect(on.actions.some(a => a.type === 'message' && a.role === 'techlead')).toBe(false)
+    expect(on.state.redesigned).toBeUndefined()
+    // A design sent back before any task is planned is no task to check.
+    const early = reject(designedOf(two()), 'SCR-001', '再想想')
+    expect(step({ stage: 'approving', round: 0, retries: 0 }, { type: 'designs_decided', board: early }).state.redesigned).toBeUndefined()
+  })
+
+  test('has the tech lead check a feature’s tasks when its design is sent back while the person approves others', () => {
+    const back = reject(planned2(), 'SCR-001', '要有比較表')
+    const r = step({ stage: 'approving', round: 0, retries: 0 }, { type: 'designs_decided', board: back })
+    expect(r.state).toMatchObject({ stage: 'designing', redesigned: ['PRD-001'] })
+    expect(r.actions[0]).toMatchObject({ type: 'message', role: 'uiux', item: 'PRD-001' })
   })
 
   test('changes nothing when a decision leaves every feature with an approved design', () => {

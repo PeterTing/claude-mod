@@ -17,6 +17,7 @@ Five roles take a PRD to tested code, and you approve the designs:
   What counts as built:
   - Only commits on crew's branch count, made after crew made the branch and on no other branch. A `TASK-001: …` in your own history is not crew's work.
   - crew remembers each commit it has seen, and the task it did, so a merge or a deleted branch does not undo it. A later task that takes the same id on a board made again is not counted built by the earlier task's commits.
+  - A commit that an amend, a rebase or a reset takes off crew's branch no longer counts: the task is built by what the branch still holds.
   - A task whose worktree still holds changes not committed is not counted built: the full-stack is asked to commit them, revert them, or add build output to `.gitignore`.
   - A commit makes a task under way. It is done once the tech lead approves its newest commit.
 
@@ -144,10 +145,10 @@ crew adds `usage/`, `log/`, `work/` and `runs/` to `.crew/.gitignore` and leaves
 - **The full-stack works in crew's worktree, not your checkout.**
   - It starts in `.crew/work/<name>`, a git worktree on branch `crew/<name>` that crew makes from your checkout's commit. It is told to leave your checkout and branches alone and not to push: merging is yours.
   - That is an instruction, not a fence. The full-stack edits files and runs commands under your Claude Code permission mode, like any agent, and crew says so once when the build starts.
-  - After each of its runs, crew checks your checkout: new changes, another branch or another commit, and your other branches. It also notices a change to its own files (the board and the memory) that crew itself did not make. If anything moved, crew says what, since it cannot tell whether you or the full-stack did it.
+  - After each of its runs, crew checks your checkout: new changes, another branch or another commit, and your other branches. It also notices a change to its own files (the board and the memory) that crew itself did not make; one made a link, moved out of the repo or unreadable counts as changed and is not read. If anything moved, crew says what, since it cannot tell whether you or the full-stack did it.
   - A commit on crew's branch that changes the board or `.crew/` is pointed out to the tech lead, who is told to have it undone, and to you.
-  - A `crew/<name>` branch crew did not make is not used: crew makes one with a new name beside it. Nor is one that no longer holds the commit crew last saw on it, such as a branch deleted and then checked out again from a remote: crew reads none of its commits and says so.
-  - crew itself runs only `git rev-parse`, `git symbolic-ref`, `git status`, `git worktree add`, `git log` and `git show` (the diff for a review), with the repo's hooks and file monitor off, and your test command. A folder that is not a git repo, or one with no commit yet, stops the full-stack, and crew says why.
+  - A `crew/<name>` branch crew did not make is not used: crew makes one with a new name beside it. Nor is one that holds neither the commit crew last saw on it nor, in its own reflog, a move from it, such as a branch deleted and then checked out again from a remote: crew reads none of its commits and says so. An amend, a rebase or a reset of crew's branch keeps it crew's.
+  - crew itself runs only `git rev-parse`, `git symbolic-ref`, `git status`, `git worktree add`, `git log` (with `-g` for the branch's reflog), `git merge-base`, `git for-each-ref` and `git show` (the diff for a review), with the repo's hooks and file monitor off, and your test command. A folder that is not a git repo, or one with no commit yet, stops the full-stack, and crew says why.
 - **Your words stay yours.** Roles cannot save or replace your preferences, nor a decision you made or the main conversation relayed for you. The daily tidy-up saves only facts and lessons, never decisions or preferences.
 - **Answers are marked by who relayed them.** An answer Claude relays for you is saved as `brain Q-nn`, so it stays traceable.
 

@@ -275,6 +275,31 @@ describe('crew’s test runs', () => {
     expect(w.toasts.some(t => /git status 在 crew 的工作目錄沒有成功，所以沒有跑測試：fatal: index file corrupt/.test(t))).toBe(true)
   })
 
+  test('ask again once a run’s timer never fired, as when another plugin’s hook refused it', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    await approve($, 'TASK-001')
+    w.commit('TASK-002: 取消流程')
+    await done($, 'a-fullstack-5')
+    w.refuse.timers = 1
+    await approve($, 'TASK-002')
+    await tested()
+    expect(w.tests.runs).toEqual([])
+    // Within the minute, a request joins the run asked for.
+    await $.command.run(command('test'))
+    await tested()
+    expect(w.tests.runs).toEqual([])
+    // Past it, that timer is taken for lost: the next request asks again, and the tests run.
+    await w.clock.advance(60_000)
+    await $.command.run(command('test'))
+    await tested()
+    expect(w.tests.runs).toHaveLength(1)
+    expect((await $.command.run(command('status'))).text).toMatch(/done/)
+  })
+
   test('ask for a missing command once, with one notice', async ($, on) => {
     const w = world($, on)
     w.store.delete(`tests:${ROOT}`)
@@ -295,6 +320,36 @@ describe('crew’s test runs', () => {
     await tested()
     expect(w.toasts.some(t => /工作目錄有沒 commit 的修改/.test(t))).toBe(true)
     expect(w.toasts.some(t => /sk-ant-api03-aaaa/.test(t))).toBe(false)
+  })
+
+  test('run once more for requests made while a run is under way', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await build($)
+    expect(w.tests.runs).toHaveLength(1)
+    w.tests.ms = 1_000
+    await $.command.run(command('test'))
+    await tested()
+    expect(w.tests.runs).toHaveLength(2)
+    // Three requests while that run is under way: one more run, after it.
+    for (let i = 0; i < 3; i++) {
+      await $.command.run(command('test'))
+      await tested()
+    }
+    await w.clock.advance(5_000)
+    expect(w.tests.runs).toHaveLength(3)
+  })
+
+  test('mask a broken run’s reason in its notice', async ($, on) => {
+    const w = world($, on)
+    w.broken.writes = `${ROOT}/.crew/runs/`
+    w.broken.reason = `EIO: token sk-ant-api03-${'b'.repeat(32)} rejected`
+    await start($)
+    await planned($)
+    await build($)
+    expect(w.toasts.some(t => /crew 跑測試時出錯/.test(t))).toBe(true)
+    expect(w.toasts.some(t => /sk-ant-api03-bbbb/.test(t))).toBe(false)
   })
 
   test('run once for requests made while a run waits its turn', async ($, on) => {
