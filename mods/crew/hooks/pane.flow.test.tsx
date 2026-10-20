@@ -108,6 +108,9 @@ describe('crew from its pane', () => {
     // The person holds it: the brain cannot go on for them.
     const r = (await $.tool.call({ tool: 'mcp__crew__crew', tool_use_id: 'go', action: 'resume' } as never)) as { result: unknown }
     expect(String(r.result)).toMatch(/流程暫停中：要使用者自己在右側面板按［接續］/)
+    // Nor ask a role: nothing is spent before the person says so.
+    const asked = (await $.tool.call({ tool: 'mcp__crew__crew', tool_use_id: 'ask', action: 'ask', role: 'pm', text: '進度如何？' } as never)) as { result: unknown }
+    expect(String(asked.result)).toMatch(/流程暫停中/)
     expect(w.spawned).toEqual([])
     expect(await ui.find({ key: 'not-now' })).toBeUndefined()
     await ui.press({ key: 'resume' })

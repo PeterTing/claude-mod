@@ -2308,6 +2308,8 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     if (!isCrewRole(role) || question === '') return '用法：/crew ask <pm|qa|uiux|techlead|fullstack> <你的問題>'
     const l = await read($, live)
     const name = crewName(role)
+    // A held flow spends nothing before the person says so: they ask in the pane, or press 接續 first.
+    if (l.paused !== undefined && !typed) return `流程暫停中：要使用者自己在右側面板按 ${name} 那一列的［問］，或先按［接續］。`
     if (l.roles[role].state === 'working') return `${name} 正在工作，等它這一輪做完再問。`
     const id = `ASK-${String(l.asked + 1).padStart(2, '0')}`
     await update($, live, s => ({ ...s, asked: s.asked + 1, asks: { ...s.asks, [role]: { id, by } } }))
