@@ -41,6 +41,8 @@ const tab = atom({ plugin: 'crew', key: 'tab' } as const, 'overview' as CrewTab)
 const scenario = atom({ plugin: 'crew', key: 'scenario' } as const, 'normal' as CrewScenario)
 const thread = atom({ plugin: 'crew', key: 'thread' } as const, null as string | null)
 const gate = atom({ plugin: 'crew', key: 'gate' } as const, null as string | null)
+const asking = atom({ plugin: 'crew', key: 'asking' } as const, null as string | null)
+const confirming = atom({ plugin: 'crew', key: 'confirming' } as const, false)
 const live = atom({ plugin: 'crew', key: 'live' } as const, emptyLive())
 
 /** Where crew keeps things in the repo the session runs in. */
@@ -1828,8 +1830,8 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
       return '已關閉 crew 設計稿。'
     }
     // A situation and a tab may be named: /crew demo attention tokens.
-    const SITUATIONS = ['normal', 'empty', 'attention'] as const
-    const TABS = ['overview', 'progress', 'board', 'threads', 'memory', 'tokens'] as const
+    const SITUATIONS = ['normal', 'empty', 'attention', 'restart'] as const
+    const TABS = ['overview', 'progress', 'board', 'threads', 'memory', 'tokens', 'settings'] as const
     const [asked = 'normal', page = 'overview'] = rest
     const situation = SITUATIONS.find(x => x === asked)
     const opened = TABS.find(x => x === page)
@@ -1839,6 +1841,8 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     await update($, scenario, () => situation)
     await update($, thread, () => null)
     await update($, gate, () => null)
+    await update($, asking, () => null)
+    await update($, confirming, () => false)
     await $.ui.open({ id: PANE, title: 'Crew（設計稿）' })
     return '已開啟 crew 設計稿：面板和輸入框上方那一行都是示意資料。/crew demo off 關閉。'
   }
@@ -2553,13 +2557,27 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const el = $.ui.resolve(e)
+    // A phone's table has no text field or picker: the pane says where to type instead.
+    const table = $.ui.resolve(e)
+    const el = e.surface === 'mobile' ? { Box: table.Box, Text: table.Text, Button: table.Button } : table
     const demo = await read($, isDemo)
     const l = await read($, live)
     const board = demo ? null : await loadBoard($)
     if (!demo && board === null && l.prdPath === null) {
       return <el.Text dimColor>用 /crew start &lt;PRD 檔案&gt; 開始一份 PRD，或用 /crew demo 看設計稿。</el.Text>
     }
+    const view = {
+      tab: await read($, tab),
+      scenario: await read($, scenario),
+      thread: await read($, thread),
+      gate: await read($, gate),
+      asking: await read($, asking),
+      confirming: await read($, confirming),
+    }
+    const snap = demo ? DEMO[view.scenario] : snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), prd: await prdView($) })
+    // The preview says what each control will do; the controls of the real pane come with phase 5.
+    const would = (what: string) => $.ui.toast(demo ? `設計稿：實際會${what}` : 'crew：這個按鈕還在開發中。')
+    const asked = (id: string) => snap.decisions.find(d => d.id === id)
     const act: Actions = {
       tab: id => void update($, tab, () => id),
       scenario: id => void update($, scenario, () => id),
@@ -2569,10 +2587,37 @@ export const register: Register = on => {
         void update($, thread, () => id)
         void update($, tab, () => 'threads')
       },
-      reply: id => $.ui.toast(`用 /crew answer ${id} <你的回答> 回覆`),
+      pick: path => $.ui.toast(demo ? `設計稿：選了 ${path}` : 'crew：這個按鈕還在開發中。'),
+      start: path => would(path === undefined ? '用選好的 PRD 開始，PM 先把它拆成功能和驗收條件' : `用 ${path} 開始`),
+      notNow: () => would('關上面板，這次不啟動 crew'),
+      resume: () => would('從停下的地方接續'),
+      answer: id => {
+        const d = asked(id)
+        would(`把回答交給 ${d === undefined || d.from === 'crew' || d.from === 'brain' ? 'crew' : ROLE_NAMES[d.from]}`)
+      },
+      approve: id => would(asked(id)?.kind === 'design' ? `核准 ${asked(id)?.design ?? id}` : '執行大腦的建議，記成一條決定'),
+      reject: (id, reason) => would(asked(id)?.kind === 'design' ? `把 ${asked(id)?.design ?? id} 退回給 UI/UX，原因：${reason ?? ''}` : '不執行大腦的建議'),
+      viewDesign: id => would(`在面板顯示 ${id} 的內容`),
+      openAsk: role => void update($, asking, () => role),
+      ask: role => would(`把問題交給 ${ROLE_NAMES[role]}`),
+      rotate: role => would(`在 ${ROLE_NAMES[role]} 閒置後換新對話，帶記憶重開`),
+      testCommand: text => would(`把測試指令設成 ${text}`),
+      runTests: () => would('在全端的工作目錄跑測試'),
+      tuning: mode => would(mode === 'auto' ? '改成大腦自己處置' : '改成大腦先問你'),
+      openOnLoad: open => would(open ? '在 Claude Code 開啟時打開這個面板' : '在 Claude Code 開啟時不打開這個面板'),
+      reset: sure => {
+        if (!sure) return void update($, confirming, () => true)
+        void update($, confirming, () => false)
+        would('重設這個 session 的流程和角色')
+      },
+      consolidate: () => would('整理今天的記憶'),
+      demoOff: () => {
+        void update($, isDemo, () => false)
+        void $.ui.close({ id: PANE })
+      },
+      recall: q => would(`找出和「${q}」有關的記憶`),
+      remember: text => would(`記下偏好：${text}`),
     }
-    const view = { tab: await read($, tab), scenario: await read($, scenario), thread: await read($, thread), gate: await read($, gate) }
-    const snap = demo ? DEMO[view.scenario] : snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), prd: await prdView($) })
     return CrewPane({ el, snap, view, act, isDemo: demo })
   })
 

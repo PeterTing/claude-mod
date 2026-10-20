@@ -209,7 +209,8 @@ const NORMAL: Snapshot = {
   brainShare: 0.09,
   alerts: [],
   actions: [{ id: 'DEC-15', text: '全端輪替，門檻 100K → 80K', before: '命中率 52% · context 96K', after: '命中率 81% · context 8K' }],
-  tuning: 'auto',
+  tuning: 'ask',
+  settings: { testCommand: 'python3 -m pytest -v', openOnLoad: true },
   resident: { checked: '2 分鐘前', next: '3 分鐘後', digest: { sent: '12:30', queued: 2, next: '13:00' } },
   requirements: REQUIREMENTS,
   alignment: { covered: 14, total: 14, gaps: 0, added: 0, removed: 0, prdChanged: '2 小時前', checked: '剛剛' },
@@ -235,7 +236,8 @@ const ATTENTION: Snapshot = {
   actions: [...NORMAL.actions, { id: 'Q-04', text: '全端下一個項目改用 Sonnet・high（TASK-15 照舊用 Opus・xhigh）', before: '今日佔 46%', pending: 'Q-04' }],
   decisions: [
     ...NORMAL.decisions,
-    { id: 'Q-04', question: '大腦建議：全端下一個項目改用 Sonnet・high（TASK-15 照舊用 Opus・xhigh）。/crew approve Q-04 核准，/crew reject Q-04 不要', from: 'brain', age: '剛剛' },
+    { id: 'Q-04', question: '大腦建議：全端下一個項目改用 Sonnet・high（TASK-15 照舊用 Opus・xhigh）', from: 'brain', age: '剛剛', kind: 'proposal' },
+    { id: 'Q-05', question: '設計稿 SCR-04 結帳頁三種狀態等你核准', from: 'uiux', age: '5 分鐘前', kind: 'design', design: 'SCR-04' },
   ],
   resident: {
     checked: '1 分鐘前',
@@ -289,6 +291,20 @@ const EMPTY: Snapshot = {
   alerts: [],
   actions: [],
   resident: { checked: '剛剛', next: '5 分鐘後' },
+  start: {
+    prds: [
+      { path: 'docs/PRD.md', title: '會員訂閱 v1' },
+      { path: 'docs/specs/checkout.md', title: '結帳流程' },
+    ],
+  },
+  settings: { openOnLoad: true },
 }
 
-export const DEMO = { normal: NORMAL, empty: EMPTY, attention: ATTENTION } as const
+/** Claude Code started again on an unfinished PRD: crew offers to go on. */
+const RESTART: Snapshot = {
+  ...NORMAL,
+  start: { prds: [], resumable: '上次的 PRD-001 會員訂閱 v1 停在「實作」（全端 TASK-12）' },
+  resident: { checked: '剛剛', next: '5 分鐘後' },
+}
+
+export const DEMO = { normal: NORMAL, empty: EMPTY, attention: ATTENTION, restart: RESTART } as const

@@ -812,8 +812,30 @@ flowchart LR
 
 <section id="phase5">
   <h2>第 5 階段：常駐與優化（設計稿）</h2>
-  <p class="prose">你確認的決定（2026-10-20）：介面照設計稿；流程停住時叫醒一次、再停住就問你；等你決定的問題超過 2 小時提醒一次；大腦處置做成開關（自動／先問你）。</p>
+  <p class="prose">你確認的決定（2026-10-20）：介面照設計稿；流程停住時叫醒一次、再停住就問你；等你決定的問題超過 2 小時提醒一次；大腦處置做成開關（自動／先問你），預設先問你，用按鈕切換；所有操作都在面板上完成，不用指令。</p>
   <p class="prose">讓 crew 開著就會自己照顧工作：每隔一段時間用程式檢查一次，有事才叫醒角色；重開 Claude Code 後從原本的地方接續；token 用量異常時提醒大腦，由大腦處置。設計稿在 <code>/crew demo</code>：<code>/crew demo normal overview</code>、<code>/crew demo attention tokens</code> 等。</p>
+  <h3>全部在面板操作（2026-10-20 你的要求）</h3>
+  <p class="prose">crew 不需要輸入任何指令：Claude Code 開啟時右側面板自己打開，所有操作都用按鈕、選單和輸入框。指令保留給手機（手機的面板只有按鈕，沒有輸入框）和大腦使用。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>原本的指令</th><th>面板上怎麼做</th></tr></thead>
+      <tbody>
+        <tr><td><code>/crew start &lt;PRD&gt;</code></td><td>開啟時的啟動畫面：PRD 選單（列出 repo 裡的 PRD）或輸入路徑，按［開始］；［這次不用］就關上面板、不啟動</td></tr>
+        <tr><td>重開後接續（原本自動）</td><td>面板最上面問「上次的 PRD 停在哪裡，要接續嗎？」［接續］［先不要］</td></tr>
+        <tr><td><code>/crew answer</code></td><td>「待你決定」每個問題下面一個回答框，按 Enter 送出</td></tr>
+        <tr><td><code>/crew design</code>、<code>approve</code>、<code>reject</code>（設計稿）</td><td>［看設計稿］［核准］，退回原因寫在輸入框按 Enter 退回</td></tr>
+        <tr><td>大腦的建議</td><td>［核准］［不要］，在「待你決定」和 Token 分頁都有</td></tr>
+        <tr><td><code>/crew ask</code>、<code>rotate</code></td><td>總覽每個角色那一列的［問］（打開輸入框）［輪替］</td></tr>
+        <tr><td><code>/crew recall</code>、<code>remember</code></td><td>記憶分頁的「搜尋」「記下偏好」輸入框</td></tr>
+        <tr><td><code>/crew test-command</code>、<code>test</code></td><td>新的「設定」分頁：測試指令輸入框、［跑測試］</td></tr>
+        <tr><td><code>/crew tuning</code></td><td>設定分頁和 Token 分頁的［自動］［先問你］</td></tr>
+        <tr><td><code>/crew resume</code>、<code>reset</code>、<code>consolidate</code></td><td>設定分頁的［接續］［重設流程］（要再按一次確定）［整理今天的記憶］</td></tr>
+        <tr><td><code>/crew status</code>、<code>thread</code></td><td>面板本身就是狀態；討論分頁點開項目</td></tr>
+        <tr><td><code>/crew demo</code></td><td>設計稿上方的［關閉設計稿］；設定分頁也有</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">面板的按鈕和輸入框只有你本人操作得到（其他 plugin 和模型沒辦法按），所以和你親手輸入的指令一樣算數。</p>
   <h3>介面</h3>
   <ul class="plain prose">
     <li><strong>每個分頁上方多一行「常駐」</strong>：平常是「常駐 ✓ 心跳 2 分鐘前 · 下次 3 分鐘後 · 大腦摘要 12:30 送出，2 則等 13:00」；心跳有發現時變成黃色，寫出發現什麼、做了什麼；重開過會多一行「重開接續：13:02 從 building 接續（全端，TASK-15）」。</li>

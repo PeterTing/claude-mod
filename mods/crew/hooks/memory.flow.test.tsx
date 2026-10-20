@@ -289,7 +289,8 @@ describe('crew memory', () => {
     expect(text).toMatch(/MEM-001/)
     expect(text).toMatch(/到期日要看使用者時區/)
     expect(text).toMatch(/PM 目前帶著：MEM-001/)
-    expect(text).toMatch(/\/crew recall/)
+    // Searching and saving are fields on the tab, not commands to type.
+    expect(text).not.toMatch(/\/crew/)
   })
 })
 

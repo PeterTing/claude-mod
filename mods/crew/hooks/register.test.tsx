@@ -39,6 +39,17 @@ const stage = (on: On) => {
 
 const demoOn = ($: Engine) => $.command.run(command('demo'))
 
+/** The engine beneath, and the notices the pane's controls give. */
+const staged = (on: On): string[] => {
+  stage(on)
+  const toasts: string[] = []
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  return toasts
+}
+
 describe('/crew demo', () => {
   test('says how to open the preview before it is on', async $ => {
     for (const surface of SURFACES) {
@@ -245,7 +256,10 @@ describe('/crew demo', () => {
       const ui = await $.ui.mount(pane(surface))
       await ui.press({ key: 'tab-tokens' })
       const calm = await shown(ui)
-      expect(calm).toMatch(/大腦處置：自動（大腦自己處置，事後記成決定） · \/crew tuning ask 改成先問你/)
+      // Asking first is the default; two buttons switch it, as /crew tuning does.
+      expect(calm).toMatch(/大腦處置：先問你（大腦提出建議，你核准才執行）/)
+      expect(await ui.find({ key: 'tuning-auto' })).toBeDefined()
+      expect(await ui.find({ key: 'tuning-ask' })).toBeDefined()
       expect(calm).toMatch(/大腦處置（不能為了省 token 跳過關卡、測試或 review）/)
       expect(calm).toMatch(/DEC-15 全端輪替，門檻 100K → 80K[\s\S]*處置前 命中率 52% · context 96K → 現在 命中率 81% · context 8K/)
       await ui.press({ key: 'scenario-attention' })
@@ -254,12 +268,15 @@ describe('/crew demo', () => {
       expect(loud).toMatch(/全端今日佔 46%（超過 40%） · 12:41/)
       expect(loud).toMatch(/全端快取命中率 52%（低於 60%）/)
       // Asked first: the brain's proposal waits for the person, with the numbers it would act on.
-      expect(loud).toMatch(/大腦處置：先問你（大腦提出建議，你核准才執行） · \/crew tuning auto 改成自動/)
-      expect(loud).toMatch(/建議 全端下一個項目改用 Sonnet・high[\s\S]*處置前 今日佔 46% → 等你核准：\/crew approve Q-04/)
+      expect(loud).toMatch(/建議 全端下一個項目改用 Sonnet・high[\s\S]*處置前 今日佔 46% → 等你核准/)
+      expect(await ui.find({ key: 'approve-Q-04' })).toBeDefined()
+      expect(await ui.find({ key: 'reject-Q-04' })).toBeDefined()
+      // Under what waits for the person, the brain's proposal takes the same two buttons; a role's question its reply.
       await ui.press({ key: 'tab-overview' })
       expect(await shown(ui)).toMatch(/Q-04 大腦建議：全端下一個項目改用 Sonnet・high/)
+      expect(await ui.find({ key: 'approve-Q-04' })).toBeDefined()
+      expect(await ui.find({ key: 'answer-Q-03' })).toBeDefined()
       await ui.press({ key: 'scenario-normal' })
-      await ui.press({ key: 'tab-overview' })
       await ui.unmount()
     }
   })
@@ -272,7 +289,7 @@ describe('/crew demo', () => {
     expect(text).toMatch(/提醒已送大腦/)
     expect(text).toMatch(/命中率/)
     await ui.unmount()
-    expect((await $.command.run(command('demo calm'))).text).toMatch(/用法：\/crew demo \[normal\|empty\|attention\] \[overview\|progress\|board\|threads\|memory\|tokens\]/)
+    expect((await $.command.run(command('demo calm'))).text).toMatch(/用法：\/crew demo \[normal\|empty\|attention\|restart\] \[overview\|progress\|board\|threads\|memory\|tokens\|settings\]/)
   })
 
   test('switches to the empty and attention situations', async ($, on) => {
@@ -320,8 +337,8 @@ describe('/crew demo', () => {
     await ui.press({ key: 'scenario-attention' })
     await ui.unmount()
     const line = await shown(await $.ui.mount(band('terminal')))
-    expect(line).toMatch(/待你決定 2/)
-    expect(line.indexOf('待你決定 2')).toBeLessThan(line.indexOf('PM'))
+    expect(line).toMatch(/待你決定 3/)
+    expect(line.indexOf('待你決定 3')).toBeLessThan(line.indexOf('PM'))
     expect(line).toMatch(/⚠ PRD 對不上 2[\s\S]*⚠ 3 則提醒/)
   })
 
@@ -344,5 +361,120 @@ describe('/crew demo', () => {
       expect(await shown(ui)).toMatch(/\/crew demo/)
       await ui.unmount()
     }
+  })
+})
+
+describe('the pane, which does everything with no command', () => {
+  const demo = ($: Engine, at: string) => $.command.run(command(`demo ${at}`))
+
+  test('starts crew when it loads with no PRD: a PRD picked or typed, or not now', async ($, on) => {
+    const toasts = staged(on)
+    await demo($, 'empty overview')
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount(pane(surface))
+      expect(await shown(ui)).toMatch(/crew 已載入，還沒有開始的 PRD/)
+      for (const key of ['start', 'not-now']) expect(await ui.find({ key })).toBeDefined()
+      // The first PRD found is picked to start with; no role has work to be asked about yet.
+      expect((await ui.find({ key: 'prd-pick' })) as unknown).toMatchObject({ props: { value: 'docs/PRD.md' } })
+      expect(await ui.find({ key: 'ask-pm' })).toBeUndefined()
+      await ui.select({ key: 'prd-pick', value: 'docs/PRD.md' })
+      expect(toasts.at(-1)).toMatch(/設計稿：選了 docs\/PRD\.md/)
+      await ui.press({ key: 'start' })
+      expect(toasts.at(-1)).toMatch(/設計稿：實際會用選好的 PRD 開始，PM 先把它拆成功能和驗收條件/)
+      await ui.input({ key: 'prd-path', text: 'specs/v2.md' })
+      expect(toasts.at(-1)).toMatch(/設計稿：實際會用 specs\/v2\.md 開始/)
+      await ui.unmount()
+    }
+  })
+
+  test('offers to go on with an unfinished PRD when crew loads again', async ($, on) => {
+    staged(on)
+    await demo($, 'restart overview')
+    const ui = await $.ui.mount(pane('terminal'))
+    expect(await shown(ui)).toMatch(/上次的 PRD-001 會員訂閱 v1 停在「實作」（全端 TASK-12）/)
+    for (const key of ['resume', 'not-now']) expect(await ui.find({ key })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('answers, approves and sends back what waits for the person', async ($, on) => {
+    const toasts = staged(on)
+    await demo($, 'attention overview')
+    const ui = await $.ui.mount(pane('terminal'))
+    // A role's question: answered in a field under it.
+    await ui.input({ key: 'answer-Q-03', text: '第一版先不做年繳' })
+    expect(toasts.at(-1)).toMatch(/設計稿：實際會把回答交給 PM/)
+    // The brain's proposal: approved or not with a press.
+    for (const key of ['approve-Q-04', 'reject-Q-04']) expect(await ui.find({ key })).toBeDefined()
+    // A design: read, approved, or sent back with a reason.
+    for (const key of ['view-SCR-04', 'approve-Q-05']) expect(await ui.find({ key })).toBeDefined()
+    await ui.input({ key: 'reject-Q-05', text: '要有比較表' })
+    expect(toasts.at(-1)).toMatch(/設計稿：實際會把 SCR-04 退回給 UI\/UX，原因：要有比較表/)
+    await ui.unmount()
+  })
+
+  test('asks a role or rotates it from its row', async ($, on) => {
+    const toasts = staged(on)
+    await demo($, 'normal overview')
+    const ui = await $.ui.mount(pane('terminal'))
+    for (const role of ['pm', 'uiux', 'fullstack', 'qa', 'techlead']) {
+      expect(await ui.find({ key: `ask-${role}` })).toBeDefined()
+      expect(await ui.find({ key: `rotate-${role}` })).toBeDefined()
+    }
+    expect(await ui.find({ key: 'ask-pm-text' })).toBeUndefined()
+    await ui.press({ key: 'ask-pm' })
+    await ui.input({ key: 'ask-pm-text', text: '年繳要做嗎？' })
+    expect(toasts.at(-1)).toMatch(/設計稿：實際會把問題交給 PM/)
+    await ui.unmount()
+  })
+
+  test('sets crew up on its settings tab, and resets only once confirmed', async ($, on) => {
+    staged(on)
+    await demo($, 'normal settings')
+    const ui = await $.ui.mount(pane('terminal'))
+    const text = await shown(ui)
+    expect(text).toMatch(/測試指令/)
+    expect(text).toMatch(/現在：打開這個面板/)
+    expect((await ui.find({ key: 'test-command' })) as unknown).toMatchObject({ props: { value: 'python3 -m pytest -v' } })
+    for (const key of ['run-tests', 'tuning-auto', 'tuning-ask', 'open-on-load', 'not-on-load', 'resume', 'reset', 'consolidate', 'demo-off']) {
+      expect(await ui.find({ key })).toBeDefined()
+    }
+    expect(await ui.find({ key: 'reset-confirm' })).toBeUndefined()
+    await ui.press({ key: 'reset' })
+    expect(await shown(ui)).toMatch(/重設後看板、討論和記憶都會留著/)
+    expect(await ui.find({ key: 'reset-confirm' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('searches memory and saves a preference on the memory tab', async ($, on) => {
+    const toasts = staged(on)
+    await demo($, 'normal memory')
+    const ui = await $.ui.mount(pane('terminal'))
+    await ui.input({ key: 'recall', text: '金流' })
+    expect(toasts.at(-1)).toMatch(/設計稿：實際會找出和「金流」有關的記憶/)
+    await ui.input({ key: 'remember', text: '文案用台灣用語' })
+    expect(toasts.at(-1)).toMatch(/設計稿：實際會記下偏好：文案用台灣用語/)
+    await ui.unmount()
+  })
+
+  test('shows no command where the pane can do it', async ($, on) => {
+    staged(on)
+    for (const situation of ['normal', 'empty', 'attention', 'restart']) {
+      for (const tab of ['overview', 'progress', 'board', 'threads', 'memory', 'tokens', 'settings']) {
+        await demo($, `${situation} ${tab}`)
+        const ui = await $.ui.mount(pane('terminal'))
+        expect(await shown(ui)).not.toMatch(/\/crew/)
+        await ui.unmount()
+      }
+    }
+  })
+
+  test('says where to type on a surface with no text field, and keeps its buttons', async ($, on) => {
+    staged(on)
+    await demo($, 'attention overview')
+    const ui = await $.ui.mount({ ...pane('desktop'), surface: 'mobile' as never })
+    const text = await shown(ui)
+    expect(text).toMatch(/回答請在電腦上的面板輸入/)
+    expect(await ui.find({ key: 'approve-Q-04' })).toBeDefined()
+    await ui.unmount()
   })
 })

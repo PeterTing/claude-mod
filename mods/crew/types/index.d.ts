@@ -1,8 +1,8 @@
 /** The pane's tabs. */
-export type CrewTab = 'overview' | 'progress' | 'board' | 'threads' | 'memory' | 'tokens'
+export type CrewTab = 'overview' | 'progress' | 'board' | 'threads' | 'memory' | 'tokens' | 'settings'
 
 /** The sample situation the design preview shows. */
-export type CrewScenario = 'normal' | 'empty' | 'attention'
+export type CrewScenario = 'normal' | 'empty' | 'attention' | 'restart'
 
 export type CrewTier = 'S' | 'M' | 'L' | 'XL'
 
@@ -164,6 +164,10 @@ declare module 'claude-code' {
       scenario: CrewScenario
       /** The item whose thread the Threads tab has open, if any. */
       thread: string | null
+      /** The role whose question field the overview has open, if any. */
+      asking: string | null
+      /** The settings tab asks to confirm a reset. */
+      confirming: boolean
       /** The gate whose detail the overview has open, if any. */
       gate: string | null
       /** The running team. */
