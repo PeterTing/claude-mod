@@ -142,6 +142,8 @@ describe('crew from its pane', () => {
     expect(await textOf(ui)).toMatch(/要接續嗎/)
     await ui.input({ key: 'answer-Q-01', text: '一萬' })
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:fullstack'])
+    // The person's own answer is their word to go on: the flow is held no more.
+    expect(await textOf(ui)).not.toMatch(/要接續嗎|暫停中/)
     await ui.unmount()
   })
 

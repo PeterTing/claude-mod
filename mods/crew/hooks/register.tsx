@@ -776,16 +776,31 @@ async function waitForFrame($: any, start: WaitingStart) {
 
 /**
  * Starts the roles a timer asked for, in a frame of the engine's or the
- * person's: the PRD's own, if it is still the one followed. No hold meets a
- * waiting start: the heartbeat holds no flow while one waits, and a restart
- * or reload starts the module, and its list, anew.
+ * person's, after that frame's own work: the PRD's own, if it is still the one
+ * followed. No hold meets a waiting start: the heartbeat holds no flow while
+ * one waits, and a restart or reload starts the module, and its list, anew.
+ *
+ * A role the frame's own work set to work is not started again: on the
+ * flow's run, the flow gave it its stage's work and takes the next step when
+ * it ends; on the person's question, the waiting work follows the answer.
  */
 async function startWaiting($: any) {
   if (waitingStarts.length === 0) return
   await serial('starts', async () => {
     const due = waitingStarts.splice(0)
-    const prd = (await read($, live)).prdPath
-    for (const w of due) if (w.prd === prd) await startRole($, w.start.role, w.start.asked, w.start.given, w.start.reason, w.start.run)
+    for (const w of due) {
+      const l = await read($, live)
+      if (w.prd !== l.prdPath) continue
+      const { role, asked, given, reason, run } = w.start
+      const r = l.roles[role]
+      if (r.state === 'working' && r.agentId !== undefined) {
+        if (r.run !== 'person') continue
+        const work: CrewWork = { kind: 'message', route: asked, text: given, run }
+        await update($, live, s => ({ ...s, pending: { ...s.pending, [role]: [...(s.pending[role] ?? []), work] } }))
+        continue
+      }
+      await startRole($, role, asked, given, reason, run)
+    }
   })
 }
 
@@ -1513,6 +1528,8 @@ async function lookAfter($: any, now: number): Promise<string[]> {
   const found: string[] = []
   try {
     const l = await read($, live)
+    // A start an earlier look left waiting still waits: said on every look until a frame starts it.
+    if (waitingStarts.length > 0) found.push(`${waitingStarts.map(w => crewName(w.start.role)).join('、')} 排著，Claude Code 有下一個動作時開始`)
     const key = stoppedKey(l)
     if (key !== undefined) {
       const where = `流程停在「${STAGE_OF[l.flow.stage] ?? l.flow.stage}」`
@@ -2283,6 +2300,11 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     }
     // An answer goes on with the flow; one held for the person goes on by their own word, as 接續 does.
     if ((await read($, live)).paused !== undefined && !typed) return `流程暫停中：${id} 要使用者自己在右側面板回答，或按［接續］後再轉達。`
+    // The person's own answer is their word to go on, as 接續 is.
+    await update($, live, s => {
+      const { paused: _, ...going } = s
+      return going
+    })
     await update($, live, l => ({ ...l, questions: l.questions.map(x => (x.id === id ? { ...x, status: 'answered' as const, answer } : x)) }))
     // A role's own question goes back to that role; the flow's own question, to the role its stage waits on.
     const waiting = (await read($, live)).flow.resumeAt
@@ -2588,7 +2610,6 @@ function paneActions($: any, snap: Snapshot): Actions {
   const person = async (verb: string, rest: string[]) => {
     try {
       said(await crewVerb($, verb, rest, 'person', true))
-      await startWaiting($)
     } catch (err) {
       said(`沒有完成：${cut(squeeze(String(err)), 200)}`)
     }
@@ -2708,7 +2729,10 @@ async function paneWork($: any, key: string, value?: string): Promise<boolean> {
       confirming: await read($, confirming),
     }
     const snap = await liveSnapshot($, await loadBoard($), l)
-    return await actOn(paneActions($, snap), view, snap, key, value)
+    const took = await actOn(paneActions($, snap), view, snap, key, value)
+    // Any press is a frame of the engine's, a tab's too: a start a timer left waiting goes after the press's own work.
+    await startWaiting($)
+    return took
   } catch (err) {
     // Said here: a hook that throws is skipped, and the control's own handler cannot tell why.
     $.ui.toast(`crew：沒有完成：${cut(squeeze(String(err)), 200)}`)

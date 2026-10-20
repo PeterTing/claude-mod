@@ -67,12 +67,33 @@ describe('the heartbeat', () => {
     // Started from the timer, the engine would take the role's whole run for crew's own code and skip
     // crew's hooks for it: its tools would answer nothing. It waits for a frame instead.
     expect(w.spawned).toHaveLength(before)
-    // A start that waits is work under way: the next heartbeat neither holds the flow nor wakes it again.
+    // A start that waits is work under way: the next heartbeat neither holds the flow nor wakes it again, and says it still waits.
     await w.clock.advance(BEAT)
     expect(w.toasts.some(t => /叫醒過一次還是停住/.test(t))).toBe(false)
-    await $.command.run(command('status'))
+    const ui = await paneUi($)
+    expect(await textOf(ui)).toMatch(/QA 排著，Claude Code 有下一個動作時開始/)
+    // Any press in the pane is a frame of the engine's: even a tab.
+    await ui.press({ key: 'tab-threads' })
     expect(w.spawned).toHaveLength(before + 1)
     expect(w.spawned.at(-1)?.subagentType).toBe('crew:qa')
+    await ui.unmount()
+    await $.command.run(command('status'))
+    expect(w.spawned).toHaveLength(before + 1)
+  })
+
+  test('starts a waiting role once when the person goes on: the start the command makes takes its place', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await failed($, 'a-qa-2', 'error')
+    await $.command.run(command('rotate qa'))
+    const before = w.spawned.length
+    await w.clock.advance(BEAT)
+    expect(w.spawned).toHaveLength(before)
+    await $.command.run(command('resume'))
+    expect(w.spawned.slice(before).map(s => s.subagentType)).toEqual(['crew:qa'])
   })
 
   test('lets a start the timer left waiting go once the person resets: no role of the old work starts', async ($, on) => {

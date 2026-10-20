@@ -119,6 +119,34 @@ describe('crew’s test runs', () => {
     expect(w.spawned.at(-1)?.prompt).toMatch(/TC-001 t：失敗/)
   })
 
+  test('hand a waiting fix to the full-stack after the person’s question, in the agent the question started', async ($, on) => {
+    const w = world($, on)
+    w.tests.stdout = 'tests/test_plan.py::test_TC_001 FAILED\nAssertionError: 方案價格錯誤'
+    w.tests.exitCode = 1
+    await start($)
+    await planned($)
+    for (const id of ['TASK-001', 'TASK-002']) {
+      w.commit(`${id}: 完成 ${id}`)
+      await done($, 'a-fullstack-5')
+      await approve($, id)
+    }
+    await $.command.run(command('rotate fullstack'))
+    const before = w.spawned.length
+    await tested()
+    expect(w.spawned).toHaveLength(before)
+    // The person asks the full-stack before any frame started the fix: one agent, the question first.
+    await $.command.run(command('ask fullstack 為什麼失敗？'))
+    expect(w.spawned.slice(before).map(s => s.subagentType)).toEqual(['crew:fullstack'])
+    expect(w.spawned.at(-1)?.prompt).toMatch(/為什麼失敗/)
+    const agent = `a-fullstack-${w.spawned.length}`
+    await done($, agent, '失敗是因為價格少乘了稅率。')
+    // The answer is the person's; the fix then goes to the same agent.
+    expect((await $.command.run(command('thread ASK-01'))).text).toMatch(/少乘了稅率/)
+    expect(w.spawned).toHaveLength(before + 1)
+    expect(w.sent.at(-1)).toMatchObject({ to: agent })
+    expect(w.sent.at(-1)?.text).toMatch(/TC-001 t：失敗/)
+  })
+
   test('mark a result out of date once a commit lands after the run', async ($, on) => {
     const w = world($, on)
     await start($)
