@@ -468,8 +468,8 @@ describe('the full-stack', () => {
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-5')
     // Changed between the full-stack's runs, before TASK-002 is handed over: not the next run's doing,
-    // though crew writes the board over the change meanwhile.
-    w.disk.set(memory, `${w.disk.get(memory) ?? ''}{"id":"MEM-099","type":"MEM","text":"手改"}\n`)
+    // though crew writes the board over the change meanwhile. The memory is deleted then, too.
+    w.disk.delete(memory)
     w.disk.set(`${ROOT}/prd-tracker.json`, (w.disk.get(`${ROOT}/prd-tracker.json`) ?? '').replace('"取消流程"', '"取消流程（改）"'))
     await approve($, 'TASK-001')
     w.commit('TASK-002: 取消流程')

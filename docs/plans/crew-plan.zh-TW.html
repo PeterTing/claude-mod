@@ -786,6 +786,14 @@ flowchart LR
     <li><strong>退回設計稿</strong>：退回 SCR-001 並附原因；原因寫進 SCR-001 的討論串交給 UI/UX，它照原因重寫成 SCR-003，核准後 Tech lead 才拆任務。</li>
     <li><strong>修正後再跑一次完整流程</strong>：第一次測試 exit 5、0/12（unittest 找不到測試，缺 <code>tests/__init__.py</code>）。crew 自己把它交給全端，全端 commit 修正（訊息同時標兩個任務），Tech lead 兩個任務都重新 review 通過，重跑 12/12，七個關卡全部 ✓。整個過程沒有人介入。</li>
   </ul>
+  <h3>0.4.1：review 的小問題全部處理（2026-10-20）</h3>
+  <ul class="plain prose">
+    <li><strong>crew 自己的檔案</strong>：看板和記憶被 crew 以外的人改了、刪掉、變成連結或讀不到，全端那一輪結束後會告訴你；crew 不會透過連結去讀。全端的 commit 動到 <code>prd-tracker.json</code> 或 <code>.crew/</code> 時，Tech lead 會要求還原，你也會收到一次通知。</li>
+    <li><strong>分支</strong>：全端那一輪期間你的其他分支有移動或被刪掉，會告訴你。crew 的分支被刪掉、又從別處建回來時，crew 不會把它當成自己的。分支被 amend、rebase 或 reset 時仍算 crew 的（用分支自己的 reflog 判斷）；被拿掉的 commit 不再算進它的任務，看板只顯示分支上真的還有的東西。實機用真的 git 驗證：完成後 amend 最後一個 commit，三個任務回到「等 review」、進度從 100% 降到 57%；再 reset 掉它，三個任務都改指向分支上剩下的 commit。</li>
+    <li><strong>設計稿</strong>：完成後才被退回的設計稿會重新打開設計階段；新稿核准後，Tech lead 檢查那個功能的任務；Claude Code 中途重開、或 PRD 中途改了，都不會漏掉這次檢查。在核准階段退回已有任務的功能，同樣會請 Tech lead 檢查。</li>
+    <li><strong>Review 與測試</strong>：修正 commit 標在別的任務上也算；review 要求的修改中途插進新的驗收條件，不會被算成退回兩次；Tech lead 修修改改加減任務，不會被當成全端交了修正。mocha 的編號失敗行算失敗；同時要求好幾次測試只多跑一次；沒設定測試指令只提醒一次；失敗原因的通知會遮罩；排定測試的計時器被其他 plugin 擋掉時，一分鐘後的下一次要求會重新排。</li>
+    <li>安全、品質、測試三個 reviewer 再各審兩輪。新加的檢查都用「故意改壞程式、確認測試會失敗」驗證過：我這邊 62 個改壞的版本裡，59 個會被測試抓到；2 個改的是多餘的程式，已經刪掉；1 個在現在的程式裡不會造成不同結果。實機再跑兩次完整流程，七個關卡都自己走到 ✓。</li>
+  </ul>
   <h3>每一欄的真實訊號</h3>
   <p class="prose">每一欄的狀態都從真實訊號算出來，角色自己說「做完了」不算數。</p>
   <div class="table-wrap">
