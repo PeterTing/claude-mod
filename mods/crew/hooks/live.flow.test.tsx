@@ -7,7 +7,7 @@ describe('crew, PM and QA', () => {
   test('registers its tools and its roles when the session starts', async ($, on) => {
     const w = world($, on)
     await start($)
-    expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'memory_save', 'memory_search', 'crew'])
+    expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'review_submit', 'memory_save', 'memory_search', 'crew'])
     expect(w.registered.agents).toEqual(['pm', 'qa', 'techlead', 'fullstack'])
   })
 
@@ -52,7 +52,7 @@ describe('crew, PM and QA', () => {
     expect(w.spawned[3]).toMatchObject({ subagentType: 'crew:fullstack', model: 'sonnet' })
     expect(w.spawned[3]?.prompt).toMatch(/TASK-001[\s\S]*工作目錄：\/repo\/\.crew\/work\/prd（分支 crew\/prd）/)
     await build($)
-    expect(w.toasts.at(-1)).toMatch(/G4 2\/2[\s\S]*G3 2\/2[\s\S]*實作 2\/2/)
+    expect(w.toasts.at(-1)).toMatch(/G4 2\/2[\s\S]*G3 2\/2[\s\S]*G5 2\/2/)
 
     const tracker = w.board()
     expect(tracker?.prd_items.flatMap(i => i.test_cases.map(c => c.id))).toEqual(['TC-001', 'TC-002'])

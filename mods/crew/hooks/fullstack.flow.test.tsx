@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
 import { taskMark } from './git'
-import { build, command, done, paneText, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { approve, build, command, done, paneText, PLAN, ROOT, SPLIT, start, world, write } from './world'
 
 /** The full-stack builds the tasks one at a time in crew's own worktree; a commit, not its word, says a task is built. */
 
@@ -63,11 +63,16 @@ describe('the full-stack', () => {
     expect(w.sent.at(-1)?.text).toMatch(/TASK-001 還沒有 commit/)
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-4')
+    // The tech lead reviews the commit before the next task starts.
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-3' })
+    expect(w.sent.at(-1)?.text).toMatch(/請 review TASK-001 方案頁（commit abc0001）[\s\S]*commit abc0001\n TASK-001: 方案頁|請 review TASK-001 方案頁（commit abc0001）[\s\S]*diff of abc0001/)
+    expect(String((await approve($, 'TASK-001')).result)).toMatch(/已記下 TASK-001 的 review 結論（通過，commit abc0001）/)
     expect(w.sent.at(-1)?.text).toMatch(/請實作 TASK-002 取消流程/)
     w.commit('TASK-002: 取消流程')
     await done($, 'a-fullstack-4')
+    await approve($, 'TASK-002')
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
-    expect(w.toasts.at(-1)).toMatch(/實作 2\/2/)
+    expect(w.toasts.at(-1)).toMatch(/G5 2\/2/)
   })
 
   test('has the person decide when a task twice ends with no commit', async ($, on) => {
@@ -99,7 +104,7 @@ describe('the full-stack', () => {
     expect(w.toasts.some(t => /全端沒有開始：這個資料夾不是 git repo/.test(t))).toBe(true)
   })
 
-  test('picks the build up again after Claude Code restarts, at the first task with no commit', async ($, on) => {
+  test('picks the build up again after Claude Code restarts, at the first task not approved', async ($, on) => {
     const w = world($, on)
     let t = newTracker('repo')
     for (const [by, ops] of [
@@ -115,8 +120,10 @@ describe('the full-stack', () => {
     // crew made its branch and worktree in the last session, and keeps that in its own store.
     w.git.branches.set('crew/prd', [...(w.git.branches.get('HEAD') ?? [])])
     w.disk.set(`${ROOT}/.crew/work/prd/.git`, 'gitdir: x')
-    w.store.set(`work:${ROOT}:docs/PRD.md`, { branch: 'crew/prd', dir: `${ROOT}/.crew/work/prd`, base: BASE, seen: {} })
-    w.commit('TASK-001: 方案頁')
+    const sha = w.commit('TASK-001: 方案頁')
+    // The tech lead approved TASK-001 before the restart.
+    const mark = taskMark({ id: 'TASK-001', title: '方案頁', status: 'planned', acceptance_criteria: ['AC-001'], detail: '' })
+    w.store.set(`work:${ROOT}:docs/PRD.md`, { branch: 'crew/prd', dir: `${ROOT}/.crew/work/prd`, base: BASE, seen: {}, reviewed: { 'TASK-001': { sha, verdict: 'approve', mark } } })
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, questions: [], lead: 'person' })
     await start($)
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:fullstack'])
@@ -142,8 +149,11 @@ describe('the full-stack', () => {
     await planned($)
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-4')
-    const text = await paneText($, 'board')
-    expect(text).toMatch(/TASK-001[\s\S]*commit abc0001/)
+    let text = await paneText($, 'board')
+    expect(text).toMatch(/TASK-001[\s\S]*commit abc0001 · Tech lead 正在 review/)
+    await approve($, 'TASK-001')
+    text = await paneText($, 'board')
+    expect(text).toMatch(/TASK-001[\s\S]*commit abc0001 · review 通過/)
     expect(text).toMatch(/TASK-002[\s\S]*全端正在做/)
   })
 
@@ -176,7 +186,7 @@ describe('the full-stack', () => {
     await $.command.run(command('ask pm 月繳價格多少？'))
     await done($, 'a-pm-1', '一百元')
     expect(w.spawned.filter(s => s.subagentType === 'crew:fullstack')).toHaveLength(1)
-    expect(await paneText($, 'progress')).toMatch(/實作 2\/2/)
+    expect(await paneText($, 'progress')).toMatch(/實作 ✓/)
   })
 
   test('does not start building a finished board’s tasks on an unrelated turn', async ($, on) => {
@@ -226,17 +236,25 @@ describe('the full-stack', () => {
     w.git.dirty = ''
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-4')
-    expect(w.sent.at(-1)?.text).toMatch(/請實作 TASK-002/)
+    expect(w.sent.at(-1)?.text).toMatch(/請 review TASK-001/)
   })
 
-  test('shows code as committed, not done, until a review checks it', async ($, on) => {
-    world($, on)
+  test('shows code as committed, not done, until the tech lead approves it', async ($, on) => {
+    const w = world($, on)
     await start($)
     await planned($)
-    await build($)
-    const text = await paneText($, 'progress')
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-4')
+    let text = await paneText($, 'progress')
     expect(text).not.toMatch(/實作 ✓/)
-    expect(text).toMatch(/◐ 2\/2/)
+    expect(text).toMatch(/→ Review 0\/2/)
+    await approve($, 'TASK-001')
+    w.commit('TASK-002: 取消流程')
+    await done($, 'a-fullstack-4')
+    await approve($, 'TASK-002')
+    text = await paneText($, 'progress')
+    expect(text).toMatch(/→ 實作 ✓/)
+    expect(text).toMatch(/→ Review ✓/)
   })
 
   test('does not count a commit made before crew made its branch, even one no branch has', async ($, on) => {
@@ -257,7 +275,7 @@ describe('the full-stack', () => {
     await start($)
     await planned($)
     await build($)
-    expect(await paneText($, 'progress')).toMatch(/實作 2\/2/)
+    expect(await paneText($, 'progress')).toMatch(/實作 ✓/)
     // The board is made again: the tech lead's TASK-001 is another task now, while the old commits stay on crew's branch.
     const again = plannedBoard([
       { op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '登入頁', detail: '', size: 'S' },
@@ -356,6 +374,7 @@ describe('the full-stack', () => {
     await planned($)
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-4')
+    await approve($, 'TASK-001')
     // The person merges crew's branch and deletes it while the full-stack works on TASK-002.
     const crew = w.git.branches.get('crew/prd') ?? []
     w.git.branches.set('HEAD', crew)
@@ -367,6 +386,7 @@ describe('the full-stack', () => {
     expect(branch).toMatch(/^crew\/prd-[0-9a-f]{6}$/)
     w.commit('TASK-002: 取消流程', branch)
     await done($, 'a-fullstack-4')
+    await approve($, 'TASK-002')
     const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[] }[] }[] }
     expect(board.prd_items.flatMap(i => i.tasks ?? []).map(t => [t.id, (t.crew_commits ?? []).length])).toEqual([
       ['TASK-001', 1],

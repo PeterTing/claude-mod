@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { applyOps, newTracker, tasksOf } from './board'
 import type { Op, Tracker } from './board'
-import { branchOf, commitsByTask, commitsOf, marksOf, recordSeen, SUBJECT, taskMark, withCommits, workdirOf } from './git'
+import { branchOf, commitsByTask, commitsOf, marksOf, recordSeen, reviewsOf, SUBJECT, taskMark, withCommits, withReviews, workdirOf } from './git'
 
 const ctx = (by: string) => ({ by, today: '2026-10-16', prefixes: { feature: 'PRD-', testCase: 'TC-' } })
 
@@ -90,5 +90,26 @@ describe('crew’s record of what it saw done', () => {
     const seen = recordSeen({}, commitsOf('aaaaaaa1\tTASK-001: 方案頁'), board)
     const resized = { ...board, prd_items: board.prd_items.map(item => ({ ...item, tasks: (item.tasks ?? []).map(t => ({ ...(t as object), size: 'L', detail: '加上年繳' })) })) }
     expect(Object.fromEntries(marksOf(resized as Tracker, seen))).toEqual({ 'TASK-001': ['aaaaaaa1'] })
+  })
+})
+
+describe('crew’s record of the tech lead’s reviews', () => {
+  test('marks a task with the review crew recorded for that very task, of a commit it saw doing it', () => {
+    const board = planned()
+    const first = tasksOf(board.prd_items[0]!)[0]!
+    const commits = new Map([['TASK-001', ['bbbbbbb2', 'aaaaaaa1']]])
+    const reviewed = {
+      'TASK-001': { sha: 'aaaaaaa1', verdict: 'approve' as const, mark: taskMark(first) },
+      // Another task's review under the same id, or of a commit crew never saw doing it, counts for nothing.
+      'TASK-002': { sha: 'ccccccc3', verdict: 'approve' as const, mark: 'ffffff' },
+    }
+    const reviews = reviewsOf(board, reviewed, commits)
+    expect(Object.fromEntries(reviews)).toEqual({ 'TASK-001': { sha: 'aaaaaaa1', verdict: 'approve' } })
+    expect(reviewsOf(board, { 'TASK-001': { ...reviewed['TASK-001'], sha: 'eeeeeee5' } }, commits).size).toBe(0)
+    const marked = withReviews(board, reviews)
+    expect(tasksOf(marked!.prd_items[0]!).map(t => t.crew_review)).toEqual([{ sha: 'aaaaaaa1', verdict: 'approve' }, undefined])
+    expect(withReviews(marked!, reviews)).toBeNull()
+    // A review a board brought, which crew never recorded, is taken off.
+    expect(tasksOf(withReviews(marked!, new Map())!.prd_items[0]!).map(t => t.crew_review)).toEqual([undefined, undefined])
   })
 })

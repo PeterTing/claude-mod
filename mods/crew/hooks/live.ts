@@ -1,6 +1,6 @@
 import type { CrewLive, CrewUsage } from '../types'
-import { criteriaOf, gateG1, gateG3, gateG4, tasksOf } from './board'
-import type { GateResult, Tracker } from './board'
+import { approvedNow, criteriaOf, gateG1, gateG3, gateG4, gateG5, liveTasksOf, reviewOf, tasksOf, tipOf } from './board'
+import type { GateResult, Task, Tracker } from './board'
 import { estimateTokens } from './memory'
 import type { MemoryEntry } from './memory'
 import { droppedRequirements, gateG0, refsOf } from './prd'
@@ -104,6 +104,34 @@ const MEMORY_ROWS = 40
 
 const NOT_YET: StageCell = { state: 'later' }
 
+/** Where a task's code stands with the tech lead: under review, approved, changes asked for, out of date, or waiting. */
+const reviewNote = (x: Task, flow: CrewLive['flow']): string | undefined => {
+  const tip = tipOf(x)
+  if (tip === undefined) return undefined
+  if (flow.stage === 'reviewing' && flow.reviewing?.task === x.id) return 'Tech lead 正在 review'
+  const r = reviewOf(x)
+  if (r === undefined) return '等 review'
+  if (r.sha !== tip) return 'review 過期（新的 commit 還沒 review）'
+  return r.verdict === 'approve' ? 'review 通過' : `review 要修改${r.notes === undefined ? '' : `：${r.notes}`}`
+}
+
+/** Why a task is not yet through G5, said as where it stands. */
+const reviewGap = (x: Task, flow: CrewLive['flow']): string => {
+  const tip = tipOf(x)
+  if (tip === undefined) return '還沒有 commit'
+  if (flow.stage === 'reviewing' && flow.reviewing?.task === x.id) return 'Tech lead 正在 review'
+  const r = reviewOf(x)
+  if (r === undefined) return '等 Tech lead review'
+  if (r.sha !== tip) return 'review 過期，等重新 review'
+  return 'review 要修改，全端修正中'
+}
+
+/** A task approved at an older commit, with none of its newest: its review is out of date. */
+const staleReview = (x: Task): boolean => {
+  const r = reviewOf(x)
+  return !approvedNow(x) && r?.verdict === 'approve' && r.sha !== tipOf(x)
+}
+
 /** Criteria ids some test case covers. */
 const coveredCriteria = (board: Tracker): Set<string> => new Set(board.prd_items.flatMap(i => i.test_cases.flatMap(c => c.acceptance_criteria ?? [])))
 
@@ -134,7 +162,7 @@ const requirementRows = (board: Tracker, requirements: readonly Requirement[]): 
     const ids = new Set(criteria.map(c => c.id))
     const serving = answering.flatMap(f => tasksOf(f).filter(x => x.crew_dropped === undefined && x.acceptance_criteria.some(c => ids.has(c))))
     const built = serving.filter(x => (x.crew_commits ?? []).length > 0).length
-    const code = state(built, serving.length)
+    const approved = serving.filter(approvedNow).length
     const out = answering.length === 0 ? dropped.get(r.id) : undefined
     return {
       id: r.id,
@@ -146,9 +174,12 @@ const requirementRows = (board: Tracker, requirements: readonly Requirement[]): 
         design: NOT_YET,
         cases: { state: cases === 'done' && spec !== 'done' ? 'doing' : cases, note: `${tested}/${criteria.length}` },
         tasks: { state: tasks === 'done' && spec !== 'done' ? 'doing' : tasks, note: `${withTask}/${criteria.length}` },
-        // A commit says code is there, not that it is right: done waits for a review (phase 4d).
-        code: serving.length === 0 ? { state: 'todo', note: '0/0' } : { state: code === 'todo' ? 'todo' : 'doing', note: `${built}/${serving.length}` },
-        review: NOT_YET,
+        // A commit says code is there, not that it is right: done waits for the tech lead to approve the newest commit.
+        code: serving.length === 0 ? { state: 'todo', note: '0/0' } : { state: approved === serving.length ? 'done' : built > 0 ? 'doing' : 'todo', note: `${built}/${serving.length}` },
+        review:
+          serving.length === 0
+            ? { state: 'todo', note: '0/0' }
+            : { state: approved === serving.length ? 'done' : serving.some(staleReview) ? 'stale' : approved > 0 ? 'doing' : 'todo', note: `${approved}/${serving.length}` },
         runs: NOT_YET,
       },
     }
@@ -175,8 +206,9 @@ export const snapshotOf = ({
   const g1 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG1(board)
   const g4 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG4(board)
   const g3 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG3(board)
-  // The tasks in the plan, and those with a commit doing them.
-  const liveTasks = (board?.prd_items ?? []).filter(i => i.crew_dropped === undefined).flatMap(i => tasksOf(i).filter(x => x.crew_dropped === undefined))
+  // The tasks in the plan, those with a commit doing them, and those the tech lead approved.
+  const liveTasks = board === null ? [] : liveTasksOf(board)
+  const g5 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG5(board)
   const built: GateResult = {
     covered: liveTasks.filter(x => (x.crew_commits ?? []).length > 0).length,
     total: liveTasks.length,
@@ -206,8 +238,8 @@ export const snapshotOf = ({
     board === null
       ? null
       : {
-          // Committed code counts toward the whole, never as done: only a review will say it is (phase 4d).
-          done: (g0?.requirements.covered ?? 0) + g1.covered + g4.covered + g3.covered,
+          // Code counts toward the whole, and as done once the tech lead approved its newest commit: a commit alone is not.
+          done: (g0?.requirements.covered ?? 0) + g1.covered + g4.covered + g3.covered + g5.covered,
           total: (g0?.requirements.total ?? 0) + g1.total + g4.total + g3.total + built.total,
           // The seven stages of each requirement's row, in its order, over the whole board.
           stages: [
@@ -217,10 +249,13 @@ export const snapshotOf = ({
             { ...stageOf('測試案例', g4, testing), ...(split.gaps.length > 0 && g4.total > 0 && g4.gaps.length === 0 ? { state: testing ? ('active' as const) : ('pending' as const) } : {}) },
             // The plan is done only once the spec is, as test cases are.
             { ...stageOf('任務', g3, stage === 'planning'), ...(split.gaps.length > 0 && g3.total > 0 && g3.gaps.length === 0 ? { state: stage === 'planning' ? ('active' as const) : ('pending' as const) } : {}) },
-            // Code committed is not code checked: the stage is not done until a review says so (phase 4d).
-            { ...stageOf('實作', built, stage === 'building'), ...(built.total > 0 && built.gaps.length === 0 ? { state: stage === 'building' ? ('active' as const) : ('pending' as const) } : {}) },
-            // Nobody reviews code or runs the tests yet: these never show as done before the roles that do them come.
-            pendingStage('Review'),
+            // Code committed is not code checked: the stage is done once the tech lead approved every task's newest commit.
+            {
+              ...stageOf('實作', built, stage === 'building'),
+              ...(built.total > 0 && built.gaps.length === 0 && g5.gaps.length > 0 ? { state: stage === 'building' || stage === 'reviewing' ? ('active' as const) : ('pending' as const) } : {}),
+            },
+            stageOf('Review', g5, stage === 'reviewing'),
+            // Nobody runs the tests yet: this never shows as done before that comes.
             pendingStage('測試結果'),
           ],
           features,
@@ -268,15 +303,24 @@ export const snapshotOf = ({
   const taskItems: Item[] = liveTasks.map(x => {
     const commits = x.crew_commits ?? []
     const onIt = live.flow.stage === 'building' && live.flow.building === x.id
+    const fixing = onIt && live.flow.fixing !== undefined
+    const underReview = live.flow.stage === 'reviewing' && live.flow.reviewing?.task === x.id
     const taken = commits.length > 0 || onIt
-    const by = taken ? fs : tl
+    const owner = underReview || !taken ? 'techlead' : 'fullstack'
+    const by = owner === 'fullstack' ? fs : tl
+    const review = reviewNote(x, live.flow)
     return {
       id: x.id,
       title: x.title,
-      owner: taken ? 'fullstack' : 'techlead',
-      status: taken ? 'doing' : 'todo',
-      route: { tier: by.tier ?? x.size ?? 'M', model: by.label ?? (taken ? 'Sonnet' : 'Opus'), effort: by.effort ?? 'high' },
-      note: [`對應 ${x.acceptance_criteria.join('、')}${x.size === undefined ? '' : `・${x.size}`}`, ...(commits.length > 0 ? [`commit ${commits.map(c => c.slice(0, 7)).join('、')}`] : []), ...(onIt ? ['全端正在做'] : [])].join(' · '),
+      owner,
+      status: approvedNow(x) ? 'done' : underReview ? 'review' : taken ? 'doing' : 'todo',
+      route: { tier: by.tier ?? x.size ?? 'M', model: by.label ?? (owner === 'fullstack' ? 'Sonnet' : 'Opus'), effort: by.effort ?? 'high' },
+      note: [
+        `對應 ${x.acceptance_criteria.join('、')}${x.size === undefined ? '' : `・${x.size}`}`,
+        ...(commits.length > 0 ? [`commit ${commits.map(c => c.slice(0, 7)).join('、')}`] : []),
+        ...(review === undefined ? [] : [review]),
+        ...(fixing ? ['全端正在改'] : onIt ? ['全端正在做'] : []),
+      ].join(' · '),
     }
   })
 
@@ -314,7 +358,10 @@ export const snapshotOf = ({
             later('G2', '每個有介面的功能都有畫面和各種狀態'),
             gate('G3', g3, stage === 'planning', { name: '每條驗收條件都拆好任務', fill: 'Tech lead 補', confirm: 'Tech lead 自查' }, live.threads),
             gate('G4', g4, stage === 'writing_tests' || stage === 'adding_tests', { name: '每條驗收條件都有 test case', fill: 'QA 補', confirm: 'PM 確認缺口' }, live.threads),
-            later('G5', '每個完成的 task 都通過 code review'),
+            {
+              ...gate('G5', g5, stage === 'reviewing', { name: '每個完成的 task 都通過 code review', fill: '全端修', confirm: 'Tech lead review' }, live.threads),
+              gaps: liveTasks.filter(x => !approvedNow(x)).map(x => ({ id: x.id, title: x.title, status: reviewGap(x, live.flow), ...(live.threads[x.id] !== undefined ? { thread: x.id } : {}) })),
+            },
             later('G6', 'test case 全部執行通過、附證據'),
           ],
     decisions: live.questions.filter(q => q.status === 'open').map(q => ({ id: q.id, question: q.question, from: q.from, age: ageOf(q.t, now) })),

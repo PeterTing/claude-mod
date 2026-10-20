@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { applyOps, criteriaOf, gateG1, gateG3, gateG4, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf } from './board'
+import { applyOps, approvedNow, criteriaOf, gateG1, gateG3, gateG4, gateG5, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf, tipOf } from './board'
 import type { Op, Tracker } from './board'
 
 const CTX = { by: 'pm', today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } } as const
@@ -544,5 +544,46 @@ describe('tasks the tech lead breaks the criteria into', () => {
     expect(bad.error).toMatch(/第 1 筆 add_task 缺少 feature/)
     expect(bad.error).toMatch(/第 2 筆 add_task 的 criteria/)
     expect(bad.error).toMatch(/第 3 筆 drop_task 缺少 reason/)
+  })
+})
+
+describe('the review of a task', () => {
+  const planned = (): Tracker => {
+    const r = run(withTwoFeatures(), [
+      { op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '方案頁', detail: '', size: 'S' },
+      { op: 'add_task', feature: 'PRD-002', criteria: ['AC-002', 'AC-003'], title: '取消流程', detail: '', size: 'M' },
+    ] as Op[], 'techlead')
+    if (!r.ok) throw new Error(r.errors.join())
+    return r.tracker
+  }
+  const mark = (t: Tracker, id: string, fields: Record<string, unknown>): Tracker => ({
+    ...t,
+    prd_items: t.prd_items.map(i => ({ ...i, tasks: i.tasks.map(x => ((x as { id?: string }).id === id ? { ...(x as object), ...fields } : x)) })),
+  })
+
+  test('counts toward G5 only once the tech lead approved the task’s newest commit', () => {
+    const b = planned()
+    expect(gateG5(b)).toMatchObject({ covered: 0, total: 2 })
+    const committed = mark(b, 'TASK-001', { crew_commits: ['bbbbbbb2', 'aaaaaaa1'] })
+    const first = liveTasksOf(committed)[0]!
+    expect(tipOf(first)).toBe('bbbbbbb2')
+    // An approval of an older commit is out of date; changes asked for are not an approval.
+    expect(approvedNow(liveTasksOf(mark(committed, 'TASK-001', { crew_review: { sha: 'aaaaaaa1', verdict: 'approve' } }))[0]!)).toBe(false)
+    expect(approvedNow(liveTasksOf(mark(committed, 'TASK-001', { crew_review: { sha: 'bbbbbbb2', verdict: 'changes', notes: 'x' } }))[0]!)).toBe(false)
+    const approved = mark(committed, 'TASK-001', { crew_review: { sha: 'bbbbbbb2', verdict: 'approve' } })
+    expect(approvedNow(liveTasksOf(approved)[0]!)).toBe(true)
+    expect(gateG5(approved)).toEqual({ covered: 1, total: 2, gaps: [{ id: 'TASK-002', title: '取消流程', feature: 'PRD-002' }] })
+    // A garbled mark is no approval.
+    expect(approvedNow(liveTasksOf(mark(committed, 'TASK-001', { crew_review: 'approve' }))[0]!)).toBe(false)
+  })
+
+  test('shows on the board for the roles: committed, reviewed, or out of date', () => {
+    const b = mark(mark(planned(), 'TASK-001', { crew_commits: ['bbbbbbb2'], crew_review: { sha: 'bbbbbbb2', verdict: 'approve' } }), 'TASK-002', {
+      crew_commits: ['ccccccc3', 'ddddddd4'],
+      crew_review: { sha: 'ddddddd4', verdict: 'approve' },
+    })
+    const text = renderBoard(b)
+    expect(text).toMatch(/任務 TASK-001 方案頁（S）← AC-001 · commit bbbbbbb · review 通過/)
+    expect(text).toMatch(/任務 TASK-002 取消流程（M）← AC-002、AC-003 · commit ccccccc · review 過期（新的 commit 還沒 review）/)
   })
 })

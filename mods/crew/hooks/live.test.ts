@@ -7,7 +7,7 @@ import { emptyLive, snapshotOf } from './live'
 import { barCells, percent } from './model'
 import type { Snapshot } from './model'
 import { bandText, bar } from './views'
-import { withCommits } from './git'
+import { withCommits, withReviews } from './git'
 import { requirementsOf } from './prd'
 
 const NOW = Date.UTC(2026, 9, 15, 6, 0, 0)
@@ -190,7 +190,9 @@ describe('development status by PRD requirement', () => {
   test('marks the stages crew does not track yet as later, never as done', () => {
     const rows = snapshotOf({ board, live: emptyLive(), now: NOW, prd: { requirements: reqs } }).requirements ?? []
     expect(rows).toHaveLength(4)
-    expect(rows.every(r => (['design', 'review', 'runs'] as const).every(k => r.layers[k].state === 'later'))).toBe(true)
+    expect(rows.every(r => (['design', 'runs'] as const).every(k => r.layers[k].state === 'later'))).toBe(true)
+    // Before any task, review has nothing to count: not done.
+    expect(rows.every(r => r.layers.review.state === 'todo')).toBe(true)
   })
 
   test('does not call test cases done while a feature that answers the requirement has no criteria', () => {
@@ -345,7 +347,7 @@ describe('the full-stack’s commits', () => {
     const all = withCommits(planned, new Map([['TASK-001', ['abc1234def']], ['TASK-002', ['def5678abc']]])) ?? planned
     expect((snapshotOf({ board: all, live: building, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]?.layers.code).toEqual({ state: 'doing', note: '2/2' })
     // Review and test runs are still to come: never shown as done by a commit.
-    expect((snapshotOf({ board: all, live: building, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]?.layers.review.state).toBe('later')
+    expect((snapshotOf({ board: all, live: building, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]?.layers.review).toEqual({ state: 'todo', note: '0/2' })
   })
 
   test('count committed code toward the whole but never as done: overall progress stays short of 100% until review', () => {
@@ -355,6 +357,54 @@ describe('the full-stack’s commits', () => {
     expect(after?.total).toBe(before?.total)
     expect(after?.done).toBe(before?.done)
     expect(after?.done ?? 0).toBeLessThan(after?.total ?? 0)
+  })
+
+  describe('and the tech lead’s reviews of them', () => {
+    const both = withCommits(planned, new Map([['TASK-001', ['abc1234def']], ['TASK-002', ['def5678abc', 'fed0000aaa']]])) ?? planned
+    const review = (b: Tracker, reviews: [string, { sha: string; verdict: 'approve' | 'changes'; notes?: string }][]): Tracker => withReviews(b, new Map(reviews)) ?? b
+    const reviewing: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'reviewing', round: 0, retries: 0, building: 'TASK-002', reviewing: { task: 'TASK-002', sha: 'def5678abc' } } }
+
+    test('make G5 and the Review stage, and count code done only once approved', () => {
+      // TASK-001 approved; TASK-002 approved at an older commit: out of date.
+      const b = review(both, [['TASK-001', { sha: 'abc1234def', verdict: 'approve' }], ['TASK-002', { sha: 'fed0000aaa', verdict: 'approve' }]])
+      const snap = snapshotOf({ board: b, live: reviewing, now: NOW })
+      const g5 = snap.gates.find(g => g.id === 'G5')
+      expect(g5).toMatchObject({ state: 'active', covered: 1, total: 2, name: '每個完成的 task 都通過 code review', fill: '全端修', confirm: 'Tech lead review' })
+      expect(g5?.gaps).toEqual([{ id: 'TASK-002', title: '方案 API', status: 'Tech lead 正在 review' }])
+      expect(snap.progress?.stages.find(st => st.label === 'Review')).toMatchObject({ done: 1, total: 2, state: 'active' })
+      expect(snap.progress?.stages.find(st => st.label === '實作')).toMatchObject({ done: 2, total: 2, state: 'active' })
+      const before = snapshotOf({ board: planned, live: reviewing, now: NOW }).progress
+      expect((snap.progress?.done ?? 0) - (before?.done ?? 0)).toBe(1)
+      const row = (snapshotOf({ board: b, live: reviewing, now: NOW, prd: { requirements: reqs } }).requirements ?? [])[0]
+      expect(row?.layers.review).toEqual({ state: 'stale', note: '1/2' })
+      expect(row?.layers.code).toEqual({ state: 'doing', note: '2/2' })
+    })
+
+    test('say done for code and review once every task’s newest commit is approved', () => {
+      const b = review(both, [['TASK-001', { sha: 'abc1234def', verdict: 'approve' }], ['TASK-002', { sha: 'def5678abc', verdict: 'approve' }]])
+      const done: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'done', round: 0, retries: 0 } }
+      const snap = snapshotOf({ board: b, live: done, now: NOW, prd: { requirements: reqs } })
+      expect(snap.gates.find(g => g.id === 'G5')).toMatchObject({ state: 'pass', covered: 2, total: 2 })
+      expect(snap.progress?.stages.find(st => st.label === '實作')?.state).toBe('done')
+      expect(snap.progress?.stages.find(st => st.label === 'Review')?.state).toBe('done')
+      expect(snap.requirements?.[0]?.layers.code).toEqual({ state: 'done', note: '2/2' })
+      expect(snap.requirements?.[0]?.layers.review).toEqual({ state: 'done', note: '2/2' })
+      expect(snap.items.find(i => i.id === 'TASK-002')).toMatchObject({ status: 'done' })
+    })
+
+    test('show each task’s review on the board tab, and the gaps of G5 by where they stand', () => {
+      const b = review(both, [['TASK-002', { sha: 'def5678abc', verdict: 'changes', notes: '缺錯誤處理' }]])
+      const fixing: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-002', fixing: 'def5678abc' } }
+      const snap = snapshotOf({ board: b, live: fixing, now: NOW })
+      expect(snap.items.find(i => i.id === 'TASK-001')).toMatchObject({ status: 'doing', note: expect.stringMatching(/commit abc1234 · 等 review/) })
+      expect(snap.items.find(i => i.id === 'TASK-002')).toMatchObject({ owner: 'fullstack', status: 'doing', note: expect.stringMatching(/review 要修改：缺錯誤處理 · 全端正在改/) })
+      expect(snap.gates.find(g => g.id === 'G5')?.gaps).toEqual([
+        { id: 'TASK-001', title: '方案頁', status: '等 Tech lead review' },
+        { id: 'TASK-002', title: '方案 API', status: 'review 要修改，全端修正中' },
+      ])
+      const under: CrewLive = { ...reviewing }
+      expect(snapshotOf({ board: both, live: under, now: NOW }).items.find(i => i.id === 'TASK-002')).toMatchObject({ owner: 'techlead', status: 'review', note: expect.stringMatching(/Tech lead 正在 review/) })
+    })
   })
 
   test('show a committed task as under way, by the full-stack, with its commit; a task being built as the full-stack’s', () => {

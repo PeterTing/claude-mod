@@ -37,10 +37,15 @@ export type Task = {
   size?: TaskSize
   /** Why the task left the plan, when it did. */
   crew_dropped?: string
-  /** The commits on crew's branch that do this task, as crew read them from git. */
+  /** The commits on crew's branch that do this task, as crew read them from git, newest first. */
   crew_commits?: string[]
+  /** The tech lead's last review of the task, as crew recorded it. */
+  crew_review?: TaskReview
   [key: string]: unknown
 }
+
+/** A review pinned to the commit the tech lead read: approved, or changes asked for. */
+export type TaskReview = { sha: string; verdict: 'approve' | 'changes'; notes?: string }
 
 export type PrdItem = {
   id: string
@@ -117,6 +122,31 @@ export const tasksOf = (item: PrdItem): Task[] =>
     if (typeof v !== 'object' || v === null || typeof v.id !== 'string' || typeof v.title !== 'string') return []
     return [{ ...v, id: v.id, title: v.title, status: typeof v.status === 'string' ? v.status : 'planned', acceptance_criteria: Array.isArray(v.acceptance_criteria) ? v.acceptance_criteria.filter((c): c is string => typeof c === 'string') : [], detail: typeof v.detail === 'string' ? v.detail : '' } as Task]
   })
+
+/** The tasks in the plan: in a feature in scope, not dropped, in the order the tech lead numbered them. */
+export const liveTasksOf = (board: Tracker): Task[] =>
+  board.prd_items
+    .filter(i => i.crew_dropped === undefined)
+    .flatMap(tasksOf)
+    .filter(t => t.crew_dropped === undefined)
+    .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
+
+/** The task's newest commit on crew's branch, as crew saw it. */
+export const tipOf = (task: Task): string | undefined => (Array.isArray(task.crew_commits) && typeof task.crew_commits[0] === 'string' ? task.crew_commits[0] : undefined)
+
+/** The tech lead's last review of the task, when the mark is one crew could have written. */
+export const reviewOf = (task: Task): TaskReview | undefined => {
+  const r = task.crew_review as Partial<TaskReview> | undefined
+  if (typeof r !== 'object' || r === null || typeof r.sha !== 'string' || (r.verdict !== 'approve' && r.verdict !== 'changes')) return undefined
+  return { sha: r.sha, verdict: r.verdict, ...(typeof r.notes === 'string' ? { notes: r.notes } : {}) }
+}
+
+/** The tech lead approved the task's newest commit: an approval of an older one is out of date. */
+export const approvedNow = (task: Task): boolean => {
+  const tip = tipOf(task)
+  const r = reviewOf(task)
+  return tip !== undefined && r?.verdict === 'approve' && r.sha === tip
+}
 
 export const DEFAULT_PREFIXES: Prefixes = { feature: 'PRD-', testCase: 'TC-' }
 
@@ -373,6 +403,24 @@ export const gateG3 = (t: Tracker): GateResult => {
   return { covered: criteria.length - gaps.length, total: criteria.length, gaps }
 }
 
+/** G5: every task in the plan has its newest commit approved by the tech lead. */
+export const gateG5 = (t: Tracker): GateResult => {
+  const tasks = liveTasksOf(t)
+  const feature = new Map(t.prd_items.flatMap(i => tasksOf(i).map(x => [x.id, i.id] as const)))
+  const gaps = tasks.filter(x => !approvedNow(x)).map(x => ({ id: x.id, title: x.title, feature: feature.get(x.id) ?? '' }))
+  return { covered: tasks.length - gaps.length, total: tasks.length, gaps }
+}
+
+/** Where a task's code stands, for the roles: its newest commit and the review of it. */
+const workOf = (x: Task): string => {
+  const tip = tipOf(x)
+  if (tip === undefined) return ''
+  const r = reviewOf(x)
+  const review =
+    r === undefined ? '等 review' : r.sha !== tip ? 'review 過期（新的 commit 還沒 review）' : r.verdict === 'approve' ? 'review 通過' : `review 要修改${r.notes === undefined ? '' : `：${r.notes}`}`
+  return ` · commit ${tip.slice(0, 7)} · ${review}`
+}
+
 /** The board as compact text for a role to read: ids first, nothing it does not need. */
 export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): string => {
   const items = t.prd_items.filter(i => scope.feature === undefined || i.id === scope.feature)
@@ -400,7 +448,7 @@ export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): strin
       lines.push(
         x.crew_dropped !== undefined
           ? `  任務 ${x.id} ${x.title} — 移出：${x.crew_dropped}`
-          : `  任務 ${x.id} ${x.title}${size}← ${x.acceptance_criteria.join('、')}${x.detail === '' ? '' : `：${x.detail}`}`,
+          : `  任務 ${x.id} ${x.title}${size}← ${x.acceptance_criteria.join('、')}${x.detail === '' ? '' : `：${x.detail}`}${workOf(x)}`,
       )
     }
   }

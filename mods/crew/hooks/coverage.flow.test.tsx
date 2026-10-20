@@ -67,7 +67,7 @@ describe('work the person started', () => {
     expect((await notice($, 'a-qa-3')).drop).toBeDefined()
     await write($, 'a-techlead-4', PLAN)
     await done($, 'a-techlead-4')
-    await build($, ['TASK-001', 'TASK-002'], 'a-fullstack-5')
+    await build($, ['TASK-001', 'TASK-002'], 'a-fullstack-5', 'a-techlead-4')
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
     expect((await notice($, 'a-fullstack-5')).drop).toBeDefined()
     await w.clock.advance(61_000)

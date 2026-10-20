@@ -29,7 +29,7 @@ describe('crew memory', () => {
   test('gives the roles memory_save and memory_search', async ($, on) => {
     const w = world($, on)
     await start($)
-    expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'memory_save', 'memory_search', 'crew'])
+    expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'review_submit', 'memory_save', 'memory_search', 'crew'])
   })
 
   test('saves what a role remembers, under its name, in the repo', async ($, on) => {

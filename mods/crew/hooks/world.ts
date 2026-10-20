@@ -125,6 +125,12 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
       return ok()
     }
     if (args[0] === 'status' && args[1] === '--porcelain') return ok(dir === ROOT ? git.checkout : git.dirty)
+    if (args[0] === 'show') {
+      // Each commit as `git show` prints it: its sha, its subject, and a diff.
+      const shas = args.slice(1, args.indexOf('--') === -1 ? undefined : args.indexOf('--')).filter(a => !a.startsWith('-'))
+      const all = [...git.branches.values()].flat()
+      return ok(shas.map(sha => `commit ${sha}\n${all.find(c => c.sha === sha)?.subject ?? ''}\n\n diff of ${sha}\n`).join('\n'))
+    }
     if (args[0] === 'log') {
       const end = args.indexOf('--')
       const not = args.indexOf('--not')
@@ -300,9 +306,18 @@ export const paneText = async ($: Engine, tab?: string) => {
 }
 
 /** The full-stack builds each task in turn: a commit that does it on crew's branch, then the end of its run. */
-export const build = async ($: Engine, ids: readonly string[] = ['TASK-001', 'TASK-002'], agentId = 'a-fullstack-4') => {
+/** The tech lead sends its verdict on the task it reviews, and its run ends. */
+export const approve = async ($: Engine, task: string, agentId = 'a-techlead-3', verdict: 'approve' | 'changes' = 'approve', notes?: string) => {
+  const r = await $.tool.call({ tool: 'mcp__crew__review_submit', tool_use_id: `r-${Math.random()}`, agentId, task, verdict, ...(notes === undefined ? {} : { notes }) } as never)
+  await done($, agentId)
+  return r as { result: unknown }
+}
+
+/** The full-stack commits each task and the tech lead approves it. */
+export const build = async ($: Engine, ids: readonly string[] = ['TASK-001', 'TASK-002'], agentId = 'a-fullstack-4', techlead = 'a-techlead-3') => {
   for (const id of ids) {
     current.commit?.(`${id}: 完成 ${id}`)
     await done($, agentId)
+    await approve($, id, techlead)
   }
 }

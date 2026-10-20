@@ -5,7 +5,7 @@
  * the full-stack says about its work is not. Pure.
  */
 
-import type { Task, Tracker } from './board'
+import type { Task, TaskReview, Tracker } from './board'
 import { tasksOf } from './board'
 import { fingerprint } from './prd'
 
@@ -84,22 +84,47 @@ export const marksOf = (board: Tracker, seen: Seen): Map<string, string[]> => {
   return out
 }
 
-/** The board with each task marked with the commits that do it; null when no mark changes. */
-export const withCommits = (board: Tracker, commits: ReadonlyMap<string, readonly string[]>): Tracker | null => {
+/** The board with each task's `field` set to its value in `values`, or taken off when it has none; null when no mark changes. */
+const markTasks = (board: Tracker, field: string, values: ReadonlyMap<string, unknown>): Tracker | null => {
   let changed = false
   const items = board.prd_items.map(item => {
     if (!Array.isArray(item.tasks) || item.tasks.length === 0) return item
     const known = new Set(tasksOf(item).map(t => t.id))
     const tasks = item.tasks.map(entry => {
-      const v = entry as { id?: unknown; crew_commits?: unknown } | null
+      const v = entry as Record<string, unknown> | null
       if (typeof v?.id !== 'string' || !known.has(v.id)) return entry
-      const now = commits.get(v.id)
-      if (JSON.stringify(v.crew_commits ?? null) === JSON.stringify(now ?? null)) return entry
+      const now = values.get(v.id)
+      if (JSON.stringify(v[field] ?? null) === JSON.stringify(now ?? null)) return entry
       changed = true
-      const { crew_commits: _, ...rest } = v as Record<string, unknown>
-      return now === undefined ? rest : { ...rest, crew_commits: [...now] }
+      const { [field]: _, ...rest } = v
+      return now === undefined ? rest : { ...rest, [field]: now }
     })
     return { ...item, tasks }
   })
   return changed ? { ...board, prd_items: items } : null
 }
+
+/** The board with each task marked with the commits that do it; null when no mark changes. */
+export const withCommits = (board: Tracker, commits: ReadonlyMap<string, readonly string[]>): Tracker | null =>
+  markTasks(board, 'crew_commits', new Map([...commits].map(([id, shas]) => [id, [...shas]])))
+
+/**
+ * crew's record of the tech lead's reviews: each pinned to the commit the
+ * tech lead read, and tied to the task as it stood (taskMark), so a later task
+ * that takes the same id is not taken for reviewed.
+ */
+export type Reviewed = Record<string, { sha: string; verdict: 'approve' | 'changes'; notes?: string; mark: string }>
+
+/** Task id → crew's review of that very task, of a commit crew saw doing it. */
+export const reviewsOf = (board: Tracker, reviewed: Reviewed, commits: ReadonlyMap<string, readonly string[]>): Map<string, TaskReview> => {
+  const out = new Map<string, TaskReview>()
+  for (const task of board.prd_items.flatMap(item => tasksOf(item))) {
+    const r = reviewed[task.id]
+    if (r === undefined || r.mark !== taskMark(task) || !(commits.get(task.id) ?? []).includes(r.sha)) continue
+    out.set(task.id, { sha: r.sha, verdict: r.verdict, ...(r.notes === undefined ? {} : { notes: r.notes }) })
+  }
+  return out
+}
+
+/** The board with each task marked with crew's review of it; null when no mark changes. */
+export const withReviews = (board: Tracker, reviews: ReadonlyMap<string, TaskReview>): Tracker | null => markTasks(board, 'crew_review', reviews)
