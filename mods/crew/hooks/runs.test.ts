@@ -58,7 +58,8 @@ describe('results by test case', () => {
       'test result: TC-004 not ok with the old wording',
       '  1) TC-004 fails in mocha, which marks failures by number',
     ].join('\n')
-    expect(Object.fromEntries(resultsOf(output, IDS, 'TC-'))).toEqual({ 'TC-001': 'passed', 'TC-002': 'passed', 'TC-003': 'passed' })
+    // mocha numbers its failures: `1) TC-004 …` is TC-004 failing.
+    expect(Object.fromEntries(resultsOf(output, IDS, 'TC-'))).toEqual({ 'TC-001': 'passed', 'TC-002': 'passed', 'TC-003': 'passed', 'TC-004': 'failed' })
   })
 
   test('take a skipped or to-do test for no result', () => {

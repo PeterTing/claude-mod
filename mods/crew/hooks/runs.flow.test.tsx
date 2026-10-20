@@ -192,7 +192,7 @@ describe('crew’s test runs', () => {
     expect((await $.command.run(command('status'))).text).toMatch(/escalated[\s\S]*待你決定 1/)
   })
 
-  test('run the tests again when the session starts over on a flow left testing, its agents still listed', async ($, on) => {
+  test('start no second run when the session starts over while one is already asked for', async ($, on) => {
     const w = world($, on)
     await start($)
     await planned($)
@@ -202,11 +202,11 @@ describe('crew’s test runs', () => {
     w.commit('TASK-002: 取消流程')
     await done($, 'a-fullstack-5')
     await approve($, 'TASK-002')
-    // The run crew scheduled has not run when the session starts again, as after a reload.
+    // The run crew asked for has not started when the session starts again: the session's own request joins it.
     expect((await $.command.run(command('status'))).text).toMatch(/testing/)
     await start($)
     await tested()
-    expect(w.tests.runs.length).toBe(2)
+    expect(w.tests.runs.length).toBe(1)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
   })
 
@@ -251,5 +251,41 @@ describe('crew’s test runs', () => {
     await tested()
     expect(w.tests.runs).toHaveLength(1)
     expect(w.toasts.some(t => /crew 的工作目錄有沒 commit 的修改（notes\.txt）/.test(t))).toBe(true)
+  })
+
+  test('ask for a missing command once, with one notice', async ($, on) => {
+    const w = world($, on)
+    w.store.delete(`tests:${ROOT}`)
+    await start($)
+    await planned($)
+    await build($)
+    expect(w.toasts.filter(t => /有一件事等你決定/.test(t))).toHaveLength(1)
+    expect(w.toasts.filter(t => /^crew：還沒有設定測試指令/.test(t))).toEqual([])
+  })
+
+  test('mask what a refused run’s notice repeats', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await build($)
+    w.git.dirty = `?? key-sk-ant-api03-${'a'.repeat(32)}.txt\n`
+    await $.command.run(command('test'))
+    await tested()
+    expect(w.toasts.some(t => /工作目錄有沒 commit 的修改/.test(t))).toBe(true)
+    expect(w.toasts.some(t => /sk-ant-api03-aaaa/.test(t))).toBe(false)
+  })
+
+  test('run once for requests made while a run waits its turn', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await build($)
+    expect(w.tests.runs).toHaveLength(1)
+    await $.command.run(command('test'))
+    await $.command.run(command('test'))
+    await $.command.run(command('test'))
+    await tested()
+    // The three requests, made before the run they asked for started, make one run.
+    expect(w.tests.runs).toHaveLength(2)
   })
 })

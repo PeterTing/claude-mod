@@ -82,6 +82,10 @@ export type CrewFlow = {
   reviewing?: { task: string; sha: string }
   /** Runs of the person's test command that left test cases not passed. */
   runs?: number
+  /** The newest commit of each task when a test run sent failures to fix. */
+  tips?: string
+  /** Features whose design the person sent back after their tasks were planned. */
+  redesigned?: string[]
 }
 
 /** Work the flow gave a role while it was busy answering the person: handed over when that turn ends. */

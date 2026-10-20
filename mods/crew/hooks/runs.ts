@@ -55,6 +55,8 @@ export const parseCommand = (text: string): { ok: true; argv: string[] } | { ok:
  */
 const MARKS: readonly [RegExp, Outcome][] = [
   [/^\s*[✗✕✖×❌]/, 'failed'],
+  // mocha numbers its failures: `1) TC-002 …`.
+  [/^\s*\d+\)\s/, 'failed'],
   [/^\s*[✓✔√✅]/, 'passed'],
   [/^\s*not ok\b/, 'failed'],
   [/^\s*ok\b/, 'passed'],

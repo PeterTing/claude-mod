@@ -783,6 +783,36 @@ describe('the PRD as the flow holds the board to it', () => {
       expect(step({ stage: 'testing', round: 0, retries: 0 }, { type: 'resume', board: all, prd: { path: 'docs/PRD.md', size: 600 } })).toMatchObject({ state: { stage: 'testing' }, actions: [{ type: 'run_tests' }] })
     })
 
+    test('counts a test-run fix committed under another task’s id', () => {
+      const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
+      const fix = step({ stage: 'testing', round: 0, retries: 0 }, { type: 'tests_ran', board: passedOf(all, ['TC-001']) })
+      expect(fix.state).toMatchObject({ stage: 'building', building: 'TASK-001' })
+      // The full-stack fixed it in TASK-002's code: that task's newest commit is reviewed, not a retry asked for.
+      const moved = withCommits(all, new Map([['TASK-001', ['abc0000']], ['TASK-002', ['fff0002', 'abc0001']]])) ?? all
+      const r = step(fix.state, { type: 'role_done', role: 'fullstack', board: moved })
+      expect(r.state).toMatchObject({ stage: 'reviewing', reviewing: { task: 'TASK-002', sha: 'fff0002' } })
+    })
+
+    test('does not count the full-stack’s run for a task the plan dropped as an attempt at the next one', () => {
+      const dropped = (() => {
+        // The tech lead replans AC-001 as TASK-003 and drops TASK-001, which the full-stack is on.
+        const r = applyOps(plannedTwo(), [{ op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '方案頁新版', detail: '', size: 'S' }, { op: 'drop_task', id: 'TASK-001', reason: '改成 TASK-003' }] as Op[], ctx('techlead'))
+        if (!r.ok) throw new Error(r.errors.join())
+        return r.tracker
+      })()
+      const s = { stage: 'building' as const, round: 0, retries: 0, building: 'TASK-001' }
+      const moved = step(s, { type: 'role_done', role: 'techlead', board: dropped, working: ['fullstack'] })
+      expect(moved.state).toMatchObject({ stage: 'building', building: 'TASK-002' })
+      // The full-stack is at work: the next task reaches it as a message, never a second agent.
+      expect(moved.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', item: 'TASK-002' })
+      // The full-stack's run under way was for TASK-001: its end leaves TASK-002 two real tries before the person.
+      let t = step(moved.state, { type: 'role_done', role: 'fullstack', board: dropped }).state
+      expect(t.stage).toBe('building')
+      t = step(t, { type: 'role_done', role: 'fullstack', board: dropped }).state
+      expect(t.stage).toBe('building')
+      expect(step(t, { type: 'role_done', role: 'fullstack', board: dropped }).state.stage).toBe('escalated')
+    })
+
     test('takes a run the person asked for on a finished board, and opens it again when a test case failed', () => {
       const all = passedOf(reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve'))
       expect(step({ stage: 'done', round: 0, retries: 0 }, { type: 'tests_ran', board: all })).toEqual({ state: { stage: 'done', round: 0, retries: 0 }, actions: [] })
@@ -1023,5 +1053,36 @@ describe('designs', () => {
   test('pick up after a restart: the designer goes on, or the person is asked again', () => {
     expect(step({ stage: 'designing', round: 0, retries: 0 }, { type: 'resume', board: tested(), prd: { path: 'docs/PRD.md', size: 600 } }).actions[0]).toMatchObject({ type: 'message', role: 'uiux' })
     expect(step({ stage: 'approving', round: 0, retries: 0 }, { type: 'resume', board: both(tested()), prd: { path: 'docs/PRD.md', size: 600 } })).toMatchObject({ actions: [{ type: 'approve', ids: ['SCR-001', 'SCR-002'] }] })
+  })
+})
+
+describe('a design sent back after the work is done', () => {
+  const two = (): Tracker => bare(WORLD_SPLIT as unknown as Op[], [tc(['AC-001', 'AC-002'])])
+  const approvedAll = (t: Tracker): Tracker => designedOf(t)
+  const planned2 = (): Tracker => {
+    const r = applyOps(approvedAll(two()), PLAN as unknown as Op[], ctx('techlead'))
+    if (!r.ok) throw new Error(r.errors.join())
+    return r.tracker
+  }
+  const reject = (t: Tracker, id: string, reason: string): Tracker => withDecisions(t, new Map(t.prd_items.flatMap(i => designsOf(i)).map(d => [d.id, d.id === id ? { verdict: 'rejected' as const, reason } : { verdict: 'approved' as const }]))) ?? t
+
+  test('opens the design stage again, and once the new design is approved, has the tech lead check that feature’s tasks', () => {
+    const back = reject(planned2(), 'SCR-001', '要有比較表')
+    const r = step({ stage: 'done', round: 0, retries: 0 }, { type: 'designs_decided', board: back })
+    expect(r.state).toMatchObject({ stage: 'designing', redesigned: ['PRD-001'] })
+    expect(r.actions[0]).toMatchObject({ type: 'message', role: 'uiux', item: 'PRD-001' })
+    // The designer's new design, approved: the tech lead checks PRD-001's tasks against it.
+    const drawn = applyOps(back, [{ op: 'add_design', feature: 'PRD-001', title: '比較表', kind: 'screen', body: '表格' } as Op], ctx('uiux'))
+    if (!drawn.ok) throw new Error(drawn.errors.join())
+    const approved = withDecisions(drawn.tracker, new Map(drawn.tracker.prd_items.flatMap(i => designsOf(i)).map(d => [d.id, d.id === 'SCR-001' ? { verdict: 'rejected' as const, reason: '要有比較表' } : { verdict: 'approved' as const }]))) ?? drawn.tracker
+    const replan = step({ ...r.state, stage: 'approving' }, { type: 'designs_decided', board: approved })
+    expect(replan.state.stage).toBe('planning')
+    expect(replan.state.redesigned).toBeUndefined()
+    expect(replan.actions[0]).toMatchObject({ type: 'message', role: 'techlead', item: 'PRD-001' })
+    expect((replan.actions[0] as { text: string }).text).toMatch(/PRD-001 方案選擇[\s\S]*新的設計稿[\s\S]*add_task[\s\S]*drop_task/)
+  })
+
+  test('changes nothing when a decision leaves every feature with an approved design', () => {
+    expect(step({ stage: 'done', round: 0, retries: 0 }, { type: 'designs_decided', board: planned2() })).toEqual({ state: { stage: 'done', round: 0, retries: 0 }, actions: [] })
   })
 })

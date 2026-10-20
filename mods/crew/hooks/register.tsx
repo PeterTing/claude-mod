@@ -818,13 +818,18 @@ const NO_COMMAND = '還沒有設定測試指令。請輸入 /crew test-command <
 /** A run's name, from its time: the log's file name. */
 const runName = (t: number): string => new Date(t).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
 
-/** Starts a test run on the clock, apart from the step or command that asked for it. */
-const laterTests = ($: any) => {
-  $.clock.after(0, () => runTests($))
-}
+/** A run under way, one waiting for it, and one asked for and not yet started: a request made meanwhile joins it. */
+const testing: { running?: Promise<string>; queued?: Promise<string>; asked?: boolean } = {}
 
-/** A run under way: a second one waits for it, and runs after it on what is newer. */
-const testing: { running?: Promise<string> } = {}
+/** Starts a test run on the clock, apart from the step or command that asked for it; a run already asked for and not yet started takes this request too. */
+const laterTests = ($: any) => {
+  if (testing.asked === true) return
+  testing.asked = true
+  $.clock.after(0, () => {
+    testing.asked = false
+    return runTests($)
+  })
+}
 
 /**
  * Runs the person's test command in crew's worktree, records each test case's
@@ -833,7 +838,14 @@ const testing: { running?: Promise<string> } = {}
  * in a sentence.
  */
 function runTests($: any): Promise<string> {
-  const run = (testing.running ?? Promise.resolve('')).then(() => runSafely($))
+  if (testing.queued !== undefined) return testing.queued
+  const ahead = testing.running
+  const run = (ahead ?? Promise.resolve('')).then(() => {
+    // It starts now: a later request waits for it anew.
+    testing.queued = undefined
+    return runSafely($)
+  })
+  if (ahead !== undefined) testing.queued = run
   testing.running = run.catch(() => '')
   return run
 }
@@ -850,7 +862,7 @@ async function runSafely($: any): Promise<string> {
     } catch (again) {
       $.ui.log(`crew: could not tell the flow the test run failed: ${String(again)}`, { to: 'debug' })
     }
-    $.ui.toast(`crew：${error}`)
+    $.ui.toast(`crew：${redact(error)}`)
     return error
   }
 }
@@ -859,10 +871,12 @@ async function runOnce($: any): Promise<string> {
   const l = await read($, live)
   const requirements = (await prdView($))?.requirements
   const tell = async (error: string): Promise<string> => {
-    // Said to the person too: a run they asked for that did not happen is not left without a word.
-    $.ui.toast(`crew：${error}`)
+    const open = (): Promise<number> => read($, live).then((s: CrewLive) => s.questions.filter(q => q.status === 'open').length)
+    const before = await open()
     const board = await loadBoard($)
     if (board !== null) await feed($, { type: 'tests_ran', board, error, ...(requirements === undefined ? {} : { requirements }) })
+    // The person hears why once: in the question the flow asks them, or else in a notice of its own.
+    if ((await open()) <= before) $.ui.toast(`crew：${redact(error)}`)
     return error
   }
   if (l.prdPath === null) return '還沒有開始的 PRD。'
