@@ -345,7 +345,7 @@ function Alignment({ el, a }: { el: Elements; a: NonNullable<Snapshot['alignment
 /** crew while it stays on: the heartbeat and what it found, a restart, and the brain's digest. */
 function ResidentLine({ el, r }: { el: Elements; r: NonNullable<Snapshot['resident']> }) {
   const { Box, Text } = el
-  const digest = r.digest === undefined ? '' : ` · 大腦摘要 ${r.digest.sent} 送出，${r.digest.queued} 則等 ${r.digest.next}`
+  const digest = r.digest === undefined ? '' : ` · 大腦摘要 ${r.digest.sent === undefined ? '還沒有送出' : `${r.digest.sent} 送出`}，${r.digest.queued} 則等 ${r.digest.next}`
   return (
     <Box flexDirection="column">
       {r.found === undefined ? (

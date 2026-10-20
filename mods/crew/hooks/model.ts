@@ -192,7 +192,8 @@ export type Resident = {
   next: string
   found?: string
   resumed?: string
-  digest?: { sent: string; queued: number; next: string }
+  /** `sent` absent: none went out yet. */
+  digest?: { sent?: string; queued: number; next: string }
 }
 
 /** Everything the panes draw, at one moment. */

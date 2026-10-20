@@ -8,7 +8,7 @@ import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './con
 import { DEMO } from './demo'
 import { answeredOf, RUNNING, step } from './flow'
 import type { FlowAction, FlowEvent } from './flow'
-import { dayOf, emptyLive, HEARTBEAT_MS, metricsOf, said, snapshotOf, STAGE_OF, usageSignals } from './live'
+import { clockOf, dayOf, emptyLive, HEARTBEAT_MS, metricsOf, said, snapshotOf, STAGE_OF, usageSignals } from './live'
 import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, redact, searchMemories, serializeMemories } from './memory'
 import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { ROLE_NAMES } from './model'
@@ -855,7 +855,8 @@ async function execute($: any, actions: readonly FlowAction[]) {
       await handOver($, 'techlead', [{ kind: 'message', route: action.route, text, run: 'flow', item: action.task }])
     } else {
       $.ui.toast(`crew：${action.text}`)
-      if ((await read($, live)).lead === 'brain') tellBrain(action.text)
+      // The work the brain started is done: it hears at once; a step along the way waits for its digest.
+      if ((await read($, live)).lead === 'brain') tellBrain(action.text, action.type === 'done' ? 'now' : 'digest')
     }
   }
 }
@@ -1271,8 +1272,24 @@ const brain: { queue: { text: string; ticks: number }[]; timer: { cancel: () => 
 const BRAIN_TICK_MS = 15_000
 const BRAIN_TICKS = 4
 
-function tellBrain(text: string) {
-  brain.queue.push({ text, ticks: 0 })
+function tellBrain(text: string, when: 'now' | 'digest' = 'now') {
+  if (when === 'digest') digest.notes.push(text)
+  else brain.queue.push({ text, ticks: 0 })
+}
+
+/** How often the roles' routine news goes to the brain, in one message. */
+const DIGEST_MS = 1_800_000
+
+/** The brain's digest: routine news waiting for it, when the last went out, when the next goes, and its timer. */
+const digest: { notes: string[]; sentAt?: number; nextAt?: number; timer?: { cancel: () => void } } = { notes: [] }
+
+/** The routine news of the last half hour, as one message; nothing when there is none. */
+function sendDigest($: any, now: number) {
+  digest.nextAt = now + DIGEST_MS
+  if (digest.notes.length === 0) return
+  const text = `[crew] 過去 30 分鐘的例行回報（不用立刻處理）：\n${digest.notes.splice(0).map(n => `- ${n}`).join('\n')}\n\n${BRAIN_NOTE}`
+  digest.sentAt = now
+  void Promise.resolve($.prompt.submit({ text })).catch((err: unknown) => $.ui.log(`crew: could not send the brain its digest: ${String(err)}`, { to: 'debug' }))
 }
 
 /** A role's words for the brain, inside quotes it cannot close. */
@@ -1396,13 +1413,13 @@ async function decideTuning($: any, question: string, approved: boolean): Promis
   if (!approved) {
     await update($, live, s => ({ ...s, tunings: (s.tunings ?? []).filter(x => x.id !== question) }))
     await saveState($)
-    tellBrain(`使用者沒有核准你的建議（${question}）：${p.text}。`)
+    tellBrain(`使用者沒有核准你的建議（${question}）：${p.text}。`, 'digest')
     return `沒有執行大腦的建議：${p.text}。`
   }
   const id = await applyTuning($, p.role, p.change, p.text, p.reason)
   await update($, live, s => ({ ...s, tunings: (s.tunings ?? []).map(x => (x.id === question ? { ...x, id, pending: undefined } : x)) }))
   await saveState($)
-  tellBrain(`使用者核准了你的建議（${question}，記成 ${id}）：${p.text}。`)
+  tellBrain(`使用者核准了你的建議（${question}，記成 ${id}）：${p.text}。`, 'digest')
   return `已執行大腦的建議（${id}）：${p.text}。`
 }
 
@@ -1483,6 +1500,8 @@ async function lookAfter($: any, now: number): Promise<string[]> {
         else if (after !== 'done') found.push(`流程完成後看板有變動 → 接續「${STAGE_OF[after] ?? after}」`)
       }
     }
+    // What the heartbeat did about the work the brain leads goes with the brain's digest.
+    if (l.lead === 'brain') for (const f of found) tellBrain(`心跳：${f}`, 'digest')
     // Usage worked out in code: the brain hears of each condition at most once an hour.
     for (const s of usageSignals(await read($, live))) {
       if (await raiseAlert($, s.key, s.text, now)) found.push(`${s.text} → 已告訴大腦`)
@@ -2034,7 +2053,8 @@ async function look($: any) {
           ? '看板上的功能還沒有對應到 PRD 需求，PM 會補上對應。'
           : `PRD 改了（新增 ${drift.added.length}、移除 ${drift.removed.length} 條需求），PM 會同步看板。`
         $.ui.toast(`crew：${text}`)
-        if (l.lead === 'brain') tellBrain(text)
+        // The PM syncs the board on its own: the brain hears of it with its digest.
+        if (l.lead === 'brain') tellBrain(text, 'digest')
         await note($, { kind: 'prd_changed', added: drift.added.map(r => r.id), removed: drift.removed.map(r => r.id), ...(unlinked ? { unlinked } : {}) })
       }
       await feed($, { type: 'prd_changed', board, requirements, added: drift.added, removed: drift.removed, key, ...(unlinked ? { unlinked } : {}) })
@@ -2582,8 +2602,15 @@ async function withPaneState($: any, snap: Snapshot, board: Tracker | null, l: C
   const found = open === null || board === null ? undefined : board.prd_items.flatMap(i => designsOf(i)).find(d => d.id === open)
   const search = await read($, recalled)
   const chosen = await read($, picked)
+  // The brain's digest is shown while the brain leads the work, or has news waiting or sent.
+  const told = l.lead === 'brain' || digest.notes.length > 0 || digest.sentAt !== undefined
+  const resident =
+    snap.resident === undefined || !told
+      ? snap.resident
+      : { ...snap.resident, digest: { ...(digest.sentAt === undefined ? {} : { sent: clockOf(digest.sentAt) }), queued: digest.notes.length, next: digest.nextAt === undefined ? '—' : clockOf(digest.nextAt) } }
   return {
     ...snap,
+    ...(resident === undefined ? {} : { resident }),
     tuning: settings.tuning,
     settings: { openOnLoad: settings.openOnLoad, ...(argv === undefined ? {} : { testCommand: argv.join(' ') }) },
     start: { ...(snap.start ?? {}), prds: await prdCandidates($), ...(chosen === null ? {} : { chosen }) },
@@ -2645,6 +2672,10 @@ export const register: Register = on => {
     await heartbeat($, false)
     heart.timer?.cancel()
     heart.timer = $.clock.every(HEARTBEAT_MS, () => void heartbeat($))
+    // The roles' routine news goes to the brain every half hour, in one message.
+    digest.nextAt = (await $.clock.now()) + DIGEST_MS
+    digest.timer?.cancel()
+    digest.timer = $.clock.every(DIGEST_MS, () => void Promise.resolve($.clock.now()).then((now: number) => sendDigest($, now)))
     // The PRD may have changed while Claude Code was closed; from now on crew looks every few seconds.
     prdCache.view = undefined
     await update($, live, l => ({ ...l, signals: { ...l.signals, prdVersion: '' } }))
