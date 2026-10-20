@@ -2402,7 +2402,10 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     return decide($, [id], 'rejected', cut(reason, 500))
   }
   if (verb === 'test') {
-    if ((await read($, live)).prdPath === null) return '還沒有開始的 PRD。'
+    const l = await read($, live)
+    if (l.prdPath === null) return '還沒有開始的 PRD。'
+    // A run moves the flow on: a flow held for the person runs by their own word, as 接續 does.
+    if (l.paused !== undefined && !typed) return '流程暫停中：要使用者自己在右側面板按［跑測試］或［接續］。'
     laterTests($)
     return 'crew 開始跑測試，跑完會通知。'
   }

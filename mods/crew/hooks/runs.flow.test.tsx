@@ -209,7 +209,9 @@ describe('crew’s test runs', () => {
     w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(cases.tracker))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'testing', round: 0, retries: 0 }, questions: [], lead: 'person' })
     await start($)
-    // Nothing goes on before the person says so in the pane.
+    // Nothing goes on before the person says so in the pane: the brain cannot run the tests on a held flow either.
+    expect(String((await crew($, { action: 'test' })).result)).toMatch(/流程暫停中/)
+    await tested()
     expect(w.tests.runs).toEqual([])
     await resumed($)
     await tested()
