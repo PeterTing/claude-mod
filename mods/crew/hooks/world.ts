@@ -343,9 +343,15 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
       return { id, spawnedBy: 'crew', type: s.subagentType, status: stopped.includes(id) ? 'completed' : 'running', description: s.description }
     }),
   }))
+  /** The next so many messages to an agent are not delivered, as when it cannot take one just then. */
+  const failSends = { n: 0 }
   // Resuming a finished agent asks whether its type is offered, as the engine does.
   on('session.send', async (_$, e) => {
     sent.push({ to: String(e.to), text: e.text })
+    if (failSends.n > 0) {
+      failSends.n -= 1
+      return { isDelivered: false, reason: 'not now' }
+    }
     const offer = (await engine.agent.offer({ agent: 'crew:pm', description: 'crew PM', source: 'plugin', provider: { plugin: 'crew', tier: 'user' } } as never)) as { isOffered: boolean }
     if (!offer.isOffered) return { isDelivered: false, reason: "Agent type 'crew:pm' is not offered in this session." }
     return deliver ? { isDelivered: true } : { isDelivered: false, reason: 'Agent could not be resumed' }
@@ -363,7 +369,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   current.clock = clock
   current.spawned = spawned
   current.disk = disk
-  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, amend, reset, tests, broken, refuse, panes }
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, amend, reset, tests, broken, refuse, panes, failSends }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)

@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
-import { approve, build, command, designed, done, paneUi, PLAN, ROOT, SPLIT, start, textOf, world, write } from './world'
+import { approve, build, command, designed, done, paneUi, PLAN, PRD, ROOT, SPLIT, start, textOf, world, write } from './world'
 
 const call = ($: Engine, tool: string, input: Record<string, unknown>, agentId?: string) =>
   $.tool.call({ tool: `mcp__crew__${tool}`, tool_use_id: `h-${Math.random()}`, ...(agentId === undefined ? {} : { agentId }), ...input } as never) as Promise<{ result: unknown }>
@@ -14,6 +14,21 @@ const failed = ($: Engine, agentId: string, reason: 'error' | 'aborted') =>
 /** crew's heartbeat: every five minutes it looks after its work in code, with no model call, and acts on what it finds. */
 
 const BEAT = 300_000
+
+/** The board a last session left: split, tested, planned, the full-stack on TASK-001. */
+const leftBoard = () => {
+  let t = newTracker('repo')
+  for (const [by, ops] of [
+    ['pm', SPLIT],
+    ['qa', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }]],
+    ['techlead', PLAN],
+  ] as const) {
+    const r = applyOps(t, ops as unknown as Op[], { by, today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
+    if (!r.ok) throw new Error(r.errors.join())
+    t = r.tracker
+  }
+  return t
+}
 
 describe('the heartbeat', () => {
   test('says when crew last looked, and when it looks next', async ($, on) => {
@@ -239,5 +254,89 @@ describe('the heartbeat', () => {
     await start($)
     await w.clock.advance(3 * BEAT)
     expect(w.spawned).toEqual([])
+  })
+  test('wakes a new flow that stops where an earlier one did once, rather than hold it at once', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await failed($, 'a-qa-2', 'error')
+    await w.clock.advance(BEAT)
+    // QA was woken there; the person resets and starts over, and it stops at the same place.
+    await $.command.run(command('reset'))
+    await $.command.run(command('start docs/PRD.md'))
+    await done($, `a-pm-${w.spawned.length}`)
+    expect(w.spawned.at(-1)?.subagentType).toBe('crew:qa')
+    await failed($, `a-qa-${w.spawned.length}`, 'error')
+    const sent = w.sent.length
+    await w.clock.advance(BEAT)
+    expect(w.sent.length).toBe(sent + 1)
+    expect(w.toasts.some(t => /叫醒過一次還是停住/.test(t))).toBe(false)
+  })
+
+  test('does nothing while a role works', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await w.clock.advance(3 * BEAT)
+    expect(w.spawned).toHaveLength(1)
+    expect(w.sent).toEqual([])
+    const ui = await paneUi($)
+    expect(await textOf(ui)).not.toMatch(/停在|叫醒/)
+    await ui.unmount()
+  })
+
+  test('starts no second run while a long test run is under way', async ($, on) => {
+    const w = world($, on)
+    w.tests.ms = 400_000
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
+    await done($, 'a-qa-2')
+    await designed($)
+    await write($, 'a-techlead-4', PLAN)
+    await done($, 'a-techlead-4')
+    for (const id of ['TASK-001', 'TASK-002']) {
+      w.commit(`${id}: 完成 ${id}`)
+      await done($, 'a-fullstack-5')
+      await approve($, id)
+    }
+    await w.clock.advance(BEAT)
+    await w.clock.advance(BEAT)
+    expect(w.tests.runs).toHaveLength(1)
+  })
+
+  test('takes no PRD change on a held flow until the person goes on', async ($, on) => {
+    const w = world($, on)
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(leftBoard()))
+    w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, questions: [], lead: 'person' })
+    await start($)
+    w.disk.set(`${ROOT}/docs/PRD.md`, `${PRD}\n\n使用者可以改成年繳方案。`)
+    await w.clock.advance(30_000)
+    expect(w.spawned).toEqual([])
+    expect(w.toasts.some(t => /PRD 改了/.test(t))).toBe(false)
+    const ui = await paneUi($)
+    await ui.press({ key: 'resume' })
+    await ui.unmount()
+    await w.clock.advance(30_000)
+    expect(w.toasts.some(t => /PRD 改了/.test(t))).toBe(true)
+  })
+  test('wakes the agent a look could not reach once a frame comes, rather than replace it, so an answer it took stays', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await call($, 'ask_person', { question: '年繳要不要打折？' }, 'a-pm-1')
+    // The PRD changes while the PM splits; the look's message to it is not delivered this once.
+    w.failSends.n = 1
+    w.disk.set(`${ROOT}/docs/PRD.md`, `${PRD}\n\n使用者可以改成年繳方案。`)
+    await w.clock.advance(10_000)
+    expect(w.spawned).toHaveLength(1)
+    // The person's answer goes to the PM, and then the change: the same agent takes both.
+    await $.command.run(command('answer Q-01 不打折'))
+    expect(w.spawned).toHaveLength(1)
+    expect(w.sent.filter(m => m.to === 'a-pm-1').map(m => m.text).join('\n')).toMatch(/不打折[\s\S]*PRD 改了/)
   })
 })

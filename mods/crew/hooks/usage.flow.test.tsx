@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { command, designed, done, paneUi, PLAN, ROOT, SPLIT, start, textOf, world, write } from './world'
+import { approve, command, designed, done, NOW, paneUi, PLAN, ROOT, SPLIT, start, textOf, world, write } from './world'
 
 /** Token reminders crew sends the brain, and what the brain does about them: on its own, or once the person approves. */
 
@@ -140,5 +140,92 @@ describe('the brain’s actions on usage', () => {
     // The person's floors stand, whichever way the brain acts.
     const low = String((await crew($, { action: 'tune', role: 'fullstack', model: 'haiku' })).result)
     expect(low).toMatch(/低於全端的下限 Sonnet・high/)
+  })
+  test('keep a proposal waiting, and an action once approved, for a restart', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await crew($, { action: 'tune', role: 'fullstack', model: 'opus', text: '全端修了三次還沒過' })
+    type Saved = { tunings?: { id: string; pending?: boolean }[]; tuned?: Record<string, unknown>; questions: { id: string; item?: string }[] }
+    let saved = w.store.get(`state:${ROOT}`) as Saved
+    const id = saved.tunings?.find(t => t.pending === true)?.id ?? ''
+    expect(id).toMatch(/^Q-\d+$/)
+    expect(saved.questions.some(q => q.id === id && q.item === 'tune')).toBe(true)
+    const ui = await paneUi($)
+    await ui.press({ key: `approve-${id}` })
+    await ui.unmount()
+    saved = w.store.get(`state:${ROOT}`) as Saved
+    expect(saved.tuned?.fullstack).toEqual({ model: 'opus' })
+    expect(saved.tunings?.some(t => t.pending === true)).toBe(false)
+  })
+
+  test('let the person settle a proposal kept over a restart, and keep an action taken before it', async ($, on) => {
+    const w = world($, on)
+    w.store.set(`state:${ROOT}`, {
+      prdPath: null,
+      flow: { stage: 'idle', round: 0, retries: 0 },
+      questions: [
+        { id: 'Q-01', question: '大腦建議：全端之後的工作改用 Opus', item: 'tune', from: 'brain', t: NOW, status: 'open' },
+        { id: 'Q-02', question: '大腦建議：QA 之後的工作改用 Opus', item: 'tune', from: 'brain', t: NOW, status: 'open' },
+      ],
+      lead: 'person',
+      tuned: { pm: { model: 'opus' } },
+      tunings: [{ id: 'Q-01', pending: true, role: 'fullstack', text: '全端之後的工作改用 Opus', change: { model: 'opus' }, reason: 'x', before: '今日佔 80%', wakes: 0, at: NOW }],
+    })
+    await start($)
+    const ui = await paneUi($)
+    expect(await textOf(ui)).toMatch(/Q-01 大腦建議/)
+    await ui.press({ key: 'reject-Q-01' })
+    expect(await textOf(ui)).not.toMatch(/Q-01 大腦建議/)
+    // A proposal whose record a restart did not keep can be sent back too: it is out of date.
+    await ui.press({ key: 'reject-Q-02' })
+    expect(w.toasts.at(-1)).toMatch(/Q-02 的建議已經失效/)
+    expect(await textOf(ui)).not.toMatch(/大腦建議/)
+    await ui.unmount()
+    // The PM's tuning, taken before the restart, still runs its work.
+    await $.command.run(command('start docs/PRD.md'))
+    expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:pm', model: 'opus' })
+  })
+
+  test('change nothing when a proposal is sent back', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await crew($, { action: 'tune', role: 'fullstack', model: 'opus', text: '全端修了三次還沒過' })
+    const ui = await paneUi($)
+    const id = /(Q-\d+) 大腦建議/.exec(await textOf(ui))?.[1] ?? ''
+    await ui.press({ key: `reject-${id}` })
+    await ui.unmount()
+    expect(w.disk.get(`${ROOT}/.crew/memory/memories.jsonl`) ?? '').not.toMatch(/全端之後的工作改用 Opus/)
+    await write($, 'a-techlead-4', PLAN)
+    await done($, 'a-techlead-4')
+    expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:fullstack', model: 'sonnet' })
+  })
+
+  test('take a proposal approved only by the person: not by a command a peer or another plugin runs', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    const id = /(Q-\d+)/.exec(String((await crew($, { action: 'tune', role: 'fullstack', model: 'opus', text: 'x' })).result))?.[1] ?? ''
+    const peer = (await $.command.run({ ...command(`approve ${id}`), origin: { kind: 'peer' } } as never)) as { text: string }
+    expect(peer.text).toMatch(/要使用者自己/)
+    await write($, 'a-techlead-4', PLAN)
+    await done($, 'a-techlead-4')
+    expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:fullstack', model: 'sonnet' })
+  })
+
+  test('reach a role whose agent is still alive: its next work runs on the tuned model', async ($, on) => {
+    const w = world($, on)
+    w.store.set(`settings:${ROOT}`, { openOnLoad: true, tuning: 'auto' })
+    await start($)
+    await tested($)
+    await write($, 'a-techlead-4', PLAN)
+    await done($, 'a-techlead-4')
+    expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:fullstack', model: 'sonnet' })
+    await crew($, { action: 'tune', role: 'fullstack', model: 'opus', text: 'x' })
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    await approve($, 'TASK-001')
+    expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:fullstack', model: 'opus' })
   })
 })

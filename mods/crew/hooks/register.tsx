@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { CrewLive, CrewMessage, CrewScenario, CrewTab, CrewWork } from '../types'
+import type { CrewLive, CrewMessage, CrewScenario, CrewTab, CrewTuning, CrewWork } from '../types'
 import { applyOps, criteriaOf, decisionOf, designsOf, gateG1, gateG4, gateG6, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, reviewOf, tasksOf } from './board'
 import type { Tracker } from './board'
 import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './consolidate'
@@ -484,6 +484,47 @@ async function note($: any, event: Record<string, unknown>) {
 /** Where crew keeps a repo's flow between sessions: on this machine, not in the repo, so a cloned repo cannot plant work. */
 const stateKey = (): string => `state:${files.root}`
 
+const isTuning = (x: unknown): x is CrewTuning => {
+  if (typeof x !== 'object' || x === null || Array.isArray(x)) return false
+  const t = x as Record<string, unknown>
+  return (
+    Object.keys(t).every(k => k === 'model' || k === 'effort' || k === 'limit') &&
+    (t.model === undefined || t.model === 'haiku' || t.model === 'sonnet' || t.model === 'opus') &&
+    (t.effort === undefined || ['low', 'medium', 'high', 'xhigh', 'max'].includes(String(t.effort))) &&
+    (t.limit === undefined || (typeof t.limit === 'number' && Number.isInteger(t.limit) && t.limit >= 20_000 && t.limit <= 1_000_000))
+  )
+}
+
+/**
+ * The brain's tunings a restart reads back, as crew kept them: each still of
+ * its shape and at or above the person's floor for its role, the actions
+ * taken and the proposals still waiting for the person.
+ */
+function savedTunings(tuned: unknown, tunings: unknown): { tuned: Record<string, CrewTuning>; tunings: NonNullable<CrewLive['tunings']> } {
+  const kept: Record<string, CrewTuning> = {}
+  if (typeof tuned === 'object' && tuned !== null && !Array.isArray(tuned)) {
+    for (const [role, t] of Object.entries(tuned)) if (isCrewRole(role) && isTuning(t) && floorOf(role, t) === undefined) kept[role] = t
+  }
+  const list = (Array.isArray(tunings) ? tunings : [])
+    .filter(
+      (t): t is NonNullable<CrewLive['tunings']>[number] =>
+        typeof t === 'object' &&
+        t !== null &&
+        typeof t.id === 'string' &&
+        /^(Q|DEC)-\d+$/.test(t.id) &&
+        isCrewRole(t.role) &&
+        isTuning(t.change) &&
+        floorOf(t.role, t.change) === undefined &&
+        typeof t.text === 'string' &&
+        typeof t.reason === 'string' &&
+        typeof t.before === 'string' &&
+        typeof t.wakes === 'number' &&
+        typeof t.at === 'number',
+    )
+    .slice(-50)
+  return { tuned: kept, tunings: list }
+}
+
 /**
  * A new session picks up what the last one left: the flow, the PRD, open
  * questions and who leads (from crew's own store), and the threads and today's
@@ -492,7 +533,7 @@ const stateKey = (): string => `state:${files.root}`
 async function restore($: any) {
   const l = await read($, live)
   if (l.prdPath === null) {
-    const saved = (await $.store.get(stateKey())) as Partial<Record<'prdPath' | 'flow' | 'questions' | 'lead', unknown>> | undefined
+    const saved = (await $.store.get(stateKey())) as Partial<Record<'prdPath' | 'flow' | 'questions' | 'lead' | 'tuned' | 'tunings', unknown>> | undefined
     if (saved !== undefined && saved !== null && typeof saved === 'object') {
       // Only what still has the shape crew wrote: anything else starts clean.
       const flow = saved.flow as Partial<CrewLive['flow']> | undefined
@@ -502,12 +543,15 @@ async function restore($: any) {
         (q): q is CrewLive['questions'][number] =>
           typeof q === 'object' && q !== null && typeof q.id === 'string' && typeof q.question === 'string' && (q.status === 'open' || q.status === 'answered'),
       )
+      const { tuned, tunings } = savedTunings(saved.tuned, saved.tunings)
       await update($, live, (x): CrewLive => ({
         ...x,
         prdPath: typeof saved.prdPath === 'string' ? saved.prdPath : null,
         flow: isFlow ? (flow as CrewLive['flow']) : x.flow,
         questions,
         lead: saved.lead === 'brain' ? 'brain' : 'person',
+        ...(Object.keys(tuned).length === 0 ? {} : { tuned }),
+        ...(tunings.length === 0 ? {} : { tunings }),
       }))
     }
   }
@@ -787,7 +831,8 @@ async function waitForFrame($: any, start: WaitingStart) {
  * not started again: on the flow's run, the flow gave it its stage's work and
  * takes the next step when it ends; on the person's question, the waiting
  * work follows the answer. An agent the role was already at work in, one the
- * timer could not wake, is replaced as the timer asked.
+ * timer could not wake, is woken again from the frame, and replaced only if
+ * it still cannot be.
  */
 async function startWaiting($: any) {
   if (waitingStarts.length === 0) return
@@ -804,7 +849,9 @@ async function startWaiting($: any) {
         await update($, live, s => ({ ...s, pending: { ...s.pending, [role]: [...(s.pending[role] ?? []), work] } }))
         continue
       }
-      await startRole($, role, asked, given, reason, run)
+      // Still at work in the agent the timer could not reach: woken now, from the frame, and replaced only if it still cannot be.
+      if (r.state === 'working' && r.agentId !== undefined) await deliver($, role, asked, given, undefined, run)
+      else await startRole($, role, asked, given, reason, run)
     }
   })
 }
@@ -1300,6 +1347,8 @@ async function feed($: any, event: FlowEvent, timed = false) {
     const before = (await read($, live)).flow
     const r = step(before, event)
     // A flow that moved on, by any way the person took, is held no more: the heartbeat and the PRD look after it again.
+    // A stop the heartbeat woke is over once the flow moves to another stage: a later stop there is woken anew.
+    if (r.state.stage !== before.stage) heart.woke = undefined
     await update($, live, l => {
       if (l.paused === undefined || r.state.stage === before.stage) return { ...l, flow: r.state }
       const { paused: _, ...going } = l
@@ -1315,7 +1364,7 @@ async function saveState($: any) {
   if (files.root === '') return
   const l = await read($, live)
   try {
-    await $.store.set(stateKey(), { prdPath: l.prdPath, flow: l.flow, questions: l.questions, lead: l.lead })
+    await $.store.set(stateKey(), { prdPath: l.prdPath, flow: l.flow, questions: l.questions, lead: l.lead, tuned: l.tuned ?? {}, tunings: l.tunings ?? [] })
   } catch (err) {
     // Only a restart needs it: the work goes on.
     $.ui.log(`crew: could not keep the flow for a restart: ${String(err)}`)
@@ -1478,7 +1527,14 @@ async function applyTuning($: any, role: CrewRole, change: Tuning, text: string,
 async function decideTuning($: any, question: string, approved: boolean): Promise<string> {
   const l = await read($, live)
   const p = (l.tunings ?? []).find(x => x.pending === true && x.id === question)
-  if (p === undefined || !isCrewRole(p.role)) return `${question} 不是等你核准的大腦建議。`
+  if (p === undefined || !isCrewRole(p.role)) {
+    // A proposal a restart kept no record of is out of date: it is closed, and nothing changes.
+    const open = l.questions.find(q => q.id === question && q.status === 'open' && q.from === 'brain' && q.item === 'tune')
+    if (open === undefined) return `${question} 不是等你核准的大腦建議。`
+    await update($, live, s => ({ ...s, questions: s.questions.map(q => (q.id === question ? { ...q, status: 'answered' as const, answer: '已經失效' } : q)) }))
+    await saveState($)
+    return `${question} 的建議已經失效（Claude Code 重開過，沒有留下它的內容），沒有執行。需要的話請大腦重新提出。`
+  }
   await update($, live, s => ({ ...s, questions: s.questions.map(q => (q.id === question ? { ...q, status: 'answered' as const, answer: approved ? '核准' : '不要' } : q)) }))
   if (!approved) {
     await update($, live, s => ({ ...s, tunings: (s.tunings ?? []).filter(x => x.id !== question) }))
