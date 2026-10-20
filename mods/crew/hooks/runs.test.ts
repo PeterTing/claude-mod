@@ -50,6 +50,17 @@ describe('results by test case', () => {
     // TC-1 is TC-001 written short; TC-0010 is TC-010, which the board does not have.
   })
 
+  test('go by the runner’s own mark at the start or end of the line, not by words in a test’s name', () => {
+    const output = [
+      '    ✓ TC-001 shows PAYMENT_FAILED banner when the card is declined (3 ms)',
+      'tests/test_x.py::test_TC_002_error_state PASSED                 [ 50%]',
+      'test_tc_003_handles_ERROR (tests.T.test_tc_003_handles_ERROR) ... ok',
+      'test result: TC-004 not ok with the old wording',
+      '  1) TC-004 fails in mocha, which marks failures by number',
+    ].join('\n')
+    expect(Object.fromEntries(resultsOf(output, IDS, 'TC-'))).toEqual({ 'TC-001': 'passed', 'TC-002': 'passed', 'TC-003': 'passed' })
+  })
+
   test('follow the board’s own test case prefix', () => {
     expect(Object.fromEntries(resultsOf('✓ T-001 a\n✗ T_002 b', ['T-001', 'T-002'], 'T-'))).toEqual({ 'T-001': 'passed', 'T-002': 'failed' })
   })

@@ -146,6 +146,9 @@ describe('crew’s record of its latest test run', () => {
     expect(withResults(fresh, new Map([['TC-001', { result: 'passed' as const, sha: 'a', run: 'r' }]]))).toBeNull()
     const stale = withResults(fresh, new Map([['TC-001', { result: 'passed' as const, sha: 'a', run: 'r', stale: true as const }]]))!
     expect(stale.prd_items[0]!.test_cases[0]!.automated_status).toBe('not_run')
-    expect(withResults(stale, new Map())!.prd_items[0]!.test_cases[0]!.crew_result).toBeUndefined()
+    // Once crew has no result for the case, the board stops saying it passed.
+    const gone = withResults(fresh, new Map())!
+    expect(gone.prd_items[0]!.test_cases[0]).toMatchObject({ automated_status: 'not_run' })
+    expect(gone.prd_items[0]!.test_cases[0]!.crew_result).toBeUndefined()
   })
 })

@@ -91,7 +91,9 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     ref: 'refs/heads/main',
   }
   /** The person's test command as crew runs it: what it prints and how it exits, and each run's words and folder. */
-  const tests = { exitCode: 0, stdout: '', stderr: '', runs: [] as { argv: string[]; cwd?: string }[], fails: '' }
+  const tests = { exitCode: 0, stdout: '', stderr: '', runs: [] as { argv: string[]; cwd?: string; env?: Record<string, string> }[], fails: '' }
+  /** Writes under this path fail, as on a full disk. */
+  const broken = { writes: '' }
   let shas = 0
   /** A commit the full-stack made on a branch (crew's, by default the PRD's). */
   const commit = (subject: string, branch = 'crew/prd') => {
@@ -107,7 +109,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     const fail = (stderr = '') => ({ value: { exitCode: 1, stdout: '', stderr, isStdoutTruncated: false, isStderrTruncated: false } })
     if (argv[0] !== 'git') {
       // Anything but git is the person's test command.
-      tests.runs.push({ argv: [...argv], ...((e as { init?: { cwd?: string } }).init?.cwd === undefined ? {} : { cwd: (e as { init?: { cwd?: string } }).init?.cwd }) })
+      const init = (e as { init?: { cwd?: string; env?: Record<string, string> } }).init
+      tests.runs.push({ argv: [...argv], ...(init?.cwd === undefined ? {} : { cwd: init.cwd }), ...(init?.env === undefined ? {} : { env: init.env }) })
       if (tests.fails !== '') return { deny: tests.fails }
       // Unless a test says what the run prints, every test case on the board passes, named by its id.
       const board = JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? '{"prd_items":[]}') as { prd_items: { test_cases?: { id: string }[] }[] }
@@ -185,6 +188,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     return disk.has(resolve(e.path)) ? { value: disk.get(resolve(e.path)) ?? '' } : { deny: `ENOENT ${e.path}` }
   })
   on('fs.write', (_$, e) => {
+    if (broken.writes !== '' && e.path.startsWith(broken.writes)) return { deny: `ENOSPC: no space left on device, write '${e.path}'` }
     // Writes follow links, as a real file system's do.
     disk.set(resolve(e.path), e.text)
     return { value: undefined }
@@ -276,7 +280,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   current.clock = clock
   current.spawned = spawned
   current.disk = disk
-  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, tests }
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, tests, broken }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)

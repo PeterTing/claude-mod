@@ -46,9 +46,28 @@ export const parseCommand = (text: string): { ok: true; argv: string[] } | { ok:
   return { ok: true, argv }
 }
 
-/** Words that say a test failed: in capitals as runners print them, so a test's own title ("handles failure") is not one. */
-const FAIL = /(?:^|[^A-Za-z])(?:FAIL(?:ED|URE|S)?|ERROR|not ok)(?:[^A-Za-z]|$)|[✗✕✖×❌]/
-const PASS = /(?:^|[^A-Za-z])(?:PASS(?:ED)?|ok)(?:[^A-Za-z]|$)|[✓✔√✅]/
+/**
+ * How a line says a test went, by the runner's own mark: at its start
+ * (✓ ✕ of node, jest, vitest and mocha; ok and not ok of TAP; --- PASS and
+ * --- FAIL of go; pytest's FAILED summary) or at its end (pytest -v's PASSED
+ * and FAILED; ... ok, ... FAIL and ... ERROR of unittest and cargo). Words
+ * inside a test's own name (PAYMENT_FAILED, ERROR state) are not a mark.
+ */
+const MARKS: readonly [RegExp, Outcome][] = [
+  [/^\s*[✗✕✖×❌]/, 'failed'],
+  [/^\s*[✓✔√✅]/, 'passed'],
+  [/^\s*not ok\b/, 'failed'],
+  [/^\s*ok\b/, 'passed'],
+  [/^\s*--- FAIL\b/, 'failed'],
+  [/^\s*--- PASS\b/, 'passed'],
+  [/^\s*(?:FAILED|ERROR)\b/, 'failed'],
+  [/\s(?:FAILED|ERROR)(?:\s+\[\s*\d+%\])?\s*$/, 'failed'],
+  [/\sPASSED(?:\s+\[\s*\d+%\])?\s*$/, 'passed'],
+  [/\.\.\.\s*(?:FAIL|FAILED|ERROR)\s*$/, 'failed'],
+  [/\.\.\.\s*ok\s*$/, 'passed'],
+]
+
+const outcomeOf = (line: string): Outcome | undefined => MARKS.find(([mark]) => mark.test(line))?.[1]
 
 /**
  * The test case ids a line names, as the board writes them: `TC-001`, also
@@ -75,7 +94,7 @@ export const resultsOf = (output: string, ids: readonly string[], prefix: string
   for (const line of output.split('\n')) {
     const named = idsIn(line, prefix).filter(id => known.has(id))
     if (named.length === 0) continue
-    const outcome: Outcome | undefined = FAIL.test(line) ? 'failed' : PASS.test(line) ? 'passed' : undefined
+    const outcome = outcomeOf(line)
     if (outcome === undefined) continue
     for (const id of named) if (out.get(id) !== 'failed') out.set(id, outcome)
   }

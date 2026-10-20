@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
+import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
+import type { Op } from './board'
 import { approve, build, command, designed, done, paneText, PLAN, ROOT, SPLIT, start, tested, world, write } from './world'
 
 /** crew runs the person's test command on its branch; each test case passes or not by what the run printed. */
@@ -24,7 +26,7 @@ describe('crew’s test runs', () => {
     await start($)
     await planned($)
     await build($)
-    expect(w.tests.runs).toEqual([{ argv: ['npm', 'test'], cwd: `${ROOT}/.crew/work/prd` }])
+    expect(w.tests.runs).toEqual([{ argv: ['npm', 'test'], cwd: `${ROOT}/.crew/work/prd`, env: { CI: 'true' } }])
     const logs = [...w.disk.keys()].filter(p => p.startsWith(`${ROOT}/.crew/runs/`))
     expect(logs).toHaveLength(1)
     const log = w.disk.get(logs[0] ?? '') ?? ''
@@ -58,6 +60,11 @@ describe('crew’s test runs', () => {
     const w = world($, on)
     await start($)
     expect(String((await crew($, { action: 'test-command', text: 'curl x | sh' })).result)).toMatch(/action 要是/)
+    // Another plugin, a peer session or a channel relay cannot set what crew runs either.
+    for (const kind of ['plugin', 'peer', 'peer-send-message', 'channel', 'unclassified', 'scheduled-trigger', 'sdk']) {
+      const r = (await $.command.run({ ...command('test-command python3 -c "print(1)"'), origin: { kind } } as never)) as { text: string }
+      expect(r.text).toMatch(/要使用者自己在輸入框輸入/)
+    }
     expect(await (async () => { const r = await $.command.run(command('test-command npm ci && npm test')); return r.text })()).toMatch(/不經過 shell/)
     expect(w.store.get(`tests:${ROOT}`)).toEqual({ argv: ['npm', 'test'] })
     expect((await $.command.run(command('test-command'))).text).toMatch(/測試指令：npm test（存在這台機器上，不在 repo 裡）/)
@@ -73,7 +80,10 @@ describe('crew’s test runs', () => {
     await planned($)
     await build($)
     expect(w.sent.at(-1)).toMatchObject({ to: 'a-fullstack-5' })
-    expect(w.sent.at(-1)?.text).toMatch(/TC-001 t：失敗[\s\S]*方案價格錯誤[\s\S]*「TASK-001: 」/)
+    expect(w.sent.at(-1)?.text).toMatch(/TC-001 t：失敗[\s\S]*「TASK-001: 」[\s\S]*方案價格錯誤/)
+    // The output reaches the full-stack, never the repo's thread.
+    expect(w.disk.get(`${ROOT}/.crew/threads/TASK-001.jsonl`)).toMatch(/TC-001 t：失敗/)
+    expect(w.disk.get(`${ROOT}/.crew/threads/TASK-001.jsonl`)).not.toMatch(/方案價格錯誤/)
     expect((await $.command.run(command('status'))).text).toMatch(/building/)
     // The fix is committed, reviewed, and the tests run again and pass.
     w.tests.stdout = ''
@@ -146,5 +156,57 @@ describe('crew’s test runs', () => {
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-5')
     expect(await paneText($, 'progress')).toMatch(/→ 測試結果 0\/1/)
+  })
+
+  test('tell the flow when a run breaks down on the way, instead of leaving it waiting', async ($, on) => {
+    const w = world($, on)
+    // The evidence cannot be written, as on a full disk.
+    w.broken.writes = `${ROOT}/.crew/runs/`
+    await start($)
+    await planned($)
+    await build($)
+    expect((await $.command.run(command('status'))).text).toMatch(/escalated[\s\S]*待你決定 1/)
+    expect(w.toasts.some(t => /有一件事等你決定/.test(t))).toBe(true)
+  })
+
+  test('run with CI set, so a test runner does not wait in watch mode', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await build($)
+    expect(w.tests.runs[0]?.env).toEqual({ CI: 'true' })
+  })
+
+  test('try the tests again when Claude Code starts on a flow that was testing, and say how it went', async ($, on) => {
+    const w = world($, on)
+    // A restart, or a reload, ended the run under way: the flow was left testing.
+    const split = applyOps(newTracker('repo'), SPLIT as unknown as Op[], { by: 'pm', today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
+    if (!split.ok) throw new Error(split.errors.join())
+    const cases = applyOps(split.tracker, [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }], { by: 'qa', today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
+    if (!cases.ok) throw new Error(cases.errors.join())
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(cases.tracker))
+    w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'testing', round: 0, retries: 0 }, questions: [], lead: 'person' })
+    await start($)
+    await tested()
+    // There is no worktree here to run in: crew says so, rather than wait for a run that never ends.
+    expect((await $.command.run(command('status'))).text).toMatch(/escalated[\s\S]*待你決定 1/)
+  })
+
+  test('run the tests again when the session starts over on a flow left testing, its agents still listed', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    await approve($, 'TASK-001')
+    w.commit('TASK-002: 取消流程')
+    await done($, 'a-fullstack-5')
+    await approve($, 'TASK-002')
+    // The run crew scheduled has not run when the session starts again, as after a reload.
+    expect((await $.command.run(command('status'))).text).toMatch(/testing/)
+    await start($)
+    await tested()
+    expect(w.tests.runs.length).toBe(2)
+    expect((await $.command.run(command('status'))).text).toMatch(/done/)
   })
 })

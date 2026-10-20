@@ -154,7 +154,8 @@ export const resultsMarkOf = (board: Tracker, ran: Ran | undefined, tip: string 
 /**
  * The board with each test case marked with crew's result; null when none
  * changes. Where crew has a result, the case's automated_status (the
- * progress-dashboard's field) follows it; crew leaves it alone otherwise.
+ * progress-dashboard's field) follows it, and goes back to not_run once crew
+ * takes its result off; crew leaves a status it never set alone.
  */
 export const withResults = (board: Tracker, results: ReadonlyMap<string, TestResult>): Tracker | null => {
   let changed = false
@@ -164,7 +165,8 @@ export const withResults = (board: Tracker, results: ReadonlyMap<string, TestRes
       if (JSON.stringify(tc.crew_result ?? null) === JSON.stringify(now ?? null)) return tc
       changed = true
       const { crew_result: _, ...rest } = tc
-      return now === undefined ? rest : { ...rest, crew_result: now, automated_status: now.stale === true ? 'not_run' : now.result }
+      // crew set the status from its result: with none left, the board no longer says how the case went.
+      return now === undefined ? { ...rest, automated_status: 'not_run' } : { ...rest, crew_result: now, automated_status: now.stale === true ? 'not_run' : now.result }
     })
     return { ...item, test_cases: cases }
   })
