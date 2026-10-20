@@ -26,7 +26,7 @@
     },
     {
       "name": "crew",
-      "description": "A resident product team in Claude Code: a PM splits your PRD into features and acceptance criteria, QA writes a test case for each, a tech lead breaks them into tasks, and a full-stack agent builds the tasks on crew's own git branch and worktree. Gaps and product questions come back to you. The board is held to the PRD as it stands, checked every few seconds. Keeps its memory in the repo; you can run it with /crew or by asking Claude. Made here. Work in progress: PM, QA, tech lead and full-stack today.",
+      "description": "A resident product team in Claude Code: a PM splits your PRD into features and acceptance criteria, QA writes a test case for each, a UI/UX designer writes a design for each feature that you approve, a tech lead breaks the criteria into tasks and reviews the code, a full-stack agent builds the tasks on crew's own git branch and worktree, and crew runs your test command and maps the results to the test cases. Gaps and product questions come back to you. The board is held to the PRD as it stands, checked every few seconds. Keeps its memory in the repo; you can run it with /crew or by asking Claude. Made here. Work in progress: all five roles run today.",
       "source": "./mods/crew",
       "author": {
         "name": "PeterTing",

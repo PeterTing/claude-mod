@@ -776,12 +776,15 @@ flowchart LR
     <li><strong>Review（4d，G5）</strong>：每個任務 commit 後，Tech lead 拿 crew 附上的 diff review，用 <code>review_submit</code> 送出「通過」或「要修改」。結論釘在它看的那個 commit sha 上，記在本機；之後又有新的 commit 就標成過期，要重新 review。要修改的交回全端，修完再 review；退回三次就問你。「實作」要等 review 通過才打勾。</li>
     <li><strong>測試結果（4e，G6）</strong>：測試指令由你用 <code>/crew test-command</code> 設定，存在本機、不在 repo 裡，也不能由大腦設定。所有任務都通過 review 後，crew 在全端的 worktree 直接執行這個指令（不經過 shell，最多十分鐘），從測試名稱裡的 TC 編號判斷每個 test case 通過或失敗，結果釘在當時的 commit 上，輸出遮罩後存成 <code>.crew/runs/&lt;時間&gt;.log</code> 當證據。失敗的交給全端修，修完重新 review、重跑；三輪不過就問你。</li>
     <li>七段進度、七個關卡（G0–G6）全部由真實訊號算出；整體進度要等設計核准、review 通過、測試通過才算完成，百分比一律無條件捨去。</li>
+    <li>只有你親手輸入（或從 Remote Control 送出）的 <code>/crew approve</code>、<code>/crew reject</code>、<code>/crew test-command</code> 算數；其他 plugin、別的 Claude session、頻道轉送和排程都不行。測試只在乾淨、停在最新 commit 的 worktree 上跑，結果才會對得上 commit；跳過的測試不算通過；失敗的輸出只交給全端，不進 repo 的討論串。</li>
+    <li>安全、品質、測試三個 reviewer 各審三到四輪，最後都沒有 critical 或 important；新的檢查都用「故意改壞程式、確認測試會失敗」驗證過。</li>
   </ul>
-  <p class="prose">在 Claude Code 2.1.301 實跑三次：</p>
+  <p class="prose">在 Claude Code 2.1.301 實跑四次：</p>
   <ul class="plain prose">
     <li><strong>完整流程</strong>：計算機 PRD（函式加命令列），從 <code>/crew start</code> 到完成約 3 分鐘。2 份設計稿（沒有畫面）核准、PM 轉來 Tech lead 的 1 個產品問題（命令列輸入錯誤時怎麼處理）回答後，全端 commit 2 個任務，Tech lead 各 review 通過，crew 跑 <code>python3 -m unittest discover -v</code>：8 個 test case 全部通過。七個關卡全部 ✓，進度 100%（28/28）。</li>
     <li><strong>修正迴圈</strong>：在 crew 的分支上故意 commit 一個把 <code>add</code> 改壞的版本，再 <code>/crew test</code>：只過 2/8，crew 把失敗交給全端；全端 commit 修正，Tech lead review 通過，重跑 8/8，約 22 秒回到完成。三次執行的證據檔都在 <code>.crew/runs</code>。</li>
-    <li><strong>退回設計稿</strong>：見下一段。</li>
+    <li><strong>退回設計稿</strong>：退回 SCR-001 並附原因；原因寫進 SCR-001 的討論串交給 UI/UX，它照原因重寫成 SCR-003，核准後 Tech lead 才拆任務。</li>
+    <li><strong>修正後再跑一次完整流程</strong>：第一次測試 exit 5、0/12（unittest 找不到測試，缺 <code>tests/__init__.py</code>）。crew 自己把它交給全端，全端 commit 修正（訊息同時標兩個任務），Tech lead 兩個任務都重新 review 通過，重跑 12/12，七個關卡全部 ✓。整個過程沒有人介入。</li>
   </ul>
   <h3>每一欄的真實訊號</h3>
   <p class="prose">每一欄的狀態都從真實訊號算出來，角色自己說「做完了」不算數。</p>
