@@ -744,7 +744,6 @@ function MemoryList({ el, snap, act }: { el: Elements; snap: Snapshot; act: Acti
 
 function Tokens({ el, snap, act }: { el: Elements; snap: Snapshot; act: Actions }) {
   const { Box, Text, Button } = el
-  if (snap.usage.length === 0) return <Text dimColor>今天還沒有用量。角色開始工作後，每一輪的 token 都會記在這裡。</Text>
   const head: [string, string, Record<string, unknown>][] = [
     ['14%', '角色', { dimColor: true }],
     ['12%', '輸入', { dimColor: true }],
@@ -755,34 +754,43 @@ function Tokens({ el, snap, act }: { el: Elements; snap: Snapshot; act: Actions 
     ['12%', '喚醒', { dimColor: true }],
     ['12%', '輪替', { dimColor: true }],
   ]
+  // A day with no use yet still shows the brain's switch, its reminders and what it did.
+  const used =
+    snap.usage.length === 0 ? (
+      <Text dimColor>今天還沒有用量。角色開始工作後，每一輪的 token 都會記在這裡。</Text>
+    ) : (
+      <Box flexDirection="column" gap={1}>
+        <Box flexDirection="column">
+          {Row({ el, cells: head })}
+          {snap.usage.map(u => {
+            const rate = hitRate(u)
+            return Row({ el, cells: [
+                  ['14%', ROLE_NAMES[u.role]],
+                  ['12%', tokens(u.input)],
+                  ['12%', tokens(u.output)],
+                  ['13%', tokens(u.cacheRead)],
+                  ['13%', tokens(u.cacheWrite)],
+                  ['12%', `${rate}%`, { color: rate < 60 ? 'warning' : undefined }],
+                  ['12%', String(u.wakes)],
+                  ['12%', String(u.rotations)],
+                ] })
+          })}
+        </Box>
+        <Text dimColor>
+          今日 {tokens(snap.today)} tok · 大腦協調佔 {Math.round(snap.brainShare * 100)}%
+        </Text>
+        <Text dimColor>依複雜度：{snap.tiers.map(t => `${t.tier} ${tokens(t.tokens)}`).join(' · ')}</Text>
+        {snap.injected !== undefined && snap.injected.count > 0 && (
+          <Text dimColor>
+            每次附上的記憶平均 {tokens(snap.injected.average)} tok（{snap.injected.count} 次）
+            {snap.chores !== undefined && snap.chores > 0 ? ` · 記憶整理 ${tokens(snap.chores)} tok` : ''}
+          </Text>
+        )}
+      </Box>
+    )
   return (
     <Box flexDirection="column" gap={1}>
-      <Box flexDirection="column">
-        {Row({ el, cells: head })}
-        {snap.usage.map(u => {
-          const rate = hitRate(u)
-          return Row({ el, cells: [
-                ['14%', ROLE_NAMES[u.role]],
-                ['12%', tokens(u.input)],
-                ['12%', tokens(u.output)],
-                ['13%', tokens(u.cacheRead)],
-                ['13%', tokens(u.cacheWrite)],
-                ['12%', `${rate}%`, { color: rate < 60 ? 'warning' : undefined }],
-                ['12%', String(u.wakes)],
-                ['12%', String(u.rotations)],
-              ] })
-        })}
-      </Box>
-      <Text dimColor>
-        今日 {tokens(snap.today)} tok · 大腦協調佔 {Math.round(snap.brainShare * 100)}%
-      </Text>
-      <Text dimColor>依複雜度：{snap.tiers.map(t => `${t.tier} ${tokens(t.tokens)}`).join(' · ')}</Text>
-      {snap.injected !== undefined && snap.injected.count > 0 && (
-        <Text dimColor>
-          每次附上的記憶平均 {tokens(snap.injected.average)} tok（{snap.injected.count} 次）
-          {snap.chores !== undefined && snap.chores > 0 ? ` · 記憶整理 ${tokens(snap.chores)} tok` : ''}
-        </Text>
-      )}
+      {used}
       {snap.tuning !== undefined && (
         <Box flexDirection="row" gap={1}>
           <Text dimColor>{snap.tuning === 'auto' ? '大腦處置：自動（大腦自己處置，事後記成決定）' : '大腦處置：先問你（大腦提出建議，你核准才執行）'}</Text>

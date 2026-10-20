@@ -26,7 +26,7 @@ const tested = async ($: Engine) => {
 }
 
 describe('token reminders', () => {
-  test('tell the brain once an hour when a role takes over 40% of the day, or reads under 60% from the cache', async ($, on) => {
+  test('tell the brain once an hour when a role takes over 40% of the day, or reads under 60% from the cache', { timeoutMs: 60_000 }, async ($, on) => {
     const w = world($, on)
     w.disk.set(`${ROOT}/.crew/usage/${DAY}.json`, JSON.stringify({ usage: heavy, tiers: {} }))
     await start($)
@@ -43,11 +43,13 @@ describe('token reminders', () => {
     await w.clock.advance(60_000)
     const told = w.prompts.filter(p => /全端今日佔/.test(p)).length
     expect(told).toBe(1)
-    expect(w.prompts.find(p => /全端今日佔/.test(p))).toMatch(/tune[\s\S]*先問使用者/)
-    // Still the case at the next look: not told again within the hour.
+    expect(w.prompts.find(p => /全端今日佔/.test(p))).toMatch(/tune[\s\S]*使用者設定先問使用者：你的處置會變成建議，他在面板核准才執行/)
+    // Still the case at the next look: not told again within the hour, and told again once it is past.
     await w.clock.advance(BEAT)
     await w.clock.advance(60_000)
     expect(w.prompts.filter(p => /全端今日佔/.test(p)).length).toBe(1)
+    await w.clock.advance(60 * 60_000)
+    expect(w.prompts.filter(p => /全端今日佔/.test(p)).length).toBe(2)
   })
 
   test('tell the brain of a role’s tool output past 10K tokens', async ($, on) => {
@@ -63,6 +65,25 @@ describe('token reminders', () => {
     const told = w.prompts.filter(p => /工具輸出約/.test(p))
     expect(told).toHaveLength(1)
     expect(told[0]).toMatch(/PM 一次工具輸出約 \d+K token（超過 10K）：Read/)
+  })
+
+  test('tell of a role’s output just past 10K, not at 10K, and never of the main conversation’s', async ($, on) => {
+    const w = world($, on)
+    // A Read whose result is as many wide characters as the file's name says: 1.2 tokens each.
+    on('tool.call', { tool: 'Read' }, (_$, e) => ({ result: '一'.repeat(Number(String((e as { file_path: string }).file_path).split('-').pop())) }))
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    const read = (n: number, agentId?: string) => $.tool.call({ tool: 'Read', tool_use_id: `r-${n}-${agentId ?? 'main'}`, ...(agentId === undefined ? {} : { agentId }), file_path: `${ROOT}/docs/big-${n}` } as never)
+    const told = () => w.prompts.filter(p => /工具輸出約/.test(p)).length
+    await read(50_000)
+    await w.clock.advance(60_000)
+    expect(told()).toBe(0)
+    await read(8_333, 'a-pm-1')
+    await w.clock.advance(60_000)
+    expect(told()).toBe(0)
+    await read(8_334, 'a-pm-1')
+    await w.clock.advance(60_000)
+    expect(told()).toBe(1)
   })
 
   test('say nothing on a day too small to tell', async ($, on) => {
@@ -227,5 +248,31 @@ describe('the brain’s actions on usage', () => {
     await done($, 'a-fullstack-5')
     await approve($, 'TASK-001')
     expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:fullstack', model: 'opus' })
+  })
+  test('show the switch and the brain’s actions on a day with no use yet', async ($, on) => {
+    const w = world($, on)
+    w.store.set(`settings:${ROOT}`, { openOnLoad: true, tuning: 'auto' })
+    await start($)
+    // No role has run today: the brain still tunes ahead of the work.
+    expect(String((await crew($, { action: 'tune', role: 'fullstack', model: 'opus', text: 'x' })).result)).toMatch(/DEC-\d+/)
+    const ui = await paneUi($)
+    await ui.press({ key: 'tab-tokens' })
+    const text = await textOf(ui)
+    expect(text).toMatch(/今天還沒有用量/)
+    expect(text).toMatch(/大腦處置：自動/)
+    expect(text).toMatch(/DEC-\d+ 全端之後的工作改用 Opus/)
+    expect(await ui.find({ key: 'tuning-ask' })).toBeDefined()
+    await ui.unmount()
+  })
+  test('take only a crew role, a model and effort crew knows, and a whole limit from 20K to 1M', async ($, on) => {
+    world($, on)
+    await start($)
+    const tune = async (input: Record<string, unknown>) => String((await crew($, { action: 'tune', ...input })).result)
+    expect(await tune({ role: 'designer', model: 'opus' })).toMatch(/role 要是 pm、qa、uiux、techlead 或 fullstack/)
+    for (const change of [{ model: 'gpt-5' }, { effort: 'ultra' }, { limit: 19_999 }, { limit: 1_000_001 }, { limit: 50_000.5 }, { limit: '80000' }]) {
+      expect(await tune({ role: 'qa', ...change })).toMatch(/請說要換的模型、effort 或輪替門檻/)
+    }
+    expect(await tune({ role: 'qa', limit: 20_000 })).toMatch(/已提出建議/)
+    expect(await tune({ role: 'qa', limit: 1_000_000 })).toMatch(/已提出建議/)
   })
 })

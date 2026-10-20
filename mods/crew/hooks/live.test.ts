@@ -566,6 +566,23 @@ describe('usage signals for the brain', () => {
     expect(usageSignals(day({ fullstack: u(3_000, 1_000, 4_000) }))).toEqual([])
   })
 
+  test('tell at each threshold’s edge: over 40%, under 60%, from 50K, past the limit', () => {
+    const keys = (usage: CrewLive['usage']) => usageSignals(day(usage)).map(x => x.key)
+    // 40% of the day is no reminder; just over it is.
+    expect(keys({ pm: u(4_000, 36_000, 0), fullstack: u(6_000, 54_000, 0) })).toEqual(['share:fullstack'])
+    expect(keys({ pm: u(4_001, 36_000, 0), fullstack: u(6_000, 54_000, 0) })).toEqual(['share:pm', 'share:fullstack'])
+    // 60% from the cache is no reminder; 59% is.
+    expect(keys({ fullstack: u(40_000, 60_000, 0) })).toEqual(['share:fullstack'])
+    expect(keys({ fullstack: u(41_000, 59_000, 0) })).toEqual(['share:fullstack', 'hit:fullstack'])
+    // A day, and a role, of 50K are big enough to tell; one token less is not.
+    expect(keys({ fullstack: u(50_000, 0, 0) })).toEqual(['share:fullstack', 'hit:fullstack'])
+    expect(keys({ fullstack: u(49_999, 0, 0) })).toEqual([])
+    // A context at its limit is no reminder; past it is.
+    const at = (context: number): CrewLive => ({ ...emptyLive(), roles: { ...emptyLive().roles, qa: { ...emptyLive().roles.qa, context, limit: 60_000 } } })
+    expect(usageSignals(at(60_000))).toEqual([])
+    expect(usageSignals(at(60_001)).map(x => x.key)).toEqual(['context:qa'])
+  })
+
   test('name a role past its context threshold, its own or the brain’s', () => {
     const l = { ...emptyLive(), roles: { ...emptyLive().roles, qa: { ...emptyLive().roles.qa, context: 70_000, limit: 60_000 } } }
     expect(usageSignals(l)).toEqual([{ key: 'context:qa', text: 'QA 的 context 70K 超過門檻 60K' }])
