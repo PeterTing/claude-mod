@@ -49,7 +49,7 @@ export type CrewQuestion = {
 export type CrewActivity = { t: number; day: string; role: string; id: string; title: string }
 
 export type CrewFlow = {
-  stage: 'idle' | 'splitting' | 'writing_tests' | 'confirming' | 'adding_tests' | 'planning' | 'building' | 'reviewing' | 'done' | 'escalated'
+  stage: 'idle' | 'splitting' | 'writing_tests' | 'confirming' | 'adding_tests' | 'planning' | 'building' | 'reviewing' | 'testing' | 'done' | 'escalated'
   round: number
   retries: number
   /** Times the PM was sent back because the board did not answer the PRD (G0). */
@@ -58,7 +58,7 @@ export type CrewFlow = {
   synced?: string
   /** The PM synced while QA was at work: the flow waits for QA's run to end. */
   awaitingQa?: boolean
-  resumeAt?: 'splitting' | 'confirming' | 'planning' | 'building' | 'reviewing'
+  resumeAt?: 'splitting' | 'confirming' | 'planning' | 'building' | 'reviewing' | 'testing'
   /** The task the full-stack is building. */
   building?: string
   /** The full-stack is making the changes a review asked for on this commit. */
@@ -67,6 +67,8 @@ export type CrewFlow = {
   reviews?: number
   /** The task the tech lead reviews, and the commit it reads. */
   reviewing?: { task: string; sha: string }
+  /** Runs of the person's test command that left test cases not passed. */
+  runs?: number
 }
 
 /** Work the flow gave a role while it was busy answering the person: handed over when that turn ends. */

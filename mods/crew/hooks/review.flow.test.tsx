@@ -250,7 +250,7 @@ describe('housekeeping', () => {
     w.disk.set(`${ROOT}/.crew/.gitignore`, 'mine/\n')
     await start($)
     await $.command.run(command('remember 用新台幣'))
-    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('mine/\nusage/\nlog/\nwork/\n')
+    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('mine/\nusage/\nlog/\nwork/\nruns/\n')
   })
 
   test('refuses a start while a PRD is under way without touching any file', async ($, on) => {

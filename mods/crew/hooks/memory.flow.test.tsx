@@ -72,7 +72,7 @@ describe('crew memory', () => {
     expect(w.disk.get(MEMORIES)).not.toMatch(/hunter2/)
     expect(w.disk.get(LOG)).toMatch(/memory/)
     expect(w.disk.get(LOG)).not.toMatch(/hunter2/)
-    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\nwork/\n')
+    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\nwork/\nruns/\n')
   })
 
   test('leaves the person’s decisions and preferences for the person to change', async ($, on) => {

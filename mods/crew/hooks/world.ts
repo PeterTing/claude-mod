@@ -18,16 +18,20 @@ export const PRD = '# 會員訂閱\n\n使用者可以選月繳方案，可以隨
 export type Spawn = { subagentType: string; name?: string; description: string; model?: string; prompt: string; cwd?: string }
 
 /** The world a test made last: what `build` commits into. */
-const current: { commit?: (subject: string, branch?: string) => string } = {}
+const current: { commit?: (subject: string, branch?: string) => string; clock?: { advance: (ms: number) => Promise<unknown> } } = {}
 
 export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', denySpawnOf = '', stopped = [] as string[] } = {}) => {
   const clock = mock.clock(on, { now: NOW })
   /** crew's own store, which outlives sessions and is not in the repo. */
-  const store = new Map<string, unknown>()
+  const store = new Map<string, unknown>([[`tests:${ROOT}`, { argv: ['npm', 'test'] }]])
   on('store.get', (_$, e) => ({ value: store.get((e as { key: string }).key) }))
   on('store.set', (_$, e) => {
     const { key, value } = e as { key: string; value: unknown }
     store.set(key, JSON.parse(JSON.stringify(value)))
+    return { value: undefined }
+  })
+  on('store.delete', (_$, e) => {
+    store.delete((e as { key: string }).key)
     return { value: undefined }
   })
   /** When each file was last written, by the test's clock: a file's modified time. */
@@ -81,6 +85,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     /** The checkout's branch, as `git symbolic-ref HEAD` says it. */
     ref: 'refs/heads/main',
   }
+  /** The person's test command as crew runs it: what it prints and how it exits, and each run's words and folder. */
+  const tests = { exitCode: 0, stdout: '', stderr: '', runs: [] as { argv: string[]; cwd?: string }[], fails: '' }
   let shas = 0
   /** A commit the full-stack made on a branch (crew's, by default the PRD's). */
   const commit = (subject: string, branch = 'crew/prd') => {
@@ -94,7 +100,15 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     git.commands.push([...argv])
     const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     const fail = (stderr = '') => ({ value: { exitCode: 1, stdout: '', stderr, isStdoutTruncated: false, isStderrTruncated: false } })
-    if (argv[0] !== 'git') return fail('not git')
+    if (argv[0] !== 'git') {
+      // Anything but git is the person's test command.
+      tests.runs.push({ argv: [...argv], ...((e as { init?: { cwd?: string } }).init?.cwd === undefined ? {} : { cwd: (e as { init?: { cwd?: string } }).init?.cwd }) })
+      if (tests.fails !== '') return { deny: tests.fails }
+      // Unless a test says what the run prints, every test case on the board passes, named by its id.
+      const board = JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? '{"prd_items":[]}') as { prd_items: { test_cases?: { id: string }[] }[] }
+      const all = board.prd_items.flatMap(i => i.test_cases ?? []).map(c => `✓ ${c.id} passes`).join('\n')
+      return { value: { exitCode: tests.exitCode, stdout: tests.stdout === '' ? all : tests.stdout, stderr: tests.stderr, isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     // `-c name=value` settings come first, then `-C <dir>`.
     let at = 1
     while (argv[at] === '-c') at += 2
@@ -107,7 +121,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     if (args[0] === 'rev-parse' && args[1] === '--verify') {
       const name = args[3] ?? ''
       if (name === 'HEAD^{commit}') return top('HEAD') === undefined ? fail() : ok(`${top('HEAD')}\n`)
-      return git.branches.has(name.replace('refs/heads/', '')) ? ok('x\n') : fail()
+      const branch = name.replace('refs/heads/', '').replace('^{commit}', '')
+      return git.branches.has(branch) ? ok(`${top(branch) ?? 'x'}\n`) : fail()
     }
     if (args[0] === 'symbolic-ref') return git.ref === '' ? fail() : ok(`${git.ref}\n`)
     if (args[0] === 'worktree' && args[1] === 'add') {
@@ -253,7 +268,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   const board = () => JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? 'null') as Tracker | null
   current.commit = commit
-  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit }
+  current.clock = clock
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, tests }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)
@@ -313,11 +329,17 @@ export const approve = async ($: Engine, task: string, agentId = 'a-techlead-3',
   return r as { result: unknown }
 }
 
-/** The full-stack commits each task and the tech lead approves it. */
+/** The full-stack commits each task and the tech lead approves it; then the tests crew runs on the clock pass. */
 export const build = async ($: Engine, ids: readonly string[] = ['TASK-001', 'TASK-002'], agentId = 'a-fullstack-4', techlead = 'a-techlead-3') => {
   for (const id of ids) {
     current.commit?.(`${id}: 完成 ${id}`)
     await done($, agentId)
     await approve($, id, techlead)
   }
+  await tested()
+}
+
+/** Lets a test run crew started on the clock go to its end. */
+export const tested = async () => {
+  await current.clock?.advance(1)
 }

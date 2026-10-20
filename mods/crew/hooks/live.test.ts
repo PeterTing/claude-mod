@@ -7,7 +7,7 @@ import { emptyLive, snapshotOf } from './live'
 import { barCells, percent } from './model'
 import type { Snapshot } from './model'
 import { bandText, bar } from './views'
-import { withCommits, withReviews } from './git'
+import { withCommits, withResults, withReviews } from './git'
 import { requirementsOf } from './prd'
 
 const NOW = Date.UTC(2026, 9, 15, 6, 0, 0)
@@ -86,7 +86,8 @@ describe('snapshotOf', () => {
   test('counts progress over the stages built so far, and shows each feature', () => {
     const s = snapshotOf({ board: BOARD, live: LIVE, now: NOW })
     // Two features with criteria, two of three criteria tested, none planned into tasks yet.
-    expect(s.progress).toMatchObject({ done: 4, total: 8 })
+    // Units: 2 features, 3 criteria tested, 3 criteria planned, and 2 test cases run.
+    expect(s.progress).toMatchObject({ done: 4, total: 10 })
     // The same seven stages, in the same order, as each requirement's row.
     expect(s.progress?.stages.map(st => st.label)).toEqual(['規格', '設計', '測試案例', '任務', '實作', 'Review', '測試結果'])
     expect(s.progress?.stages.find(st => st.label === '規格')).toMatchObject({ done: 2, total: 2, state: 'done' })
@@ -95,7 +96,7 @@ describe('snapshotOf', () => {
     expect(s.progress?.stages.find(st => st.label === '實作')).toMatchObject({ total: 0, state: 'pending' })
     // Nothing reviews code or runs tests yet: those stages never show as done.
     expect(s.progress?.stages.find(st => st.label === 'Review')).toMatchObject({ total: 0, state: 'pending' })
-    expect(s.progress?.stages.find(st => st.label === '測試結果')).toMatchObject({ total: 0, state: 'pending' })
+    expect(s.progress?.stages.find(st => st.label === '測試結果')).toMatchObject({ done: 0, total: 2, state: 'pending' })
     expect(s.progress?.features.map(f => [f.id, f.percent])).toEqual([
       ['PRD-001', 100],
       ['PRD-002', 50],
@@ -190,9 +191,9 @@ describe('development status by PRD requirement', () => {
   test('marks the stages crew does not track yet as later, never as done', () => {
     const rows = snapshotOf({ board, live: emptyLive(), now: NOW, prd: { requirements: reqs } }).requirements ?? []
     expect(rows).toHaveLength(4)
-    expect(rows.every(r => (['design', 'runs'] as const).every(k => r.layers[k].state === 'later'))).toBe(true)
-    // Before any task, review has nothing to count: not done.
-    expect(rows.every(r => r.layers.review.state === 'todo')).toBe(true)
+    expect(rows.every(r => r.layers.design.state === 'later')).toBe(true)
+    // Before any task or run, review and test results have nothing passed: never done.
+    expect(rows.every(r => r.layers.review.state === 'todo' && r.layers.runs.state !== 'done')).toBe(true)
   })
 
   test('does not call test cases done while a feature that answers the requirement has no criteria', () => {
@@ -407,6 +408,34 @@ describe('the full-stack’s commits', () => {
     })
   })
 
+  describe('and crew’s test runs on them', () => {
+    const approved = withReviews(withCommits(planned, new Map([['TASK-001', ['abc1234def']], ['TASK-002', ['def5678abc']]])) ?? planned, new Map([['TASK-001', { sha: 'abc1234def', verdict: 'approve' as const }], ['TASK-002', { sha: 'def5678abc', verdict: 'approve' as const }]])) ?? planned
+    const ran = (result: 'passed' | 'failed', stale = false): Tracker => withResults(approved, new Map([['TC-001', { result, sha: 'def5678abc', run: '20261020-120000', ...(stale ? { stale: true as const } : {}) }]])) ?? approved
+    const testing: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'testing', round: 0, retries: 0 } }
+
+    test('make G6 and the 測試結果 stage from crew’s latest run, and count it toward the whole', () => {
+      const none = snapshotOf({ board: approved, live: testing, now: NOW, prd: { requirements: reqs } })
+      expect(none.gates.find(g => g.id === 'G6')).toMatchObject({ state: 'active', covered: 0, total: 1, name: 'test case 全部執行通過、附證據', fill: '全端修', confirm: 'crew 跑你設定的測試指令' })
+      expect(none.gates.find(g => g.id === 'G6')?.gaps).toEqual([{ id: 'TC-001', title: 't', status: '還沒跑' }])
+      // Every task approved, no test case passed yet: the whole is not done.
+      expect((none.progress?.done ?? 0) < (none.progress?.total ?? 0)).toBe(true)
+      expect(none.requirements?.[0]?.layers.runs).toEqual({ state: 'todo', note: '0/1' })
+      const passed = snapshotOf({ board: ran('passed'), live: { ...testing, flow: { stage: 'done', round: 0, retries: 0 } }, now: NOW, prd: { requirements: reqs } })
+      expect(passed.gates.find(g => g.id === 'G6')).toMatchObject({ state: 'pass', covered: 1, total: 1 })
+      expect(passed.progress?.stages.find(st => st.label === '測試結果')?.state).toBe('done')
+      expect(passed.progress?.done).toBe(passed.progress?.total)
+      expect(passed.requirements?.[0]?.layers.runs).toEqual({ state: 'done', note: '1/1' })
+    })
+
+    test('say a failed run with its evidence, and a result out of date once a commit came after it', () => {
+      const failed = snapshotOf({ board: ran('failed'), live: testing, now: NOW, prd: { requirements: reqs } })
+      expect(failed.gates.find(g => g.id === 'G6')?.gaps).toEqual([{ id: 'TC-001', title: 't', status: '失敗（.crew/runs/20261020-120000.log）' }])
+      const stale = snapshotOf({ board: ran('passed', true), live: testing, now: NOW, prd: { requirements: reqs } })
+      expect(stale.gates.find(g => g.id === 'G6')?.gaps).toEqual([{ id: 'TC-001', title: 't', status: '結果過期（之後又有 commit）' }])
+      expect(stale.requirements?.[0]?.layers.runs).toEqual({ state: 'stale', note: '0/1' })
+    })
+  })
+
   test('show a committed task as under way, by the full-stack, with its commit; a task being built as the full-stack’s', () => {
     const items = snapshotOf({ board: half, live: building, now: NOW }).items
     expect(items.find(i => i.id === 'TASK-001')).toMatchObject({ owner: 'fullstack', status: 'doing' })
@@ -444,8 +473,8 @@ describe('percentages', () => {
     const s = snapshotOf({ board, live: emptyLive(), now: 0 })
     // Two of three criteria tested: 66, not 67.
     expect(s.progress?.features[0]?.percent).toBe(66)
-    // One feature with criteria and two of three tested, of seven: 42, not 43.
-    expect(s.progress).toMatchObject({ done: 3, total: 7 })
-    expect(s.prd?.progress).toBe(42)
+    // One feature with criteria and two of three tested, of eight with the test case: 37, not 38.
+    expect(s.progress).toMatchObject({ done: 3, total: 8 })
+    expect(s.prd?.progress).toBe(37)
   })
 })

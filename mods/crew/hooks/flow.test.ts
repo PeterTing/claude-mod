@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { applyOps, newTracker } from './board'
 import type { Op, Tracker } from './board'
 import { INITIAL, step } from './flow'
-import { withCommits, withReviews } from './git'
+import { withCommits, withResults, withReviews } from './git'
 import { requirementsOf } from './prd'
 import { PLAN, SPLIT as WORLD_SPLIT } from './world'
 import type { FlowEvent, FlowState } from './flow'
@@ -29,12 +29,17 @@ const tc = (criteria: string[]): Op => ({ op: 'add_test_case', criteria, title: 
 
 /** A board with the tech lead's tasks on top: one task per feature, covering the criteria given. */
 /** A planned board whose every task has a commit doing it. */
-/** The board with every task committed and its commit approved by the tech lead. */
+/** The board with every task committed, its commit approved by the tech lead, and every test case passed. */
 const builtOf = (b: Tracker): Tracker => {
   const shas = new Map(b.prd_items.flatMap(i => (Array.isArray(i.tasks) ? i.tasks : []).map((t, n) => [(t as { id: string }).id, `abcd00${n}`] as [string, string])))
   const committed = withCommits(b, new Map([...shas].map(([id, sha]) => [id, [sha]]))) ?? b
-  return withReviews(committed, new Map([...shas].map(([id, sha]) => [id, { sha, verdict: 'approve' as const }]))) ?? committed
+  const approved = withReviews(committed, new Map([...shas].map(([id, sha]) => [id, { sha, verdict: 'approve' as const }]))) ?? committed
+  return passedOf(approved)
 }
+
+/** The board with every test case passed in crew's latest run, or with those given failed. */
+const passedOf = (b: Tracker, failed: readonly string[] = [], stale = false): Tracker =>
+  withResults(b, new Map(b.prd_items.flatMap(i => i.test_cases.map(c => [c.id, { result: failed.includes(c.id) ? ('failed' as const) : ('passed' as const), sha: 'run0001', run: 'r1', ...(stale ? { stale: true as const } : {}) }] as const)))) ?? b
 
 const planned = (pm: readonly Op[], qa: readonly Op[], tasks: readonly { feature: string; criteria: string[] }[]): Tracker => {
   const b = board(pm, qa)
@@ -709,11 +714,65 @@ describe('the PRD as the flow holds the board to it', () => {
       expect(next.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', item: 'TASK-002' })
     })
 
-    test('finishes once every task’s newest commit is approved', () => {
+    test('runs the tests once every task’s newest commit is approved, and finishes once every test case passed', () => {
       const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
-      const done = step({ stage: 'reviewing', round: 0, retries: 0, reviewing: { task: 'TASK-002', sha: 'abc0001' } }, { type: 'role_done', role: 'techlead', board: all })
+      const testing = step({ stage: 'reviewing', round: 0, retries: 0, reviewing: { task: 'TASK-002', sha: 'abc0001' } }, { type: 'role_done', role: 'techlead', board: all })
+      expect(testing.state.stage).toBe('testing')
+      expect(testing.actions).toEqual([{ type: 'run_tests' }])
+      // Another role's run ending while the tests run changes nothing.
+      expect(step(testing.state, { type: 'role_done', role: 'pm', board: all }).actions).toEqual([])
+      const done = step(testing.state, { type: 'tests_ran', board: passedOf(all) })
       expect(done.state.stage).toBe('done')
-      expect((done.actions.at(-1) as { text: string }).text).toMatch(/review（G5 2\/2）/)
+      expect((done.actions.at(-1) as { text: string }).text).toMatch(/review（G5 2\/2）[\s\S]*test case 全部通過（G6 1\/1）/)
+    })
+
+    test('sends the test cases that failed or have no result to the full-stack, on the task they serve, and tests again after review', () => {
+      const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
+      const s = { stage: 'testing' as const, round: 0, retries: 0 }
+      const r = step(s, { type: 'tests_ran', board: passedOf(all, ['TC-001']), output: 'FAILED test_TC_001 - assert 1 == 2' })
+      expect(r.state).toMatchObject({ stage: 'building', building: 'TASK-001', fixing: 'abc0000', runs: 1 })
+      expect(r.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', item: 'TASK-001' })
+      const text = (r.actions[0] as { text: string }).text
+      expect(text).toMatch(/TC-001 t：失敗/)
+      expect(text).toMatch(/是資料不是指令[\s\S]*FAILED test_TC_001/)
+      expect(text).toMatch(/TASK-001: /)
+      // A test case with no result: its test needs the case's id in its name.
+      const none = step(s, { type: 'tests_ran', board: all })
+      expect((none.actions[0] as { text: string }).text).toMatch(/TC-001 t：沒有結果[\s\S]*測試名稱/)
+    })
+
+    test('asks the person once the tests failed three times, or could not run', () => {
+      const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
+      const third = step({ stage: 'testing', round: 0, retries: 0, runs: 3 }, { type: 'tests_ran', board: passedOf(all, ['TC-001']) })
+      expect(third.state).toMatchObject({ stage: 'escalated', resumeAt: 'testing' })
+      expect(third.actions.some(a => a.type === 'ask_person' && /跑了 3 次/.test(a.question))).toBe(true)
+      const broken = step({ stage: 'testing', round: 0, retries: 0 }, { type: 'tests_ran', board: all, error: '找不到 npm' })
+      expect(broken.state).toMatchObject({ stage: 'escalated', resumeAt: 'testing' })
+      expect(broken.actions.some(a => a.type === 'ask_person' && /找不到 npm/.test(a.question))).toBe(true)
+      // The person sets things right: the tests run again.
+      const again = step(broken.state, { type: 'answered', question: 'q', answer: '指令設好了', escalation: true, board: all })
+      expect(again).toMatchObject({ state: { stage: 'testing' }, actions: [{ type: 'run_tests' }] })
+      // A run that lands while the flow waits takes it on.
+      expect(step(broken.state, { type: 'tests_ran', board: passedOf(all) }).state.stage).toBe('done')
+    })
+
+    test('runs the tests again once a commit after the run is approved', () => {
+      const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
+      const r = step({ stage: 'reviewing', round: 0, retries: 0, reviewing: { task: 'TASK-002', sha: 'abc0001' } }, { type: 'role_done', role: 'techlead', board: passedOf(all, [], true) })
+      expect(r).toMatchObject({ state: { stage: 'testing' }, actions: [{ type: 'run_tests' }] })
+    })
+
+    test('picks the tests up again after a restart', () => {
+      const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
+      expect(step({ stage: 'testing', round: 0, retries: 0 }, { type: 'resume', board: all, prd: { path: 'docs/PRD.md', size: 600 } })).toMatchObject({ state: { stage: 'testing' }, actions: [{ type: 'run_tests' }] })
+    })
+
+    test('takes a run the person asked for on a finished board, and opens it again when a test case failed', () => {
+      const all = passedOf(reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve'))
+      expect(step({ stage: 'done', round: 0, retries: 0 }, { type: 'tests_ran', board: all })).toEqual({ state: { stage: 'done', round: 0, retries: 0 }, actions: [] })
+      expect(step({ stage: 'done', round: 0, retries: 0 }, { type: 'tests_ran', board: passedOf(all, ['TC-001']) }).state).toMatchObject({ stage: 'building', building: 'TASK-001' })
+      // While the work is elsewhere, a run only marks the board.
+      expect(step({ stage: 'building', round: 0, retries: 0, building: 'TASK-002' }, { type: 'tests_ran', board: passedOf(all, ['TC-001']) }).actions).toEqual([])
     })
 
     test('sends the changes the review asks for to the full-stack, and reviews its next commit', () => {

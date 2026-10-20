@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { applyOps, approvedNow, criteriaOf, gateG1, gateG3, gateG4, gateG5, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf, tipOf } from './board'
+import { applyOps, approvedNow, criteriaOf, gateG1, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf, tipOf } from './board'
 import type { Op, Tracker } from './board'
 
 const CTX = { by: 'pm', today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } } as const
@@ -585,5 +585,47 @@ describe('the review of a task', () => {
     const text = renderBoard(b)
     expect(text).toMatch(/任務 TASK-001 方案頁（S）← AC-001 · commit bbbbbbb · review 通過/)
     expect(text).toMatch(/任務 TASK-002 取消流程（M）← AC-002、AC-003 · commit ccccccc · review 過期（新的 commit 還沒 review）/)
+  })
+})
+
+describe('the test results of a test case', () => {
+  const tested = (): Tracker => {
+    const r = run(withTwoFeatures(), [
+      { op: 'add_test_case', criteria: ['AC-001'], title: '月繳', steps: ['s'], expected: 'e' },
+      { op: 'add_test_case', criteria: ['AC-002'], title: '取消', steps: ['s'], expected: 'e' },
+      { op: 'add_test_case', criteria: ['AC-003'], title: '期末', steps: ['s'], expected: 'e' },
+    ] as Op[], 'qa')
+    if (!r.ok) throw new Error(r.errors.join())
+    return r.tracker
+  }
+  const result = (t: Tracker, id: string, value: unknown): Tracker => ({
+    ...t,
+    prd_items: t.prd_items.map(i => ({ ...i, test_cases: i.test_cases.map(c => (c.id === id ? ({ ...c, crew_result: value } as typeof c) : c)) })),
+  })
+
+  test('counts toward G6 only once crew’s latest run passed it on the newest commit', () => {
+    let b = tested()
+    expect(gateG6(b)).toMatchObject({ covered: 0, total: 3 })
+    b = result(b, 'TC-001', { result: 'passed', sha: 'aaaaaaa1', run: '20261020-120000' })
+    b = result(b, 'TC-002', { result: 'passed', sha: 'aaaaaaa1', run: '20261020-120000', stale: true })
+    b = result(b, 'TC-003', { result: 'failed', sha: 'aaaaaaa1', run: '20261020-120000' })
+    const g6 = gateG6(b)
+    expect(g6.covered).toBe(1)
+    expect(g6.gaps.map(g => g.id)).toEqual(['TC-002', 'TC-003'])
+    // A garbled mark is no result.
+    expect(gateG6(result(tested(), 'TC-001', 'passed')).covered).toBe(0)
+  })
+
+  test('counts the test cases of features in scope that cover a criterion still there', () => {
+    const r = run(tested(), [{ op: 'drop_feature', id: 'PRD-001', reason: '不做' }, { op: 'drop_criterion', id: 'AC-003', reason: '不做' }] as Op[], 'pm')
+    if (!r.ok) throw new Error(r.errors.join())
+    expect(liveCasesOf(r.tracker).map(c => c.id)).toEqual(['TC-002'])
+  })
+
+  test('shows on the board for the roles', () => {
+    const b = result(result(tested(), 'TC-001', { result: 'passed', sha: 'aaaaaaa1', run: 'r' }), 'TC-002', { result: 'failed', sha: 'aaaaaaa1', run: 'r' })
+    const text = renderBoard(b)
+    expect(text).toMatch(/AC-001 可以選月繳方案 ← TC-001 ✓/)
+    expect(text).toMatch(/AC-002 .* ← TC-002 ✗/)
   })
 })

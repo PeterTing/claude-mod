@@ -22,7 +22,7 @@ describe('crew, PM and QA', () => {
     expect(w.spawned[0]?.name).toBeUndefined()
     expect(w.spawned[0]?.prompt).toMatch(/docs\/PRD\.md/)
     expect(w.board()?.mode).toBe('local-only')
-    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\nwork/\n')
+    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\nwork/\nruns/\n')
 
     const wrote = await write($, 'a-pm-1', SPLIT)
     expect(String(wrote.result)).toMatch(/已寫入：PRD-001、PRD-002、AC-001、AC-002/)
@@ -71,7 +71,7 @@ describe('crew, PM and QA', () => {
     ])
     const status = await $.command.run(command('status'))
     // The PRD's requirement, two features with criteria, one criterion with a test case; two criteria still to plan into tasks.
-    expect(status.text).toMatch(/進度 57%（4\/7）/)
+    expect(status.text).toMatch(/進度 44%（4\/9）/)
     const ui = await $.ui.mount({
       plugin: 'crew',
       surface: 'terminal',

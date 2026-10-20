@@ -2,7 +2,8 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { applyOps, newTracker, tasksOf } from './board'
 import type { Op, Tracker } from './board'
-import { branchOf, commitsByTask, commitsOf, marksOf, recordSeen, reviewsOf, SUBJECT, taskMark, withCommits, withReviews, workdirOf } from './git'
+import { branchOf, commitsByTask, commitsOf, marksOf, recordSeen, resultsMarkOf, reviewsOf, SUBJECT, taskMark, withCommits, withResults, withReviews, workdirOf } from './git'
+import { testMark } from './runs'
 
 const ctx = (by: string) => ({ by, today: '2026-10-16', prefixes: { feature: 'PRD-', testCase: 'TC-' } })
 
@@ -111,5 +112,40 @@ describe('crew’s record of the tech lead’s reviews', () => {
     expect(withReviews(marked!, reviews)).toBeNull()
     // A review a board brought, which crew never recorded, is taken off.
     expect(tasksOf(withReviews(marked!, new Map())!.prd_items[0]!).map(t => t.crew_review)).toEqual([undefined, undefined])
+  })
+})
+
+describe('crew’s record of its latest test run', () => {
+  const tested = (): Tracker => {
+    const r = applyOps(planned(), [
+      { op: 'add_test_case', criteria: ['AC-001'], title: '選月繳', steps: ['s'], expected: 'e' },
+      { op: 'add_test_case', criteria: ['AC-001'], title: '換方案', steps: ['s'], expected: 'e' },
+    ] as Op[], ctx('qa'))
+    if (!r.ok) throw new Error(r.errors.join())
+    return r.tracker
+  }
+
+  test('marks each test case with its result in that very case, out of date once crew’s branch moved on', () => {
+    const board = tested()
+    const [tc1, tc2] = board.prd_items[0]!.test_cases
+    const ran = { sha: 'aaaaaaa1', at: 1, exit: 1, run: '20261020-120000', results: { 'TC-001': { result: 'passed' as const, mark: testMark(tc1!) }, 'TC-002': { result: 'failed' as const, mark: 'ffffff' } } }
+    // TC-002's result was for another case under the same id: it counts for nothing.
+    expect(Object.fromEntries(resultsMarkOf(board, ran, 'aaaaaaa1'))).toEqual({ 'TC-001': { result: 'passed', sha: 'aaaaaaa1', run: '20261020-120000' } })
+    expect(Object.fromEntries(resultsMarkOf(board, ran, 'bbbbbbb2'))).toEqual({ 'TC-001': { result: 'passed', sha: 'aaaaaaa1', run: '20261020-120000', stale: true } })
+    expect(resultsMarkOf(board, undefined, 'aaaaaaa1').size).toBe(0)
+    void tc2
+  })
+
+  test('sets the case’s result and the dashboard’s automated_status from it, and takes off a result crew never recorded', () => {
+    const board = tested()
+    const fresh = withResults(board, new Map([['TC-001', { result: 'passed' as const, sha: 'a', run: 'r' }]]))!
+    expect(fresh.prd_items[0]!.test_cases.map(c => [c.crew_result, c.automated_status])).toEqual([
+      [{ result: 'passed', sha: 'a', run: 'r' }, 'passed'],
+      [undefined, 'not_run'],
+    ])
+    expect(withResults(fresh, new Map([['TC-001', { result: 'passed' as const, sha: 'a', run: 'r' }]]))).toBeNull()
+    const stale = withResults(fresh, new Map([['TC-001', { result: 'passed' as const, sha: 'a', run: 'r', stale: true as const }]]))!
+    expect(stale.prd_items[0]!.test_cases[0]!.automated_status).toBe('not_run')
+    expect(withResults(stale, new Map())!.prd_items[0]!.test_cases[0]!.crew_result).toBeUndefined()
   })
 })

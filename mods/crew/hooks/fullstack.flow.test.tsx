@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
 import { taskMark } from './git'
-import { approve, build, command, done, paneText, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { approve, build, command, done, paneText, PLAN, ROOT, SPLIT, start, tested, world, write } from './world'
 
 /** The full-stack builds the tasks one at a time in crew's own worktree; a commit, not its word, says a task is built. */
 
@@ -71,8 +71,10 @@ describe('the full-stack', () => {
     w.commit('TASK-002: 取消流程')
     await done($, 'a-fullstack-4')
     await approve($, 'TASK-002')
+    // crew runs the person's test command; every test case passes.
+    await tested()
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
-    expect(w.toasts.at(-1)).toMatch(/G5 2\/2/)
+    expect(w.toasts.at(-1)).toMatch(/G5 2\/2[\s\S]*G6/)
   })
 
   test('has the person decide when a task twice ends with no commit', async ($, on) => {
@@ -387,6 +389,7 @@ describe('the full-stack', () => {
     w.commit('TASK-002: 取消流程', branch)
     await done($, 'a-fullstack-4')
     await approve($, 'TASK-002')
+    await tested()
     const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[] }[] }[] }
     expect(board.prd_items.flatMap(i => i.tasks ?? []).map(t => [t.id, (t.crew_commits ?? []).length])).toEqual([
       ['TASK-001', 1],

@@ -5,7 +5,9 @@
  * the full-stack says about its work is not. Pure.
  */
 
-import type { Task, TaskReview, Tracker } from './board'
+import type { Task, TaskReview, TestResult, Tracker } from './board'
+import type { Outcome } from './runs'
+import { testMark } from './runs'
 import { tasksOf } from './board'
 import { fingerprint } from './prd'
 
@@ -128,3 +130,43 @@ export const reviewsOf = (board: Tracker, reviewed: Reviewed, commits: ReadonlyM
 
 /** The board with each task marked with crew's review of it; null when no mark changes. */
 export const withReviews = (board: Tracker, reviews: ReadonlyMap<string, TaskReview>): Tracker | null => markTasks(board, 'crew_review', reviews)
+
+/**
+ * crew's latest run of the person's test command: the commit of crew's branch
+ * it ran on, the run (its log's name), and each test case's result tied to the
+ * case as it stood (testMark).
+ */
+export type Ran = { sha: string; at: number; exit: number; run: string; results: Record<string, { result: Outcome; mark: string }> }
+
+/** Test case id → crew's result for that very case; out of date once crew's branch has moved past the run's commit. */
+export const resultsMarkOf = (board: Tracker, ran: Ran | undefined, tip: string | undefined): Map<string, TestResult> => {
+  const out = new Map<string, TestResult>()
+  if (ran === undefined) return out
+  const stale = tip !== undefined && tip !== ran.sha
+  for (const tc of board.prd_items.flatMap(item => item.test_cases)) {
+    const r = ran.results[tc.id]
+    if (r === undefined || r.mark !== testMark(tc)) continue
+    out.set(tc.id, { result: r.result, sha: ran.sha, run: ran.run, ...(stale ? { stale: true as const } : {}) })
+  }
+  return out
+}
+
+/**
+ * The board with each test case marked with crew's result; null when none
+ * changes. Where crew has a result, the case's automated_status (the
+ * progress-dashboard's field) follows it; crew leaves it alone otherwise.
+ */
+export const withResults = (board: Tracker, results: ReadonlyMap<string, TestResult>): Tracker | null => {
+  let changed = false
+  const items = board.prd_items.map(item => {
+    const cases = item.test_cases.map(tc => {
+      const now = results.get(tc.id)
+      if (JSON.stringify(tc.crew_result ?? null) === JSON.stringify(now ?? null)) return tc
+      changed = true
+      const { crew_result: _, ...rest } = tc
+      return now === undefined ? rest : { ...rest, crew_result: now, automated_status: now.stale === true ? 'not_run' : now.result }
+    })
+    return { ...item, test_cases: cases }
+  })
+  return changed ? { ...board, prd_items: items } : null
+}

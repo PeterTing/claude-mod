@@ -21,8 +21,13 @@ export type TestCase = {
   evidence: unknown[]
   /** The criteria this case covers, by id: crew's link for G4. */
   acceptance_criteria?: string[]
+  /** How crew's latest run of the person's test command went for this case, as crew recorded it. */
+  crew_result?: TestResult
   [key: string]: unknown
 }
+
+/** A test case's result in a run crew made: on which commit, which run (its log), and whether a newer commit came since. */
+export type TestResult = { result: 'passed' | 'failed'; sha: string; run: string; stale?: true }
 
 export type TaskSize = 'S' | 'M' | 'L' | 'XL'
 
@@ -403,12 +408,46 @@ export const gateG3 = (t: Tracker): GateResult => {
   return { covered: criteria.length - gaps.length, total: criteria.length, gaps }
 }
 
+/** The test cases that count: of a feature in scope, covering a criterion that is still there. */
+export const liveCasesOf = (t: Tracker): TestCase[] => {
+  const criteria = new Set(inScope(t).flatMap(criteriaOf).map(c => c.id))
+  return inScope(t).flatMap(i => i.test_cases.filter(c => (c.acceptance_criteria ?? []).some(a => criteria.has(a))))
+}
+
+/** crew's result for a test case, when the mark is one crew could have written. */
+export const resultOf = (tc: TestCase): TestResult | undefined => {
+  const r = tc.crew_result as Partial<TestResult> | undefined
+  if (typeof r !== 'object' || r === null || (r.result !== 'passed' && r.result !== 'failed') || typeof r.sha !== 'string' || typeof r.run !== 'string') return undefined
+  return { result: r.result, sha: r.sha, run: r.run, ...(r.stale === true ? { stale: true as const } : {}) }
+}
+
+/** The test case passed in crew's latest run, on crew's branch as it stands. */
+export const passedNow = (tc: TestCase): boolean => {
+  const r = resultOf(tc)
+  return r?.result === 'passed' && r.stale !== true
+}
+
+/** G6: every test case that counts passed in crew's latest run of the person's test command, on the newest commit. */
+export const gateG6 = (t: Tracker): GateResult => {
+  const cases = liveCasesOf(t)
+  const feature = new Map(t.prd_items.flatMap(i => i.test_cases.map(c => [c.id, i.id] as const)))
+  const gaps = cases.filter(c => !passedNow(c)).map(c => ({ id: c.id, title: c.title ?? c.id, feature: feature.get(c.id) ?? '' }))
+  return { covered: cases.length - gaps.length, total: cases.length, gaps }
+}
+
 /** G5: every task in the plan has its newest commit approved by the tech lead. */
 export const gateG5 = (t: Tracker): GateResult => {
   const tasks = liveTasksOf(t)
   const feature = new Map(t.prd_items.flatMap(i => tasksOf(i).map(x => [x.id, i.id] as const)))
   const gaps = tasks.filter(x => !approvedNow(x)).map(x => ({ id: x.id, title: x.title, feature: feature.get(x.id) ?? '' }))
   return { covered: tasks.length - gaps.length, total: tasks.length, gaps }
+}
+
+/** How a test case went in crew's latest run, for the roles: passed, failed, or out of date. */
+const caseMark = (tc: TestCase): string => {
+  const r = resultOf(tc)
+  if (r === undefined) return ''
+  return r.stale === true ? '（結果過期）' : r.result === 'passed' ? ' ✓' : ' ✗'
 }
 
 /** Where a task's code stands, for the roles: its newest commit and the review of it. */
@@ -441,7 +480,7 @@ export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): strin
       const cases = t.prd_items.flatMap(i => i.test_cases).filter(tc => (tc.acceptance_criteria ?? []).includes(c.id))
       const tasks = tasksOf(item).filter(x => x.crew_dropped === undefined && x.acceptance_criteria.includes(c.id))
       const plan = planning ? ` · ${tasks.length === 0 ? '還沒有任務' : `任務 ${tasks.map(x => x.id).join(', ')}`}` : ''
-      lines.push(`  ${c.id} ${c.text} ← ${cases.length === 0 ? '沒有 test case' : cases.map(tc => tc.id).join(', ')}${plan}`)
+      lines.push(`  ${c.id} ${c.text} ← ${cases.length === 0 ? '沒有 test case' : cases.map(tc => `${tc.id}${caseMark(tc)}`).join(', ')}${plan}`)
     }
     for (const x of tasksOf(item)) {
       const size = x.size === undefined ? '' : `（${x.size}）`

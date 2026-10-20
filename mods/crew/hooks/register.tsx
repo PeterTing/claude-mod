@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { CrewLive, CrewMessage, CrewScenario, CrewTab, CrewWork } from '../types'
-import { applyOps, criteriaOf, gateG1, gateG4, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, reviewOf, tasksOf } from './board'
+import { applyOps, criteriaOf, gateG1, gateG4, gateG6, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, reviewOf, tasksOf } from './board'
 import type { Tracker } from './board'
 import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './consolidate'
 import { DEMO } from './demo'
@@ -13,8 +13,9 @@ import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, r
 import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { ROLE_NAMES } from './model'
 import { baselineFor, baselineOf, changeKey, cut, diffRequirements, earlierFor, fingerprint, gateG0, MAX_REQUIREMENTS, refsOf, requirementsOf } from './prd'
-import { branchOf, commitsOf, marksOf, recordSeen, reviewsOf, taskMark, withCommits, withReviews, workdirOf } from './git'
-import type { Reviewed, Seen } from './git'
+import { branchOf, commitsOf, marksOf, recordSeen, resultsMarkOf, reviewsOf, taskMark, withCommits, withResults, withReviews, workdirOf } from './git'
+import type { Ran, Reviewed, Seen } from './git'
+import { parseCommand, resultsOf, testMark } from './runs'
 import type { Requirement } from './prd'
 import { composeStart, relatedOf, threadLines, wakePlan, withMemories, workingSet } from './pack'
 import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
@@ -308,7 +309,7 @@ async function writeCrew($: any, path: string, text: string): Promise<boolean> {
     if (await staysIn($, ignore)) {
       const had = (await readCrew($, ignore)) ?? ''
       const lines = had.split('\n').filter((l: string) => l !== '')
-      const missing = ['usage/', 'log/', 'work/'].filter(rule => !lines.includes(rule))
+      const missing = ['usage/', 'log/', 'work/', 'runs/'].filter(rule => !lines.includes(rule))
       if (missing.length > 0) await $.fs.write(ignore, `${[...lines, ...missing].join('\n')}\n`)
     }
   }
@@ -771,6 +772,9 @@ async function execute($: any, actions: readonly FlowAction[]) {
       await handOver($, action.role, [work])
     } else if (action.type === 'ask_person') {
       await ask($, 'crew', action.question, action.item)
+    } else if (action.type === 'run_tests') {
+      // The run can take minutes, and its end is a flow event of its own: it runs on the clock, apart from this step.
+      laterTests($)
     } else if (action.type === 'review') {
       // The thread keeps the request; the diff goes to the tech lead alone, never into the repo's threads.
       await post($, { item: action.task, from: 'crew', to: 'techlead', text: `請 review ${action.task}（commit ${action.sha.slice(0, 7)}），用 review_submit 送出結論。`, kind: 'route' })
@@ -781,6 +785,105 @@ async function execute($: any, actions: readonly FlowAction[]) {
       if ((await read($, live)).lead === 'brain') tellBrain(action.text)
     }
   }
+}
+
+/** The person's test command, kept on this machine: a repo cannot set what crew runs. */
+const testsKey = (): string => `tests:${files.root}`
+
+async function loadTestCommand($: any): Promise<string[] | undefined> {
+  const v = (await $.store.get(testsKey())) as { argv?: unknown } | undefined
+  const argv = v?.argv
+  return Array.isArray(argv) && argv.length > 0 && argv.every(a => typeof a === 'string') ? (argv as string[]) : undefined
+}
+
+/** The longest crew lets the tests run: the most the host allows. */
+const TEST_TIMEOUT_MS = 600_000
+
+/** The end of the output the flow passes on to the full-stack. */
+const TEST_OUTPUT = 4_000
+
+const NO_COMMAND = '還沒有設定測試指令。請輸入 /crew test-command <指令>（例如 npm test 或 python3 -m pytest -v），crew 會在全端的工作目錄執行它'
+
+/** A run's name, from its time: the log's file name. */
+const runName = (t: number): string => new Date(t).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
+
+/** Starts a test run on the clock, apart from the step or command that asked for it. */
+const laterTests = ($: any) => {
+  $.clock.after(0, () => runTests($))
+}
+
+/** A run under way: a second one waits for it, and runs after it on what is newer. */
+const testing: { running?: Promise<string> } = {}
+
+/**
+ * Runs the person's test command in crew's worktree, records each test case's
+ * result against the commit it ran on, keeps the output as evidence in
+ * .crew/runs (out of git), and tells the flow. What it ran on, and how it went,
+ * in a sentence.
+ */
+function runTests($: any): Promise<string> {
+  const run = (testing.running ?? Promise.resolve('')).then(() => runOnce($))
+  testing.running = run.catch(() => '')
+  return run
+}
+
+async function runOnce($: any): Promise<string> {
+  const l = await read($, live)
+  const requirements = (await prdView($))?.requirements
+  const tell = async (error: string): Promise<string> => {
+    const board = await loadBoard($)
+    if (board !== null) await feed($, { type: 'tests_ran', board, error, ...(requirements === undefined ? {} : { requirements }) })
+    return error
+  }
+  if (l.prdPath === null) return '還沒有開始的 PRD。'
+  const argv = await loadTestCommand($)
+  if (argv === undefined) return tell(NO_COMMAND)
+  const work = await currentWork($)
+  if (work === undefined || !(await $.fs.exists(`${work.dir}/.git`))) return tell('crew 的工作目錄還不存在：全端還沒有開始寫程式')
+  if (!(await staysIn($, work.dir))) return tell(`${work.dir} 是連結，或指到 repo 外`)
+  const head = await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${work.branch}^{commit}`])
+  const tip = head.stdout.trim()
+  if (head.exitCode !== 0 || !SHA.test(tip)) return tell(`找不到 crew 的分支 ${work.branch}`)
+  $.ui.toast(`crew：在 ${work.dir} 跑測試（${argv.join(' ')}）…`)
+  let r: { exitCode: number; stdout: string; stderr: string }
+  try {
+    r = await $.process.run(argv, { cwd: work.dir, timeoutMs: TEST_TIMEOUT_MS })
+  } catch (err) {
+    return tell(`${argv[0] ?? ''} 沒辦法執行：${cut(squeeze(String(err)), 200)}`)
+  }
+  const now = await $.clock.now()
+  const name = runName(now)
+  const output = redact(`${r.stdout}\n${r.stderr}`)
+  // The evidence: what ran, on which commit, how it ended, and all it printed, masked.
+  await writeCrew($, `${files.crew}/runs/${name}.log`, `$ ${argv.join(' ')}\n# ${work.dir}\n# commit ${tip}\n# exit ${r.exitCode}\n\n${output}`)
+  const prefix = (await idPrefixes($)).testCase
+  try {
+    await changeBoard($, async board => {
+      const latest = await loadWork($, relativeOf(l.prdPath ?? ''))
+      if (board === null || latest === undefined) return { value: undefined }
+      const cases = liveCasesOf(board)
+      const found = resultsOf(output, cases.map(c => c.id), prefix)
+      const results: Ran['results'] = {}
+      for (const c of cases) {
+        const result = found.get(c.id)
+        if (result !== undefined) results[c.id] = { result, mark: testMark(c) }
+      }
+      await saveWork($, relativeOf(l.prdPath ?? ''), { ...latest, ran: { sha: tip, at: now, exit: r.exitCode, run: name, results } })
+      return { value: undefined }
+    })
+  } catch (err) {
+    if (!(err instanceof BoardRefused)) throw err
+    return err.message
+  }
+  await syncCommits($)
+  const board = await loadBoard($)
+  if (board === null) return boardProblem() ?? '找不到看板。'
+  const g6 = gateG6(board)
+  await note($, { kind: 'tests', run: name, sha: tip, exit: r.exitCode, passed: g6.covered, total: g6.total })
+  const said = `測試跑完（${argv.join(' ')}，commit ${tip.slice(0, 7)}，exit ${r.exitCode}）：test case 通過 ${g6.covered}/${g6.total}。證據在 .crew/runs/${name}.log。`
+  $.ui.toast(`crew：${said}`)
+  await feed($, { type: 'tests_ran', board, output: output.slice(-TEST_OUTPUT), ...(requirements === undefined ? {} : { requirements }) })
+  return said
 }
 
 /** The most of a review's diff the tech lead is given at once; it reads the rest in the worktree. */
@@ -1066,7 +1169,7 @@ const git = ($: any, args: readonly string[]) => gitIn($, files.root, args)
  * and the commits it has seen on that branch, each tied to the tasks it did. A
  * board or branch a repo brings is neither crew's branch nor crew's record.
  */
-type Work = { branch: string; dir: string; base: string; seen: Seen; reviewed: Reviewed }
+type Work = { branch: string; dir: string; base: string; seen: Seen; reviewed: Reviewed; ran?: Ran }
 
 const workKey = (path: string): string => `work:${files.root}:${path}`
 
@@ -1096,7 +1199,16 @@ async function loadWork($: any, path: string): Promise<Work | undefined> {
       reviewed[id] = { sha: r.sha, verdict: r.verdict, mark: r.mark, ...(typeof r.notes === 'string' ? { notes: r.notes } : {}) }
     }
   }
-  return { branch, dir, base, seen, reviewed }
+  const r = v.ran as Partial<Ran> | undefined
+  let ran: Ran | undefined
+  if (typeof r === 'object' && r !== null && typeof r.sha === 'string' && SHA.test(r.sha) && typeof r.run === 'string' && /^\d{8}-\d{6}$/.test(r.run) && typeof r.results === 'object' && r.results !== null) {
+    const results: Ran['results'] = {}
+    for (const [id, x] of Object.entries(r.results as Record<string, Partial<Ran['results'][string]>>)) {
+      if (typeof x === 'object' && x !== null && (x.result === 'passed' || x.result === 'failed') && typeof x.mark === 'string') results[id] = { result: x.result, mark: x.mark }
+    }
+    ran = { sha: r.sha, run: r.run, at: typeof r.at === 'number' ? r.at : 0, exit: typeof r.exit === 'number' ? r.exit : -1, results }
+  }
+  return { branch, dir, base, seen, reviewed, ...(ran === undefined ? {} : { ran }) }
 }
 
 const saveWork = ($: any, path: string, work: Work) => $.store.set(workKey(path), work)
@@ -1146,7 +1258,7 @@ async function ensureWorkdir($: any): Promise<{ dir: string; branch: string } | 
     // In the board's turn, as every write of the record is: what crew saw and the reviews it holds carry over.
     await serial('board', async () => {
       const latest = (await loadWork($, path)) ?? work
-      await saveWork($, path, { branch, dir, base, seen: latest?.seen ?? {}, reviewed: latest?.reviewed ?? {} })
+      await saveWork($, path, { branch, dir, base, seen: latest?.seen ?? {}, reviewed: latest?.reviewed ?? {}, ...(latest?.ran === undefined ? {} : { ran: latest.ran }) })
     })
     await note($, { kind: 'workdir', dir, branch, base })
     $.ui.toast(`crew：全端開始在 ${dir}（分支 ${branch}）寫程式。它照你的權限模式執行；crew 要它不 push，合併由你決定。`)
@@ -1171,7 +1283,11 @@ async function syncCommits($: any) {
   try {
     const work = await loadWork($, path)
     let commits: { sha: string; ids: string[] }[] = []
-    if (work !== undefined && (await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${work.branch}`])).exitCode === 0) {
+    // The branch's newest commit: a test run on an older one is out of date.
+    let tip: string | undefined
+    const head = work === undefined ? undefined : await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${work.branch}^{commit}`])
+    if (work !== undefined && head !== undefined && head.exitCode === 0) {
+      tip = SHA.test(head.stdout.trim()) ? head.stdout.trim() : undefined
       // With --branches, git takes an --exclude pattern without its refs/heads/.
       const log = await git($, ['log', '--format=%H%x09%s', '-n', '2000', `refs/heads/${work.branch}`, '--not', work.base, `--exclude=${work.branch}`, '--branches', '--'])
       if (log.exitCode === 0) commits = commitsOf(log.stdout)
@@ -1189,7 +1305,8 @@ async function syncCommits($: any) {
       const shas = marksOf(board, seen)
       const marked = withCommits(board, shas)
       const reviewed = withReviews(marked ?? board, reviewsOf(board, now?.reviewed ?? {}, shas))
-      const next = reviewed ?? marked
+      const tested = withResults(reviewed ?? marked ?? board, resultsMarkOf(board, now?.ran, tip))
+      const next = tested ?? reviewed ?? marked
       return next === null ? { value: undefined } : { board: next, value: undefined }
     })
   } catch (err) {
@@ -1621,6 +1738,36 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
   if (verb === 'consolidate') {
     return await consolidate($, rest[0] ?? dayOf(await $.clock.now()))
   }
+  if (verb === 'test-command') {
+    // What crew runs is the person's to say, typed by them: not the brain's, not the repo's.
+    if (by === 'brain') return '測試指令要使用者自己輸入 /crew test-command <指令> 設定。'
+    const typed = rest.join(' ').trim()
+    if (typed === '') {
+      const argv = await loadTestCommand($)
+      return argv === undefined ? `還沒有設定測試指令。用法：/crew test-command <指令>，例如 /crew test-command npm test。` : `測試指令：${argv.join(' ')}（存在這台機器上，不在 repo 裡）。`
+    }
+    if (typed === 'off') {
+      await $.store.delete(testsKey())
+      return '已清除測試指令。'
+    }
+    const parsed = parseCommand(typed)
+    if (!parsed.ok) return `沒有設定：${parsed.error}`
+    await $.store.set(testsKey(), { argv: parsed.argv })
+    // A flow that waited for the command runs the tests now; the question that asked for it is settled.
+    const l = await read($, live)
+    const waiting = l.flow.stage === 'testing' || (l.flow.stage === 'escalated' && l.flow.resumeAt === 'testing')
+    if (waiting) {
+      await update($, live, s => ({ ...s, questions: s.questions.map(q => (q.status === 'open' && q.from === 'crew' && q.question.includes('/crew test-command') ? { ...q, status: 'answered' as const, answer: parsed.argv.join(' ') } : q)) }))
+      await saveState($)
+      laterTests($)
+    }
+    return `測試指令設定為：${parsed.argv.join(' ')}。crew 會在全端的工作目錄（crew 自己的分支）直接執行它，不經過 shell，也不再逐次詢問；最多跑 10 分鐘。${waiting ? '現在開始跑。' : ''}`
+  }
+  if (verb === 'test') {
+    if ((await read($, live)).prdPath === null) return '還沒有開始的 PRD。'
+    laterTests($)
+    return 'crew 開始跑測試，跑完會通知。'
+  }
   if (verb === 'status') {
     const board = await loadBoard($)
     const l = await read($, live)
@@ -1720,8 +1867,9 @@ async function roleEnded($: any, e: any, next: any, role: CrewRole, before: Crew
   await watch($)
   // A running flow with nobody at work and nothing waiting would stay stopped unseen: say so.
   // Only the last of several turn ends looks: another may be about to hand the flow on.
+  // While testing, crew itself is at work: the run's end takes the flow on.
   const now = await read($, live)
-  if (ending.count === 1 && RUNNING.includes(now.flow.stage) && !CREW_ROLES.some(r => now.roles[r].state === 'working') && Object.values(now.pending).every(p => p.length === 0)) {
+  if (ending.count === 1 && RUNNING.includes(now.flow.stage) && now.flow.stage !== 'testing' && !CREW_ROLES.some(r => now.roles[r].state === 'working') && Object.values(now.pending).every(p => p.length === 0)) {
     const text = `流程停住了（${now.flow.stage}）：沒有角色在工作。用 /crew resume 接續。`
     $.ui.toast(`crew：${text}`)
     if (now.lead === 'brain') tellBrain(text)
@@ -1969,10 +2117,11 @@ export const register: Register = on => {
       recall: words(e.text),
       rotate: words(e.role),
       resume: [],
+      test: [],
     }
     const verb = str(e.action)
     const rest = Object.hasOwn(args, verb) ? args[verb] : undefined
-    if (rest === undefined) return { result: 'action 要是 start、ask、answer、status、remember、recall、rotate 或 resume。' }
+    if (rest === undefined) return { result: 'action 要是 start、ask、answer、status、remember、recall、rotate、resume 或 test。' }
     await boot.ready
     return { result: await crewVerb($, verb, rest, 'brain') }
   })

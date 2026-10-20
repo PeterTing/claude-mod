@@ -1,6 +1,6 @@
 import type { CrewLive, CrewUsage } from '../types'
-import { approvedNow, criteriaOf, gateG1, gateG3, gateG4, gateG5, liveTasksOf, reviewOf, tasksOf, tipOf } from './board'
-import type { GateResult, Task, Tracker } from './board'
+import { approvedNow, criteriaOf, gateG1, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveTasksOf, passedNow, resultOf, reviewOf, tasksOf, tipOf } from './board'
+import type { GateResult, Task, TestCase, Tracker } from './board'
 import { estimateTokens } from './memory'
 import type { MemoryEntry } from './memory'
 import { droppedRequirements, gateG0, refsOf } from './prd'
@@ -132,6 +132,14 @@ const staleReview = (x: Task): boolean => {
   return !approvedNow(x) && r?.verdict === 'approve' && r.sha !== tipOf(x)
 }
 
+/** Why a test case is not yet through G6: not run, failed (with its evidence), or out of date. */
+const runGap = (tc: TestCase): string => {
+  const r = resultOf(tc)
+  if (r === undefined) return '還沒跑'
+  if (r.stale === true) return '結果過期（之後又有 commit）'
+  return `失敗（.crew/runs/${r.run}.log）`
+}
+
 /** Criteria ids some test case covers. */
 const coveredCriteria = (board: Tracker): Set<string> => new Set(board.prd_items.flatMap(i => i.test_cases.flatMap(c => c.acceptance_criteria ?? [])))
 
@@ -163,6 +171,9 @@ const requirementRows = (board: Tracker, requirements: readonly Requirement[]): 
     const serving = answering.flatMap(f => tasksOf(f).filter(x => x.crew_dropped === undefined && x.acceptance_criteria.some(c => ids.has(c))))
     const built = serving.filter(x => (x.crew_commits ?? []).length > 0).length
     const approved = serving.filter(approvedNow).length
+    // The test cases of this requirement's criteria, and those that passed in crew's latest run on the newest commit.
+    const runCases = liveCasesOf(board).filter(c => (c.acceptance_criteria ?? []).some(a => ids.has(a)))
+    const passed = runCases.filter(passedNow).length
     const out = answering.length === 0 ? dropped.get(r.id) : undefined
     return {
       id: r.id,
@@ -180,7 +191,13 @@ const requirementRows = (board: Tracker, requirements: readonly Requirement[]): 
           serving.length === 0
             ? { state: 'todo', note: '0/0' }
             : { state: approved === serving.length ? 'done' : serving.some(staleReview) ? 'stale' : approved > 0 ? 'doing' : 'todo', note: `${approved}/${serving.length}` },
-        runs: NOT_YET,
+        runs:
+          runCases.length === 0
+            ? { state: 'todo', note: '0/0' }
+            : {
+                state: passed === runCases.length ? 'done' : runCases.some(c => resultOf(c)?.stale === true) ? 'stale' : passed > 0 ? 'doing' : 'todo',
+                note: `${passed}/${runCases.length}`,
+              },
       },
     }
   })
@@ -209,6 +226,8 @@ export const snapshotOf = ({
   // The tasks in the plan, those with a commit doing them, and those the tech lead approved.
   const liveTasks = board === null ? [] : liveTasksOf(board)
   const g5 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG5(board)
+  const g6 = board === null ? { covered: 0, total: 0, gaps: [] } : gateG6(board)
+  const cases = board === null ? [] : liveCasesOf(board)
   const built: GateResult = {
     covered: liveTasks.filter(x => (x.crew_commits ?? []).length > 0).length,
     total: liveTasks.length,
@@ -239,8 +258,9 @@ export const snapshotOf = ({
       ? null
       : {
           // Code counts toward the whole, and as done once the tech lead approved its newest commit: a commit alone is not.
-          done: (g0?.requirements.covered ?? 0) + g1.covered + g4.covered + g3.covered + g5.covered,
-          total: (g0?.requirements.total ?? 0) + g1.total + g4.total + g3.total + built.total,
+          // Each test case counts too, as done once it passed in crew's latest run on the newest commit.
+          done: (g0?.requirements.covered ?? 0) + g1.covered + g4.covered + g3.covered + g5.covered + g6.covered,
+          total: (g0?.requirements.total ?? 0) + g1.total + g4.total + g3.total + built.total + g6.total,
           // The seven stages of each requirement's row, in its order, over the whole board.
           stages: [
             stageOf('規格', split, stage === 'splitting'),
@@ -255,8 +275,7 @@ export const snapshotOf = ({
               ...(built.total > 0 && built.gaps.length === 0 && g5.gaps.length > 0 ? { state: stage === 'building' || stage === 'reviewing' ? ('active' as const) : ('pending' as const) } : {}),
             },
             stageOf('Review', g5, stage === 'reviewing'),
-            // Nobody runs the tests yet: this never shows as done before that comes.
-            pendingStage('測試結果'),
+            stageOf('測試結果', g6, stage === 'testing'),
           ],
           features,
           daily: days.map(d => ({ day: d.slice(5).replace('-', '/'), done: live.activity.filter(a => a.day === d).length })),
@@ -362,7 +381,10 @@ export const snapshotOf = ({
               ...gate('G5', g5, stage === 'reviewing', { name: '每個完成的 task 都通過 code review', fill: '全端修', confirm: 'Tech lead review' }, live.threads),
               gaps: liveTasks.filter(x => !approvedNow(x)).map(x => ({ id: x.id, title: x.title, status: reviewGap(x, live.flow), ...(live.threads[x.id] !== undefined ? { thread: x.id } : {}) })),
             },
-            later('G6', 'test case 全部執行通過、附證據'),
+            {
+              ...gate('G6', g6, stage === 'testing', { name: 'test case 全部執行通過、附證據', fill: '全端修', confirm: 'crew 跑你設定的測試指令' }, live.threads),
+              gaps: cases.filter(c => !passedNow(c)).map(c => ({ id: c.id, title: c.title ?? c.id, status: runGap(c), ...(live.threads[c.id] !== undefined ? { thread: c.id } : {}) })),
+            },
           ],
     decisions: live.questions.filter(q => q.status === 'open').map(q => ({ id: q.id, question: q.question, from: q.from, age: ageOf(q.t, now) })),
     items: [...items, ...taskItems],

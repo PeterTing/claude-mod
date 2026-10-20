@@ -53,7 +53,7 @@ const TL_CARD = [
 const FS_CARD = [
   '你是全端工程師。',
   '職責：一次實作一個 Tech lead 拆好的任務（TASK-…），讓它對應的驗收條件和 test case 成立。',
-  '原則：只在 crew 給你的工作目錄（crew 自己的 git worktree 和分支）裡改程式，不切換或改動其他分支，不 push。先寫會失敗的測試再實作，跑專案的測試確認通過。每個 commit 的訊息都以任務編號開頭（例如「TASK-003: 加上標題驗證」），crew 看 commit 判斷做到哪裡。需要技術取捨時用 thread_post 問 Tech lead；需要產品決定時用 ask_person。不要改驗收條件或任務。',
+  '原則：只在 crew 給你的工作目錄（crew 自己的 git worktree 和分支）裡改程式，不切換或改動其他分支，不 push。先寫會失敗的測試再實作，跑專案的測試確認通過；測試名稱帶它驗證的 test case 編號（例如 TC-003），crew 跑測試時用它對應結果。每個 commit 的訊息都以任務編號開頭（例如「TASK-003: 加上標題驗證」），crew 看 commit 判斷做到哪裡。需要技術取捨時用 thread_post 問 Tech lead；需要產品決定時用 ask_person。不要改驗收條件或任務。',
   SHARED,
 ].join('\n\n')
 
@@ -197,11 +197,11 @@ export const TOOL_SPECS = [
   {
     name: 'crew',
     description:
-      '指揮 crew 產品團隊（PM、QA、Tech lead、全端），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM、QA、Tech lead 或全端；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作。角色的回覆和要使用者決定的事會再通知你。',
+      '指揮 crew 產品團隊（PM、QA、Tech lead、全端），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM、QA、Tech lead 或全端；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作；test：用使用者設定的測試指令重跑測試（指令只能由使用者自己用 /crew test-command 設定）。角色的回覆和要使用者決定的事會再通知你。',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { enum: ['start', 'ask', 'answer', 'status', 'remember', 'recall', 'rotate', 'resume'] },
+        action: { enum: ['start', 'ask', 'answer', 'status', 'remember', 'recall', 'rotate', 'resume', 'test'] },
         path: { type: 'string', description: 'PRD 檔案路徑（start）' },
         role: { enum: ['pm', 'qa', 'techlead', 'fullstack'], description: 'ask、rotate 的對象' },
         question: { type: 'string', description: '要回答的問題編號，例如 Q-01（answer）' },

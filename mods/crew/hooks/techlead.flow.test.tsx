@@ -39,7 +39,7 @@ describe('the tech lead', () => {
     await build($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
     expect(w.toasts.at(-1)).toMatch(/G3 2\/2/)
-    expect(String((await call($, 'board_read', {}, 'a-pm-1')).result)).toMatch(/AC-001 可以選月繳方案 ← TC-001 · 任務 TASK-001/)
+    expect(String((await call($, 'board_read', {}, 'a-pm-1')).result)).toMatch(/AC-001 可以選月繳方案 ← TC-001 ✓ · 任務 TASK-001/)
   })
 
   test('is sent back to criteria without a task, and then the person is asked', async ($, on) => {
