@@ -14,43 +14,105 @@ import type { Decision, Feature, Gate, Item, ItemStatus, LayerState, Progress, R
 /** The elements a surface draws with, as `$.ui.resolve(e)` hands them over; a phone's has no text field or picker. */
 export type Elements = { Box: any; Text: any; Button: any; Input?: any; Select?: any }
 
-/** What the person can do in the pane: everything crew does on their word, with no command. */
+/** What the person can do in the pane: everything crew does on their word, with no command. Each may take time: it resolves once done. */
 export type Actions = {
-  tab: (tab: CrewTab) => void
-  scenario: (scenario: CrewScenario) => void
-  thread: (item: string | null) => void
+  tab: (tab: CrewTab) => void | Promise<void>
+  scenario: (scenario: CrewScenario) => void | Promise<void>
+  thread: (item: string | null) => void | Promise<void>
   /** Opens a gate's detail on the overview, or closes it with null. */
-  gate: (gate: string | null) => void
+  gate: (gate: string | null) => void | Promise<void>
   /** Opens an item's thread on the Threads tab. */
-  openThread: (item: string) => void
+  openThread: (item: string) => void | Promise<void>
   /** The PRD picked in the list, and the start with the one picked or a path typed. */
-  pick: (path: string) => void
-  start: (path?: string) => void
+  pick: (path: string) => void | Promise<void>
+  start: (path?: string) => void | Promise<void>
   /** Not now: the pane closes, and crew starts nothing. */
-  notNow: () => void
-  resume: () => void
-  answer: (question: string, text: string) => void
-  approve: (question: string) => void
-  reject: (question: string, reason?: string) => void
+  notNow: () => void | Promise<void>
+  resume: () => void | Promise<void>
+  answer: (question: string, text: string) => void | Promise<void>
+  approve: (question: string) => void | Promise<void>
+  reject: (question: string, reason?: string) => void | Promise<void>
   /** Opens a design to read in the pane, or closes it with null. */
-  viewDesign: (design: string | null) => void
+  viewDesign: (design: string | null) => void | Promise<void>
   /** Opens a role's question field, or closes it with null; asks it; rotates it. */
-  openAsk: (role: RoleId | null) => void
-  ask: (role: RoleId, text: string) => void
-  rotate: (role: RoleId) => void
-  testCommand: (text: string) => void
-  runTests: () => void
-  tuning: (mode: Tuning) => void
-  openOnLoad: (open: boolean) => void
+  openAsk: (role: RoleId | null) => void | Promise<void>
+  ask: (role: RoleId, text: string) => void | Promise<void>
+  rotate: (role: RoleId) => void | Promise<void>
+  testCommand: (text: string) => void | Promise<void>
+  runTests: () => void | Promise<void>
+  tuning: (mode: Tuning) => void | Promise<void>
+  openOnLoad: (open: boolean) => void | Promise<void>
   /** The first press asks to confirm; the second resets. */
-  reset: (confirmed: boolean) => void
-  consolidate: () => void
-  demoOff: () => void
-  recall: (query: string) => void
-  remember: (text: string) => void
+  reset: (confirmed: boolean) => void | Promise<void>
+  consolidate: () => void | Promise<void>
+  demoOff: () => void | Promise<void>
+  recall: (query: string) => void | Promise<void>
+  remember: (text: string) => void | Promise<void>
 }
 
 export type View = { tab: CrewTab; scenario: CrewScenario; thread: string | null; gate: string | null; asking: string | null; confirming: boolean }
+
+const ROLE_IDS: readonly RoleId[] = ['pm', 'uiux', 'fullstack', 'qa', 'techlead']
+
+/**
+ * The work a control of the pane stands for, by its key: what crew does on the
+ * person's word, done in full before it resolves. True when the key is one;
+ * false for a control that only moves the view, which its own handler takes.
+ */
+export async function actOn(act: Actions, view: View, snap: Snapshot, key: string, value?: string): Promise<boolean> {
+  const did = async (work: void | Promise<void>): Promise<true> => {
+    await work
+    return true
+  }
+  const id = (prefix: string) => (key.startsWith(prefix) ? key.slice(prefix.length) : undefined)
+  const role = (x: string | undefined): RoleId | undefined => ROLE_IDS.find(r => r === x)
+  if (value !== undefined) {
+    // A field's Enter, or a pick.
+    if (key === 'prd-path') return did(act.start(value))
+    if (key === 'prd-pick' || key === 'prd-switch') return did(act.pick(value))
+    if (key === 'test-command') return did(act.testCommand(value))
+    if (key === 'recall') return did(act.recall(value))
+    if (key === 'remember') return did(act.remember(value))
+    const answer = id('answer-')
+    if (answer !== undefined) return did(act.answer(answer, value))
+    const sent = id('reject-')
+    if (sent !== undefined) return did(act.reject(sent, value))
+    const asked = role(key.match(/^ask-(\w+)-text$/)?.[1])
+    if (asked !== undefined) return did(act.ask(asked, value))
+    return false
+  }
+  const simple: Record<string, () => void | Promise<void>> = {
+    start: () => act.start(),
+    'switch-prd': () => act.start(),
+    'not-now': () => act.notNow(),
+    resume: () => act.resume(),
+    'run-tests': () => act.runTests(),
+    'tuning-auto': () => act.tuning('auto'),
+    'tuning-ask': () => act.tuning('ask'),
+    'open-on-load': () => act.openOnLoad(true),
+    'not-on-load': () => act.openOnLoad(false),
+    reset: () => act.reset(false),
+    'reset-confirm': () => act.reset(true),
+    consolidate: () => act.consolidate(),
+    'close-design': () => act.viewDesign(null),
+  }
+  const run = simple[key]
+  if (run !== undefined) return did(run())
+  const approve = id('approve-')
+  if (approve !== undefined) return did(act.approve(approve))
+  const reject = id('reject-')
+  if (reject !== undefined) return did(act.reject(reject))
+  const design = id('view-')
+  if (design !== undefined) return did(act.viewDesign(design))
+  const rotated = role(id('rotate-'))
+  if (rotated !== undefined) return did(act.rotate(rotated))
+  const opened = role(id('ask-'))
+  if (opened !== undefined) return did(act.openAsk(view.asking === opened ? null : opened))
+  const option = id('prd-option-')
+  const prd = option === undefined ? undefined : snap.start?.prds[Number(option)]
+  if (prd !== undefined) return did(act.pick(prd.path))
+  return false
+}
 
 const TABS: readonly [CrewTab, string][] = [
   ['overview', '總覽'],

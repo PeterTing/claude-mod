@@ -25,7 +25,7 @@ import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
 import type { CrewRole } from './roles'
 import { floorOf, labelOf, routeFor, tunedRoute } from './router'
 import type { Route, Tuning } from './router'
-import { bandText, CrewPane } from './views'
+import { actOn, bandText, CrewPane } from './views'
 import type { Actions } from './views'
 
 const PANE = 'crew'
@@ -2581,61 +2581,124 @@ function previewActions($: any, snap: Snapshot): Actions {
  */
 function paneActions($: any, snap: Snapshot): Actions {
   const said = (text: string) => $.ui.toast(`crew：${text}`)
-  const person = (verb: string, rest: string[]) =>
-    void startWaiting($)
-      .then(() => crewVerb($, verb, rest, 'person', true))
-      .then(said, (err: unknown) => said(`沒有完成：${cut(squeeze(String(err)), 200)}`))
+  // Done in full before it resolves: in the hook that took the press, so a role it starts is the engine's to run.
+  const person = async (verb: string, rest: string[]) => {
+    try {
+      await startWaiting($)
+      said(await crewVerb($, verb, rest, 'person', true))
+    } catch (err) {
+      said(`沒有完成：${cut(squeeze(String(err)), 200)}`)
+    }
+  }
   const design = (id: string) => {
     const d = snap.decisions.find(x => x.id === id)
     return d?.kind === 'design' ? d.design : undefined
   }
   return {
     ...viewMoves($),
-    pick: path => void update($, picked, () => path),
-    start: path =>
-      void (async () => {
-        const chosen = path ?? (await read($, picked)) ?? (await prdCandidates($))[0]?.path
-        if (chosen === undefined) return said('repo 裡找不到 PRD 檔案：請在「或輸入路徑」填 PRD 的路徑。')
-        await update($, picked, () => null)
-        said(await crewVerb($, 'start', [chosen], 'person', true))
-      })(),
-    notNow: () =>
-      void (async () => {
-        if ((await read($, live)).paused === 'offer') return void (await update($, live, s => ({ ...s, paused: 'person' as const })))
-        await update($, live, s => ({ ...s, declined: true }))
-        await $.ui.close({ id: PANE })
-      })(),
+    pick: async path => void (await update($, picked, () => path)),
+    start: async path => {
+      const chosen = path ?? (await read($, picked)) ?? (await prdCandidates($))[0]?.path
+      if (chosen === undefined) return said('repo 裡找不到 PRD 檔案：請在「或輸入路徑」填 PRD 的路徑。')
+      await update($, picked, () => null)
+      await person('start', [chosen])
+    },
+    notNow: async () => {
+      if ((await read($, live)).paused === 'offer') return void (await update($, live, s => ({ ...s, paused: 'person' as const })))
+      await update($, live, s => ({ ...s, declined: true }))
+      await $.ui.close({ id: PANE })
+    },
     resume: () => person('resume', []),
     answer: (id, text) => person('answer', [id, text]),
-    approve: id => {
+    approve: async id => {
       const scr = design(id)
       if (scr !== undefined) return person('approve', [scr])
-      void decideTuning($, id, true).then(said)
+      said(await decideTuning($, id, true))
     },
-    reject: (id, reason) => {
+    reject: async (id, reason) => {
       const scr = design(id)
       if (scr !== undefined) return person('reject', [scr, reason ?? ''])
-      void decideTuning($, id, false).then(said)
+      said(await decideTuning($, id, false))
     },
-    viewDesign: id => void update($, designOpen, () => id),
-    ask: (role, text) => {
-      void update($, asking, () => null)
-      person('ask', [role, text])
+    viewDesign: async id => void (await update($, designOpen, () => id)),
+    ask: async (role, text) => {
+      await update($, asking, () => null)
+      await person('ask', [role, text])
     },
     rotate: role => person('rotate', [role]),
     testCommand: text => person('test-command', [text]),
     runTests: () => person('test', []),
-    tuning: mode => void saveSettings($, { tuning: mode }).then(() => said(mode === 'auto' ? '大腦處置改成自動：大腦自己處置，事後記成決定。' : '大腦處置改成先問你：大腦提出建議，你核准才執行。')),
-    openOnLoad: open => void saveSettings($, { openOnLoad: open }).then(() => said(open ? 'Claude Code 開啟時會打開這個面板。' : 'Claude Code 開啟時不會打開這個面板；要用時從 Claude Code 的面板清單打開。')),
-    reset: sure => {
-      if (!sure) return void update($, confirming, () => true)
-      void update($, confirming, () => false)
-      person('reset', [])
+    tuning: async mode => {
+      await saveSettings($, { tuning: mode })
+      said(mode === 'auto' ? '大腦處置改成自動：大腦自己處置，事後記成決定。' : '大腦處置改成先問你：大腦提出建議，你核准才執行。')
+    },
+    openOnLoad: async open => {
+      await saveSettings($, { openOnLoad: open })
+      said(open ? 'Claude Code 開啟時會打開這個面板。' : 'Claude Code 開啟時不會打開這個面板；要用時從 Claude Code 的面板清單打開。')
+    },
+    reset: async sure => {
+      if (!sure) return void (await update($, confirming, () => true))
+      await update($, confirming, () => false)
+      await person('reset', [])
     },
     consolidate: () => person('consolidate', []),
-    recall: q => void crewVerb($, 'recall', [q], 'person', true).then(text => update($, recalled, () => ({ query: q, text }))),
+    recall: async q => {
+      const text = await crewVerb($, 'recall', [q], 'person', true)
+      await update($, recalled, () => ({ query: q, text }))
+    },
     remember: text => person('remember', [text]),
   }
+}
+
+/**
+ * What the real pane's controls hold themselves: the moves of the view. crew's
+ * work is done in its press, input and select hooks (paneWork); a control they
+ * did not take says so, rather than start work as crew's own code.
+ */
+function drawnActions($: any): Actions {
+  const missed = () => $.ui.toast('crew：這個控制沒有接上 crew 的處理，沒有做任何事。請回報這個問題。')
+  return {
+    ...viewMoves($),
+    pick: missed,
+    start: missed,
+    notNow: missed,
+    resume: missed,
+    answer: missed,
+    approve: missed,
+    reject: missed,
+    viewDesign: missed,
+    ask: missed,
+    rotate: missed,
+    testCommand: missed,
+    runTests: missed,
+    tuning: missed,
+    openOnLoad: missed,
+    reset: missed,
+    consolidate: missed,
+    recall: missed,
+    remember: missed,
+  }
+}
+
+/**
+ * A control of the real pane, taken in the engine's own hook for it: crew does
+ * its work there, in full, so a role it starts runs as the engine's, with every
+ * crew hook. Its own handler, run after a hook returns, would start the role
+ * as crew's own code, whose hooks the engine then skips. True when crew took it.
+ */
+async function paneWork($: any, key: string, value?: string): Promise<boolean> {
+  if (await read($, isDemo)) return false
+  const l = await read($, live)
+  const view = {
+    tab: await read($, tab),
+    scenario: await read($, scenario),
+    thread: await read($, thread),
+    gate: await read($, gate),
+    asking: await read($, asking),
+    confirming: await read($, confirming),
+  }
+  const snap = await liveSnapshot($, await loadBoard($), l)
+  return actOn(paneActions($, snap), view, snap, key, value)
 }
 
 /** What the real pane draws: the board and crew's record, with what the pane itself holds (settings, the start screen, an open design, a search). */
@@ -3091,6 +3154,20 @@ export const register: Register = on => {
     }
   })
 
+  // The pane's controls: their work is done in these hooks, where a role started is the engine's to run.
+  on('ui.press', async ($, e, next) => {
+    if (e.plugin !== 'crew' || e.requestId !== PANE) return next(e)
+    return (await paneWork($, e.element)) ? { element: e.element } : next(e)
+  })
+  on('ui.input', async ($, e, next) => {
+    if (e.plugin !== 'crew' || e.requestId !== PANE || e.kind !== 'submit') return next(e)
+    return (await paneWork($, e.element, e.value)) ? { element: e.element, value: e.value } : next(e)
+  })
+  on('ui.select', async ($, e, next) => {
+    if (e.plugin !== 'crew' || e.requestId !== PANE) return next(e)
+    return (await paneWork($, e.element, e.value)) ? { element: e.element, value: e.value } : next(e)
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     // A phone's table has no text field or picker: the pane says where to type instead.
     const table = $.ui.resolve(e)
@@ -3107,7 +3184,7 @@ export const register: Register = on => {
       confirming: await read($, confirming),
     }
     const snap = demo ? DEMO[view.scenario] : await liveSnapshot($, board, l)
-    return CrewPane({ el, snap, view, act: demo ? previewActions($, snap) : paneActions($, snap), isDemo: demo })
+    return CrewPane({ el, snap, view, act: demo ? previewActions($, snap) : drawnActions($), isDemo: demo })
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
