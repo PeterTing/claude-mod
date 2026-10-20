@@ -859,6 +859,8 @@ async function runOnce($: any): Promise<string> {
   const l = await read($, live)
   const requirements = (await prdView($))?.requirements
   const tell = async (error: string): Promise<string> => {
+    // Said to the person too: a run they asked for that did not happen is not left without a word.
+    $.ui.toast(`crew：${error}`)
     const board = await loadBoard($)
     if (board !== null) await feed($, { type: 'tests_ran', board, error, ...(requirements === undefined ? {} : { requirements }) })
     return error
@@ -874,8 +876,9 @@ async function runOnce($: any): Promise<string> {
   if (head.exitCode !== 0 || !SHA.test(tip)) return tell(`找不到 crew 的分支 ${work.branch}`)
   // A result is pinned to the commit it ran on: the worktree must be that commit, with nothing changed besides.
   const status = await gitIn($, work.dir, ['status', '--porcelain'])
+  if (status.exitCode !== 0) return tell(`git status 在 crew 的工作目錄沒有成功，所以沒有跑測試：${cut(squeeze(status.stderr), 160)}`)
   const changed = status.stdout.split('\n').filter((line: string) => line.trim() !== '')
-  if (status.exitCode !== 0 || changed.length > 0) {
+  if (changed.length > 0) {
     return tell(`crew 的工作目錄有沒 commit 的修改（${cut(changed.map((line: string) => line.slice(3)).join('、'), 160)}），測試結果會對不上 commit，所以沒有跑。請讓全端 commit 或還原，或把建置和測試產生的檔案加進 .gitignore，然後 /crew test`)
   }
   const at = await gitIn($, work.dir, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])

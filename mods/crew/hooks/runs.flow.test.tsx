@@ -240,4 +240,16 @@ describe('crew’s test runs', () => {
     await tested()
     expect(w.tests.runs).toHaveLength(1)
   })
+
+  test('say why a run the person asked for did not happen, even when the flow has nothing to do about it', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await build($)
+    w.git.dirty = '?? notes.txt\n'
+    expect((await $.command.run(command('test'))).text).toMatch(/開始跑測試/)
+    await tested()
+    expect(w.tests.runs).toHaveLength(1)
+    expect(w.toasts.some(t => /crew 的工作目錄有沒 commit 的修改（notes\.txt）/.test(t))).toBe(true)
+  })
 })
