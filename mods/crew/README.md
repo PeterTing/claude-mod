@@ -24,7 +24,7 @@ Five roles take a PRD to tested code, and you approve the designs:
 Then the code is checked twice:
 
 - **Review.** Once a task is committed, the tech lead reviews it with the diff crew attaches, and sends its verdict with `review_submit`: approve, or the changes to make. crew pins the verdict to the commit the tech lead read, and keeps it on this machine. A newer commit makes the review out of date, and the task is reviewed again. Changes go back to the full-stack, and its next commit is reviewed; after three rounds of changes, you decide.
-- **Test runs.** Once every task is approved, crew runs your test command (`/crew test-command`) in its worktree. Each test case passes or fails by the lines of the output that name it, such as `✓ TC-003 …`, `test_TC_003 … ok` or `--- FAIL: TestTC003`, so tests carry the id of the test case they check (gate **G6**). A result is pinned to the commit it ran on, and the output is kept as evidence in `.crew/runs/`. crew runs the tests only on a clean worktree at the newest commit, so a result is that commit's: keep build and test output (`__pycache__/`, `coverage/`…) in `.gitignore`, or crew asks you first. A test the runner skips (TAP's `# SKIP`) has no result. Failures go to the full-stack on the task they serve; its fix is reviewed and the tests run again. After three runs, or when the command cannot run, you decide.
+- **Test runs.** Once every task is approved, crew runs your test command (set in the pane's 設定 tab) in its worktree. Each test case passes or fails by the lines of the output that name it, such as `✓ TC-003 …`, `test_TC_003 … ok` or `--- FAIL: TestTC003`, so tests carry the id of the test case they check (gate **G6**). A result is pinned to the commit it ran on, and the output is kept as evidence in `.crew/runs/`. crew runs the tests only on a clean worktree at the newest commit, so a result is that commit's: keep build and test output (`__pycache__/`, `coverage/`…) in `.gitignore`, or crew asks you first. A test the runner skips (TAP's `# SKIP`) has no result. Failures go to the full-stack on the task they serve; its fix is reviewed and the tests run again. After three runs, or when the command cannot run, you decide.
 
 The team also handles:
 
@@ -35,19 +35,34 @@ The team also handles:
 
 The plan, with what each phase checked, is in [`docs/plans/crew-plan.zh-TW.html`](../../docs/plans/crew-plan.zh-TW.html).
 
-## Two ways to run it
+## Run it from its pane
 
-**Ask Claude.** Say something like 「請 crew 開始處理 docs/PRD.md」 or 「問 crew 的 PM 為什麼這樣拆」. Claude uses crew's `crew` tool.
+When Claude Code starts, crew's pane opens on the right (in a terminal 144 columns wide or more; 110 once you have opened it). Everything crew does on your word is a button, a picker or a field there; no command is needed.
 
-For work Claude started, crew reports back to Claude:
+- **Start.** Pick a PRD from the repo (files with PRD, spec or 需求 in their path come first) or type its path, then 開始. 這次不用 closes the pane for this session.
+- **After a restart.** A PRD crew left unfinished is held: the pane says where it stopped and asks 接續 or 先不要. Nothing runs, and nothing is spent, until you press 接續.
+- **待你決定.** Answer a role's question in the field under it. Read a design, approve it, or send it back with a reason. Approve the brain's proposals, or not.
+- **Each role's row.** 問 opens a field to ask that role; 輪替 has it start from a fresh context the next time it is woken.
+- **記憶.** Search the team's memory, and save a preference.
+- **設定.** The PRD to follow; the test command and 跑測試; how the brain acts on usage (先問你 by default, or 自動); whether the pane opens when Claude Code starts; 接續 and 重設流程 (asked twice); 整理今天的記憶.
 
-- a role's reply
-- a question that needs your decision
-- the end of the flow
+A press or a field in the pane is yours alone: no plugin or model can raise one, so it counts as typed by you. On a phone (Remote Control) the pane has buttons but no fields; type the commands below there.
 
-Claude then tells you in a sentence or two. Each report starts a turn of the main conversation, so it uses tokens.
+**Or ask Claude.** Say something like 「請 crew 開始處理 docs/PRD.md」 or 「問 crew 的 PM 為什麼這樣拆」. Claude uses crew's `crew` tool. For work Claude started, crew tells Claude at once what needs it: a question for you, a design to approve, a usage reminder, a flow that stopped, the end of the work. Routine news (a step along the way, a PRD change the PM syncs on its own) goes to Claude in one message every 30 minutes. Each message starts a turn of the main conversation, so it uses tokens. Work started from the pane reports only in the pane, the line above the prompt and toasts.
 
-**Use `/crew`.** Work started this way reports only in the pane, the line above the prompt and toasts. The main conversation is not woken.
+## crew looks after its work
+
+- **A heartbeat every 5 minutes**, in code, with no model call:
+  - A running flow with nobody at work and nothing waiting for you: crew wakes the role its stage waits on, once. If it stops at the same place again, the pane asks whether to try again.
+  - A finished flow takes on only what came after the finish: a newer commit goes to the tech lead's review, a test result out of date to a new run. Work an older board never had (designs, test runs, unbuilt tasks) waits for you.
+  - A question you left for two hours is brought up once.
+  - The pane's 常駐 line says when crew last looked, what it found and did, and where a restart went on from. The look when Claude Code starts only marks the time.
+- **Token reminders**, worked out in code, each condition at most once an hour: a role over 40% of the day; a role reading under 60% from the cache (both only on a day, and a role, over 50K tokens); a role past its context threshold; two senders going back and forth on one item more than six times; a role's single tool output over 10K tokens. Claude hears of each, and the Token tab lists them with the time.
+- **What Claude may do about usage.** With the `crew` tool's `tune`, Claude can set a role's model, effort or rotation threshold for its work from now on, never below the floor you set for that role. By default it asks you first: its proposal waits under 待你決定. Switch to 自動 in 設定 to let it act on its own. Either way each action is kept as a decision, and the Token tab shows the role's numbers before and since. Nothing skips a gate, a test or a review to save tokens.
+
+## Commands
+
+For a phone, or if you prefer typing. Each does what its pane control does.
 
 | Command | What it does |
 | --- | --- |
@@ -55,6 +70,7 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 | `/crew design <SCR-nnn>` | Shows a design: its feature, whether it has a screen, where it stands, and what it says. |
 | `/crew approve <SCR-nnn> […]` | Approves designs. Only you can: Claude cannot approve for you, and an answer to the question is not an approval. |
 | `/crew reject <SCR-nnn> <reason>` | Sends a design back; the designer gets your reason. |
+| `/crew approve <Q-nn>`, `/crew reject <Q-nn>` | Approves Claude's proposal on usage, or not. |
 | `/crew test-command <command>` | Sets the test command crew runs, such as `npm test` or `python3 -m pytest -v`. Only you can set it. With no command it shows the one set; `off` clears it. |
 | `/crew test` | Runs the tests now. Claude can ask for a run too, but never set the command. |
 | `/crew answer <Q-nn> <answer>` | Answers a question a role asked you. The answer is saved as a decision. |
@@ -63,19 +79,19 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 | `/crew remember <text>` | Saves one of your preferences (`PREF`). Every role gets your preferences with its work. |
 | `/crew recall <words or ids>` | Searches the team's memory. |
 | `/crew rotate <pm\|qa\|uiux\|techlead\|fullstack>` | The next time that role is woken, it starts from a fresh context. It gets the board's state, the related memories and its last report. |
-| `/crew resume` | Starts the roles of an unfinished PRD again, for example after a role's run failed. |
+| `/crew resume` | Starts the roles of an unfinished PRD again: after a restart, or after a role's run failed. |
 | `/crew consolidate [YYYY-MM-DD]` | Haiku reads a day's log and saves facts and lessons nobody saved. This also runs by itself once a day for the previous day. |
 | `/crew status` | One-line summary. |
 | `/crew reset` | Forgets this session's flow and roles. The board, threads and memory are kept. |
-| `/crew demo [normal\|empty\|attention] [overview\|progress\|board\|threads\|memory\|tokens]` | The design preview with sample data, opened on a situation and tab if you name them. `/crew demo off` closes it. |
+| `/crew demo [normal\|empty\|attention\|restart] [overview\|progress\|board\|threads\|memory\|tokens\|settings]` | The design preview with sample data, opened on a situation and tab if you name them. Close it with the pane's 關閉設計稿, or `/crew demo off`. |
 
-**After upgrading from 0.1.0.** A board crew finished then has no tasks, so its progress counts the plan as not done. Run `/crew start <PRD file>` once: crew checks the board without a new split, and the tech lead plans the tasks.
+**After upgrading from 0.1.0.** A board crew finished then has no tasks, so its progress counts the plan as not done. Start the PRD again once, from the pane: crew checks the board without a new split, and the tech lead plans the tasks.
 
-**After upgrading from 0.2.0.** A board crew finished then has tasks with no code. crew does not start building them on a turn of its own. The full-stack starts on them the next time the flow runs to its end: after `/crew start <PRD file>`, or after a question that has one role pass work to another.
+**After upgrading from 0.2.0.** A board crew finished then has tasks with no code. crew does not start building them on a turn of its own. The full-stack starts on them the next time the flow runs to its end: after you start the PRD again, or after a question that has one role pass work to another.
 
-**After upgrading from 0.3.0.** A board crew finished then has code that was never reviewed, no designs and no test runs. The next time the flow runs to its end, after `/crew start <PRD file>`, the designer designs each feature for you to approve, the tech lead reviews each task, and crew runs your tests. Set your test command first with `/crew test-command`.
+**After upgrading from 0.3.0.** A board crew finished then has code that was never reviewed, no designs and no test runs. The next time the flow runs to its end, after you start the PRD again, the designer designs each feature for you to approve, the tech lead reviews each task, and crew runs your tests. Set your test command first, in the pane's 設定 tab.
 
-**After a restart.** When Claude Code starts on a PRD crew left unfinished on this machine, the roles start again by themselves, and crew says how many questions are waiting for you.
+**After upgrading from 0.4.** When Claude Code starts on a PRD crew left unfinished, it no longer starts the roles again by itself: the pane asks you first.
 
 ## The board stays on the PRD, live
 
@@ -100,7 +116,7 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
   It also runs when Claude Code starts, so an edit made while it was closed is caught too. An added requirement is told at once. A removed one is confirmed on the next check, about 10 seconds later, so a file caught half-saved is not taken for a real edit. A PRD with no requirements left is never sent to the PM.
 - **A PRD is a document in the repo.** crew starts `.md`, `.markdown`, `.mdx`, `.txt`, `.rst`, `.adoc` and `.org` files, outside private places such as `.git`, `.crew`, `.ssh` and `.env*`, wherever a link leads. Its requirements go on the board, which is in git.
 - **A PRD crew cannot read is called out.** The pane and the line above the prompt say so when the PRD is deleted, moved, swapped for a link, or holds no requirement. crew then keeps holding the board to the requirements it last read. Each new version of the PRD is checked before and after crew reads it: it must still be a file in the repo, reached through no link.
-- **A board synced to another PRD is called out too.** A teammate's board, or another branch's, may be synced to another PRD. crew then says so and holds nothing to it until you choose: `/crew start` on the board's PRD to follow it, or on yours to move the board over.
+- **A board synced to another PRD is called out too.** A teammate's board, or another branch's, may be synced to another PRD. crew then says so and holds nothing to it until you choose, in the pane's 設定 tab: the board's PRD to follow it, or yours to move the board over.
 - **Starting a PRD the board already mostly answers checks it, without a new split.** The board is held to the PRD as it stands: the PM fills what is missing, and QA tests what has no test case. A PRD the board answers less than half of is split, and the PM is told which requirements already have features.
 - **A PRD change while QA is writing tests keeps that QA.** The PM syncs; when QA's run ends, QA is asked for the new criteria only.
 - **The pane says how current it is.** It shows how the board stands against the PRD, when the PRD last changed, and when crew last looked.
@@ -139,8 +155,9 @@ crew adds `usage/`, `log/`, `work/` and `runs/` to `.crew/.gitignore` and leaves
 - **crew never writes over what it cannot read, nor outside the repo.** A board it cannot parse (a merge conflict, a typo) is left as it is until you fix it. A file of crew's that is itself a link, or whose path leads out of the repo, is neither read nor written. That includes a file that links to another file inside the repo. A directory link on the way is followed only when it lands inside the repo. Either way crew tells you why.
 - **Write tools take only crew's own callers.** Only crew's roles and the main conversation can write to the board, threads, questions or memory. Other agents and the roles a reset retired cannot.
 - **Each role has its own permissions on the board.** The PM edits features and criteria; QA writes test cases; the designer writes designs; the tech lead plans tasks and sends reviews. The full-stack cannot write the board at all.
-- **Some decisions are yours alone.** Approving or sending back a design, and setting the test command, take a `/crew` command you type at the prompt yourself, or send from your Remote Control client. Claude's `crew` tool cannot do them, and neither can another plugin, another Claude session, a channel relay, a schedule, an answer to a question, or anything written on the board.
-- **Your test command runs without asking each time.** crew runs it in its worktree on crew's branch, by its words, with no shell (no pipes or `&&`), for at most ten minutes, with your environment and `CI=true` (so a runner does not wait in watch mode). It runs code the full-stack wrote, outside your Claude Code permission prompts, with whatever keys your environment holds, so set it only for a repo whose code you are willing to run. A command a repo or a board carries is never run: crew keeps yours on this machine. A run that breaks down on the way (a full disk, a reload) says so instead of leaving the flow waiting, and opening Claude Code on a flow that stopped while testing runs the command again straight away.
+- **Some decisions are yours alone.** Approving or sending back a design, setting the test command, and approving Claude's proposals on usage take your own press or field in the pane, a `/crew` command you type at the prompt yourself, or one you send from your Remote Control client. Claude's `crew` tool cannot do them, and neither can another plugin, another Claude session, a channel relay, a schedule, an answer to a question, or anything written on the board.
+- **Claude's actions on usage keep to your floors.** A model or effort below the floor you set for a role is refused, whether Claude asks you first or acts on its own; and nothing skips a gate, a test or a review to save tokens.
+- **Your test command runs without asking each time.** crew runs it in its worktree on crew's branch, by its words, with no shell (no pipes or `&&`), for at most ten minutes, with your environment and `CI=true` (so a runner does not wait in watch mode). It runs code the full-stack wrote, outside your Claude Code permission prompts, with whatever keys your environment holds, so set it only for a repo whose code you are willing to run. A command a repo or a board carries is never run: crew keeps yours on this machine. A run that breaks down on the way (a full disk, a reload) says so instead of leaving the flow waiting, and opening Claude Code on a flow that stopped while testing runs the command again once you press 接續.
 - **Test output stays out of git.** The evidence in `.crew/runs/` is masked and ignored by git. The end of a failing run's output goes to the full-stack alone, never into the repo's threads, since it may hold values masking does not recognize.
 - **The full-stack works in crew's worktree, not your checkout.**
   - It starts in `.crew/work/<name>`, a git worktree on branch `crew/<name>` that crew makes from your checkout's commit. It is told to leave your checkout and branches alone and not to push: merging is yours.
@@ -164,10 +181,10 @@ crew adds `usage/`, `log/`, `work/` and `runs/` to `.crew/.gitignore` and leaves
 - **Rotation.** A woken agent resends its whole conversation, so crew starts a fresh one instead when:
   - the role is past half its context limit
   - it moves to another model
-  - you ask with `/crew rotate`
+  - you press 輪替 on its row in the pane
 
   This happens only when the role is idle: a role at work gets new messages in its inbox instead. The fresh agent gets the working set, the related memories, its recent thread lines and its last report.
-- **Failed runs.** A run that ends in an error, an interrupt or a refusal does not move the flow on. Use `/crew resume`.
+- **Failed runs.** A run that ends in an error, an interrupt or a refusal does not move the flow on. crew's heartbeat wakes the role once within five minutes; press 接續 in the pane to go on sooner.
 - **Compaction backstop.** If the engine compacts a role during one long run, the summary is told to keep ids, decisions and what is left of the task.
 
 ## Develop
