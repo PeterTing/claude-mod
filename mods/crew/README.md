@@ -6,27 +6,33 @@
 /plugin install crew --marketplace PeterTing/claude-mod
 ```
 
-Four roles run today:
+Five roles take a PRD to tested code, and you approve the designs:
 
-- **PM** splits a PRD into features and acceptance criteria.
-- **QA** writes a test case for every criterion.
-- **Tech lead** breaks the criteria into tasks: what to build, for which criteria, and how big (S, M, L, XL). Gate **G3**, checked by code, needs a task for every criterion.
-- **Full-stack** builds the tasks, one at a time, in crew's own git worktree and branch. Each commit's message starts with its task's id (`TASK-003: …`), and crew reads the commits to see what is built. The task's size picks the model: S and M run on Sonnet at high effort, L on Opus at high, XL on Opus at xhigh.
+1. **PM** splits a PRD into features and acceptance criteria.
+2. **QA** writes a test case for every criterion.
+3. **UI/UX** writes a design for every feature: a screen, with its layout, states, interactions and copy, or no screen, with why. You approve each one, or send it back with a reason (gate **G2**).
+4. **Tech lead** breaks the criteria into tasks: what to build, for which criteria, and how big (S, M, L, XL). Gate **G3**, checked by code, needs a task for every criterion. The tech lead also reviews each task's code (gate **G5**).
+5. **Full-stack** builds the tasks, one at a time, in crew's own git worktree and branch. Each commit's message starts with its task's id (`TASK-003: …`), and crew reads the commits to see what is built. The task's size picks the model: S and M run on Sonnet at high effort, L on Opus at high, XL on Opus at xhigh.
 
   What counts as built:
   - Only commits on crew's branch count, made after crew made the branch and on no other branch. A `TASK-001: …` in your own history is not crew's work.
   - crew remembers each commit it has seen, and the task it did, so a merge or a deleted branch does not undo it. A later task that takes the same id on a board made again is not counted built by the earlier task's commits.
   - A task whose worktree still holds changes not committed is not counted built: the full-stack is asked to commit them, revert them, or add build output to `.gitignore`.
-  - A commit makes a task under way, never done. Review, which comes next in phase 4, will decide done.
+  - A commit makes a task under way. It is done once the tech lead approves its newest commit.
+
+Then the code is checked twice:
+
+- **Review.** Once a task is committed, the tech lead reviews it with the diff crew attaches, and sends its verdict with `review_submit`: approve, or the changes to make. crew pins the verdict to the commit the tech lead read, and keeps it on this machine. A newer commit makes the review out of date, and the task is reviewed again. Changes go back to the full-stack, and its next commit is reviewed; after three rounds of changes, you decide.
+- **Test runs.** Once every task is approved, crew runs your test command (`/crew test-command`) in its worktree. Each test case passes or fails by the lines of the output that name it, such as `✓ TC-003 …`, `test_TC_003 … ok` or `--- FAIL: TestTC003`, so tests carry the id of the test case they check (gate **G6**). A result is pinned to the commit it ran on, and the output is kept as evidence in `.crew/runs/`. Failures go to the full-stack on the task they serve; its fix is reviewed and the tests run again. After three runs, or when the command cannot run, you decide.
 
 The team also handles:
 
 - **Gaps:** test gaps go back to the PM, who drops each one with a reason or asks QA to test it. Criteria without a task go back to the tech lead, and then to you.
-- **Questions between roles:** the tech lead asks the PM through a thread when it needs a trade-off, and gets the answer back.
+- **Questions between roles:** the tech lead and the designer ask the PM through a thread when they need a trade-off, and get the answer back.
 - **Questions:** product questions come to you.
 - **Memory:** the team keeps it in the repo, so a role can start from a clean context without forgetting.
 
-UI/UX comes later in phase 4, with review of the code and runs of the tests. The plan is in [`docs/plans/crew-plan.zh-TW.html`](../../docs/plans/crew-plan.zh-TW.html).
+The plan, with what each phase checked, is in [`docs/plans/crew-plan.zh-TW.html`](../../docs/plans/crew-plan.zh-TW.html).
 
 ## Two ways to run it
 
@@ -44,13 +50,18 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 
 | Command | What it does |
 | --- | --- |
-| `/crew start <PRD file>` | The PM splits the PRD, QA writes test cases, the tech lead breaks the criteria into tasks, then the full-stack builds them. The PRD must be a file inside the repo. |
+| `/crew start <PRD file>` | The PM splits the PRD, QA writes test cases, the designer designs each feature for you to approve, the tech lead plans tasks, the full-stack builds them, the tech lead reviews them, and crew runs your tests. The PRD must be a file inside the repo. |
+| `/crew design <SCR-nnn>` | Shows a design: its feature, whether it has a screen, where it stands, and what it says. |
+| `/crew approve <SCR-nnn> […]` | Approves designs. Only you can: Claude cannot approve for you, and an answer to the question is not an approval. |
+| `/crew reject <SCR-nnn> <reason>` | Sends a design back; the designer gets your reason. |
+| `/crew test-command <command>` | Sets the test command crew runs, such as `npm test` or `python3 -m pytest -v`. Only you can set it. With no command it shows the one set; `off` clears it. |
+| `/crew test` | Runs the tests now. Claude can ask for a run too, but never set the command. |
 | `/crew answer <Q-nn> <answer>` | Answers a question a role asked you. The answer is saved as a decision. |
-| `/crew ask <pm\|qa\|techlead\|fullstack> <question>` | Asks a role directly. Its reply lands in thread `ASK-nn`, and a toast tells you when it is there. |
+| `/crew ask <pm\|qa\|uiux\|techlead\|fullstack> <question>` | Asks a role directly. Its reply lands in thread `ASK-nn`, and a toast tells you when it is there. |
 | `/crew thread <id>` | Prints a thread, for example `ASK-01` or `AC-003`. |
 | `/crew remember <text>` | Saves one of your preferences (`PREF`). Every role gets your preferences with its work. |
 | `/crew recall <words or ids>` | Searches the team's memory. |
-| `/crew rotate <pm\|qa\|techlead\|fullstack>` | The next time that role is woken, it starts from a fresh context. It gets the board's state, the related memories and its last report. |
+| `/crew rotate <pm\|qa\|uiux\|techlead\|fullstack>` | The next time that role is woken, it starts from a fresh context. It gets the board's state, the related memories and its last report. |
 | `/crew resume` | Starts the roles of an unfinished PRD again, for example after a role's run failed. |
 | `/crew consolidate [YYYY-MM-DD]` | Haiku reads a day's log and saves facts and lessons nobody saved. This also runs by itself once a day for the previous day. |
 | `/crew status` | One-line summary. |
@@ -60,6 +71,8 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 **After upgrading from 0.1.0.** A board crew finished then has no tasks, so its progress counts the plan as not done. Run `/crew start <PRD file>` once: crew checks the board without a new split, and the tech lead plans the tasks.
 
 **After upgrading from 0.2.0.** A board crew finished then has tasks with no code. crew does not start building them on a turn of its own. The full-stack starts on them the next time the flow runs to its end: after `/crew start <PRD file>`, or after a question that has one role pass work to another.
+
+**After upgrading from 0.3.0.** A board crew finished then has code that was never reviewed, no designs and no test runs. The next time the flow runs to its end, after `/crew start <PRD file>`, the designer designs each feature for you to approve, the tech lead reviews each task, and crew runs your tests. Set your test command first with `/crew test-command`.
 
 **After a restart.** When Claude Code starts on a PRD crew left unfinished on this machine, the roles start again by themselves, and crew says how many questions are waiting for you.
 
@@ -90,13 +103,16 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 - **Starting a PRD the board already mostly answers checks it, without a new split.** The board is held to the PRD as it stands: the PM fills what is missing, and QA tests what has no test case. A PRD the board answers less than half of is split, and the PM is told which requirements already have features.
 - **A PRD change while QA is writing tests keeps that QA.** The PM syncs; when QA's run ends, QA is asked for the new criteria only.
 - **The pane says how current it is.** It shows how the board stands against the PRD, when the PRD last changed, and when crew last looked.
-- **Progress is counted per requirement.** The Progress tab lists each PRD requirement with how far each stage of its development is: spec, design, test cases, tasks, code, review, test results. Today crew fills in four stages, from the board and git:
+- **Progress is counted per requirement.** The Progress tab lists each PRD requirement with how far each stage of its development is, all from the board, git and crew's own records:
   - spec: every feature that answers the requirement has criteria;
+  - design: those features have a design you approved;
   - test cases: those criteria have test cases, counted done only once the spec is;
   - tasks: those criteria have the tech lead's tasks, counted done only once the spec is;
-  - code: how many of those tasks have a commit on crew's branch. It shows as under way (◐), never done: a commit alone does not make code done, and review comes later.
+  - code: those tasks have a commit on crew's branch; done once the tech lead approved each task's newest commit;
+  - review: those tasks approved at their newest commit; `⟳` when an approval is out of date;
+  - test results: those criteria's test cases passed in crew's latest run, on the newest commit; `⟳` once a commit came after the run.
 
-  The other stages show `—` until the roles that do them are added, and never show as done before then. A requirement moved out of scope shows the reason instead. The overall row above the table uses the same seven stages, in the same order. Overall progress counts committed code toward the whole but not as done, so it stays below 100% until review says the code is done. A task the tech lead planned shows in the recent work as `排定：<title>`: the plan is what was finished, not the task.
+  A requirement moved out of scope shows the reason instead. The overall row above the table uses the same seven stages, in the same order. Overall progress counts a design as done once approved, code once reviewed, and a test case once passed, so it reaches 100% only when all of that is true; every percentage is rounded down. A task the tech lead planned shows in the recent work as `排定：<title>`: the plan is what was finished, not the task.
 - **One board, several PRDs.** Starting another PRD keeps the earlier one's requirement numbers on the board, so its features stay its own and do not hold up the new PRD's split. A board from before crew numbered requirements is not reported as a PRD change: the PM is asked to link its features to the requirements.
 
 ## Where things live
@@ -109,24 +125,27 @@ Claude then tells you in a sentence or two. Each report starts a turn of the mai
 | `.crew/memory/consolidated.json` | yes | The days the log has been tidied. |
 | `.crew/log/*.jsonl` | no | The day's log, used for consolidation. |
 | `.crew/usage/*.json` | no | Token use per day. |
+| `.crew/runs/*.log` | no | Each test run's evidence: the command, the folder, the commit, the exit code and everything it printed, with secrets masked. |
 | `.crew/work/<name>/` | no | The full-stack's git worktree for a PRD, on branch `crew/<name>`, named after the PRD file. It is a second copy of your code: add `.crew/` to the ignore lists of your test runner, linter and type-checker (Vitest, Jest, ESLint and a `tsconfig.json` that includes `**/*` all pick it up otherwise). The other roles' searches in your checkout see it too. |
 
-The flow, the open questions, who started the work, crew's branch for each PRD and the commits it has seen are not in the repo. crew keeps them in its own store on this machine, keyed by the repo's path. A repo you clone therefore cannot start work by itself, and a board's commit marks count for nothing until crew has seen the commits itself. On another machine, crew starts without that record: the board shows no code built there until crew sees the commits on its own branch.
+The flow, the open questions, who started the work, your test command, and, for each PRD, crew's branch, the commits it has seen, the tech lead's reviews, crew's latest test run and your decisions on designs are not in the repo. crew keeps them in its own store on this machine, keyed by the repo's path. A repo you clone therefore cannot start work by itself, and the marks a board carries (commits, reviews, test results, approved designs) count for nothing until crew has recorded them itself. On another machine, crew starts without that record: the board shows no code built there until crew sees the commits on its own branch.
 
-crew adds `usage/`, `log/` and `work/` to `.crew/.gitignore` and leaves your own rules there alone.
+crew adds `usage/`, `log/`, `work/` and `runs/` to `.crew/.gitignore` and leaves your own rules there alone.
 
 ## Safety
 
 - **Secrets are masked.** Anything that looks like a key, token, password, private key, JWT, connection-string password or bearer token is masked before it is written anywhere crew writes. Words in a rule, like 「密碼：至少 8 個字元」, are left alone. Masking works by pattern, so a secret in an unusual shape can still get through: keep secrets out of PRDs and answers.
 - **crew never writes over what it cannot read, nor outside the repo.** A board it cannot parse (a merge conflict, a typo) is left as it is until you fix it. A file of crew's that is itself a link, or whose path leads out of the repo, is neither read nor written. That includes a file that links to another file inside the repo. A directory link on the way is followed only when it lands inside the repo. Either way crew tells you why.
 - **Write tools take only crew's own callers.** Only crew's roles and the main conversation can write to the board, threads, questions or memory. Other agents and the roles a reset retired cannot.
-- **Each role has its own permissions on the board.** The PM edits features and criteria; QA writes test cases; the tech lead plans tasks. The full-stack cannot write the board at all.
+- **Each role has its own permissions on the board.** The PM edits features and criteria; QA writes test cases; the designer writes designs; the tech lead plans tasks and sends reviews. The full-stack cannot write the board at all.
+- **Some decisions are yours alone.** Approving or sending back a design, and setting the test command, take a `/crew` command you type yourself. Claude's `crew` tool cannot do them, and neither can an answer to a question or anything written on the board.
+- **Your test command runs without asking each time.** crew runs it in its worktree on crew's branch, by its words, with no shell (no pipes or `&&`), for at most ten minutes, with your environment. It runs code the full-stack wrote, outside your Claude Code permission prompts, so set it only for a repo whose code you are willing to run. A command a repo or a board carries is never run: crew keeps yours on this machine.
 - **The full-stack works in crew's worktree, not your checkout.**
   - It starts in `.crew/work/<name>`, a git worktree on branch `crew/<name>` that crew makes from your checkout's commit. It is told to leave your checkout and branches alone and not to push: merging is yours.
   - That is an instruction, not a fence. The full-stack edits files and runs commands under your Claude Code permission mode, like any agent, and crew says so once when the build starts.
   - After each of its runs, crew checks your checkout: new changes, another branch or another commit. If anything moved, crew says what, since it cannot tell whether you or the full-stack did it. crew's own files (`prd-tracker.json`, `.crew/`) are left out of that check, so review their changes in git as you would any other.
   - A `crew/<name>` branch crew did not make is not used: crew makes one with a new name beside it.
-  - crew itself runs only `git rev-parse`, `git symbolic-ref`, `git status`, `git worktree add` and `git log`, with the repo's hooks and file monitor off. A folder that is not a git repo, or one with no commit yet, stops the full-stack, and crew says why.
+  - crew itself runs only `git rev-parse`, `git symbolic-ref`, `git status`, `git worktree add`, `git log` and `git show` (the diff for a review), with the repo's hooks and file monitor off, and your test command. A folder that is not a git repo, or one with no commit yet, stops the full-stack, and crew says why.
 - **Your words stay yours.** Roles cannot save or replace your preferences, nor a decision you made or the main conversation relayed for you. The daily tidy-up saves only facts and lessons, never decisions or preferences.
 - **Answers are marked by who relayed them.** An answer Claude relays for you is saved as `brain Q-nn`, so it stays traceable.
 

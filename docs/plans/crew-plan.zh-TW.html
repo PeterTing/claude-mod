@@ -770,17 +770,30 @@ flowchart LR
     <li>安全、品質、測試三個 reviewer 各審了四輪，最後都沒有 critical 或 important。</li>
   </ul>
   <p class="prose">已知限制，留到 4d：全端改到 crew 自己的檔案（<code>prd-tracker.json</code>、<code>.crew/</code>）時不會提醒，請在 git 裡檢查；沒辦法取消一個任務的「已 commit」，要等 review 才能退回；換一台機器時，看板不會顯示有實作，要等 crew 在自己的分支上看到 commit。</p>
-  <h3>接下來：每一欄都接上真實訊號</h3>
-  <p class="prose">每一欄的狀態都從真實訊號算出來，角色自己說「做完了」不算數。實作前，會先在 <code>/crew demo</code> 把每一欄的樣子做成設計稿，請你確認。</p>
+  <h3>第 4d–4f 階段：Review、測試結果、設計（2026-10-20，0.4.0）</h3>
+  <ul class="plain prose">
+    <li><strong>設計（4f，G2）</strong>：QA 寫完 test case 後，新的 UI/UX 角色為每個功能寫一份設計稿（<code>SCR-</code>）：有畫面的寫版面、狀態、互動和文案；沒有畫面的寫明為什麼。你用 <code>/crew design</code> 看、<code>/crew approve</code> 核准、<code>/crew reject SCR-001 &lt;原因&gt;</code> 退回。只有你親手輸入的指令算數：大腦不能代你核准，看板上寫的核准也不算。核准記在本機、綁定設計稿當下的內容，內容一改就失效。設計稿全部核准後，Tech lead 才拆任務；全端照核准的設計稿做。</li>
+    <li><strong>Review（4d，G5）</strong>：每個任務 commit 後，Tech lead 拿 crew 附上的 diff review，用 <code>review_submit</code> 送出「通過」或「要修改」。結論釘在它看的那個 commit sha 上，記在本機；之後又有新的 commit 就標成過期，要重新 review。要修改的交回全端，修完再 review；退回三次就問你。「實作」要等 review 通過才打勾。</li>
+    <li><strong>測試結果（4e，G6）</strong>：測試指令由你用 <code>/crew test-command</code> 設定，存在本機、不在 repo 裡，也不能由大腦設定。所有任務都通過 review 後，crew 在全端的 worktree 直接執行這個指令（不經過 shell，最多十分鐘），從測試名稱裡的 TC 編號判斷每個 test case 通過或失敗，結果釘在當時的 commit 上，輸出遮罩後存成 <code>.crew/runs/&lt;時間&gt;.log</code> 當證據。失敗的交給全端修，修完重新 review、重跑；三輪不過就問你。</li>
+    <li>七段進度、七個關卡（G0–G6）全部由真實訊號算出；整體進度要等設計核准、review 通過、測試通過才算完成，百分比一律無條件捨去。</li>
+  </ul>
+  <p class="prose">在 Claude Code 2.1.301 實跑三次：</p>
+  <ul class="plain prose">
+    <li><strong>完整流程</strong>：計算機 PRD（函式加命令列），從 <code>/crew start</code> 到完成約 3 分鐘。2 份設計稿（沒有畫面）核准、PM 轉來 Tech lead 的 1 個產品問題（命令列輸入錯誤時怎麼處理）回答後，全端 commit 2 個任務，Tech lead 各 review 通過，crew 跑 <code>python3 -m unittest discover -v</code>：8 個 test case 全部通過。七個關卡全部 ✓，進度 100%（28/28）。</li>
+    <li><strong>修正迴圈</strong>：在 crew 的分支上故意 commit 一個把 <code>add</code> 改壞的版本，再 <code>/crew test</code>：只過 2/8，crew 把失敗交給全端；全端 commit 修正，Tech lead review 通過，重跑 8/8，約 22 秒回到完成。三次執行的證據檔都在 <code>.crew/runs</code>。</li>
+    <li><strong>退回設計稿</strong>：見下一段。</li>
+  </ul>
+  <h3>每一欄的真實訊號</h3>
+  <p class="prose">每一欄的狀態都從真實訊號算出來，角色自己說「做完了」不算數。</p>
   <div class="table-wrap">
     <table>
       <thead><tr><th>階段</th><th>欄位</th><th>誰做</th><th>狀態從哪裡來</th><th>關卡</th></tr></thead>
       <tbody>
         <tr><td>4b ✓</td><td>任務</td><td>Tech lead</td><td>Tech lead 把驗收條件拆成任務，每個任務都要對應到驗收條件。</td><td>G3：每條驗收條件都有任務</td></tr>
         <tr><td>4c ✓</td><td>實作</td><td>全端</td><td>crew 分支上、開分支之後的 commit，訊息以 TASK 編號開頭；每個 commit 都綁定它做的任務。只算「進行中」，要 review 過才算完成。</td><td>—</td></tr>
-        <tr><td>4d</td><td>Review</td><td>Tech lead</td><td>review 結果釘在某個 commit sha 上；之後又有新的 commit，就標成「過期」，要重新 review。</td><td>G5：最新的 commit 都 review 過</td></tr>
-        <tr><td>4e</td><td>測試結果</td><td>QA</td><td>crew 跑你指定的測試指令，把結果對應到 TC 編號，並保留證據。指令只存在本機，不放進 repo，避免 clone 下來的 repo 讓 crew 跑任意指令。</td><td>G6：每個 test case 都有通過的結果</td></tr>
-        <tr><td>4f</td><td>設計</td><td>UI/UX</td><td>設計稿要由你核准；只有 UI/UX 自己說完成的不算。</td><td>G2：每個畫面都有你核准的設計稿</td></tr>
+        <tr><td>4d ✓</td><td>Review</td><td>Tech lead</td><td>review 結果釘在某個 commit sha 上；之後又有新的 commit，就標成「過期」，要重新 review。</td><td>G5：最新的 commit 都 review 過</td></tr>
+        <tr><td>4e ✓</td><td>測試結果</td><td>crew 執行、全端修</td><td>crew 跑你指定的測試指令，把結果對應到 TC 編號，並保留證據。指令只存在本機，不放進 repo，避免 clone 下來的 repo 讓 crew 跑任意指令。</td><td>G6：每個 test case 都有通過的結果</td></tr>
+        <tr><td>4f ✓</td><td>設計</td><td>UI/UX</td><td>設計稿要由你核准；只有 UI/UX 自己說完成的不算。</td><td>G2：每個功能都有你核准的設計稿</td></tr>
       </tbody>
     </table>
   </div>
@@ -795,7 +808,7 @@ flowchart LR
     <div class="phase"><span class="pn">2</span><div class="body"><h3>切片 A：PM＋QA <span class="tag ok">完成</span></h3><p class="meta">看板工具、讀寫 prd-tracker.json、G1／G4、討論串、token 顯示。用一份小 PRD 跑通「QA 列 test case → 程式算缺口 → PM 確認」。</p><p class="meta">驗證：單元測試，加上真實 session 走一遍。</p></div></div>
     <div class="phase"><span class="pn">3</span><div class="body"><h3>切片 B：記憶與輪替 <span class="tag ok">完成</span></h3><p class="meta">記憶分層、檢索、輪替、壓縮 hook、每日整理、你直接問角色的指令。大腦摘要移到第 5 階段。</p><p class="meta">驗證：記憶抽考、長時間 context 上限測試、開與不開記憶的 token 比較。</p></div></div>
     <div class="phase"><span class="pn">4a</span><div class="body"><h3>開發狀態對準 PRD、即時更新 <span class="tag ok">完成</span></h3><p class="meta">PRD 需求編號、G0、每 10 秒檢查 PRD、以 PRD 需求為單位的進度。</p><p class="meta">驗證：單元與整合測試，加上實跑改 PRD。</p></div></div>
-    <div class="phase"><span class="pn">4b–f</span><div class="body"><h3>切片 C：Tech lead、全端、Review、測試執行、UI/UX</h3><p class="meta">G3、G2、G5、G6，以及 code review 流程。進度表的每一欄都要接上真實訊號：commit、review 對應的 sha、測試結果、你的核准。用一個小功能從 PRD 走到驗收。</p><p class="meta">驗證：先做設計稿請你確認，再端到端實跑，附證據。</p></div></div>
+    <div class="phase"><span class="pn">4b–f</span><div class="body"><h3>切片 C：Tech lead、全端、Review、測試執行、UI/UX <span class="tag ok">完成</span></h3><p class="meta">G3、G2、G5、G6，以及 code review 流程。進度表的每一欄都要接上真實訊號：commit、review 對應的 sha、測試結果、你的核准。用一個小功能從 PRD 走到驗收。</p><p class="meta">驗證：先做設計稿請你確認，再端到端實跑，附證據。</p></div></div>
     <div class="phase"><span class="pn">5</span><div class="body"><h3>常駐與優化</h3><p class="meta">心跳、重開接續、token 提醒和大腦的處置流程。</p><p class="meta">驗證：關掉再開 Claude Code 後接續工作；製造用量異常，確認提醒和處置都有出現。</p></div></div>
     <div class="phase"><span class="pn">6</span><div class="body"><h3>上架</h3><p class="meta">請沒有參與實作的 agent 做獨立的安全、品質、測試 review，critical 和 important 清零後，收進 marketplace 的自製 mod。</p></div></div>
     <div class="phase opt"><span class="pn">之後</span><div class="body"><h3>選用</h3><p class="meta">向量檢索（抽考不達標才做）、雲端排程、Notion 同步（會連網，審查等級變 L3）。</p></div></div>

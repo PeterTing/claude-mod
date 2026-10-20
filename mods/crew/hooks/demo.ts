@@ -89,7 +89,7 @@ const NORMAL: Snapshot = {
   gates: [
     { id: 'G0', state: 'pass', name: 'PRD 每條需求都有對應的功能', fill: 'PM 補', confirm: 'crew 對照 PRD 檔案', covered: 14, total: 14, gaps: [], note: 'R-2f6b55 年繳方案用 drop_requirement 移出 v1', checked: '即時' },
     { id: 'G1', state: 'pass', name: '每個功能都有驗收條件', fill: 'PM 補', confirm: 'PM 自查', covered: 4, total: 4, gaps: [], note: 'F-04 年繳方案已移出 v1，不列入計算', checked: '2 分鐘前' },
-    { id: 'G2', state: 'pass', name: '每個有介面的功能都有畫面和各種狀態', fill: 'UI/UX 補', confirm: 'PM 確認，再給你確認 UX', covered: 9, total: 9, gaps: [], checked: '2 分鐘前' },
+    { id: 'G2', state: 'pass', name: '每個有介面的功能都有畫面和各種狀態', fill: 'UI/UX 補', confirm: '你核准', covered: 9, total: 9, gaps: [], checked: '2 分鐘前' },
     {
       id: 'G3',
       state: 'active',
@@ -136,8 +136,8 @@ const NORMAL: Snapshot = {
       id: 'G6',
       state: 'pending',
       name: 'test case 全部執行通過、附證據',
-      fill: 'QA 執行',
-      confirm: 'PM 驗收',
+      fill: '全端修',
+      confirm: 'crew 跑你設定的測試指令',
       covered: 1,
       total: 14,
       gaps: [],
