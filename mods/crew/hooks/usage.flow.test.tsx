@@ -205,6 +205,8 @@ describe('the brain’s actions on usage', () => {
         { id: 'Q-01', pending: true, role: 'fullstack', text: '全端之後的工作改用 Opus', change: { model: 'opus' }, reason: 'x', before: '今日佔 80%', wakes: 0, at: NOW },
         // An action whose numbers at the time came back broken: shown without them.
         { id: 'DEC-001', role: 'pm', text: 'PM 之後的工作改用 Opus', change: { model: 'opus' }, reason: 'x', before: '今日佔 50%', wakes: 0, at: NOW, base: { day: DAY, role: { input: 'x' }, total: 'x' } },
+        { id: 'DEC-002', role: 'pm', text: 'PM 之後的工作改用 Opus・high', change: { effort: 'high' }, reason: 'x', before: '今日佔 51%', wakes: 0, at: NOW, base: { day: DAY, role: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, wakes: 0, rotations: 0 }, total: 'x' } },
+        { id: 'DEC-003', role: 'pm', text: 'PM 的輪替門檻改成 80K', change: { limit: 80_000 }, reason: 'x', before: '今日佔 52%', wakes: 0, at: NOW, base: { day: DAY, role: { input: 0, output: 0, cacheRead: 0, wakes: 0, rotations: 0 }, total: 1 } },
       ],
     })
     await start($)
@@ -229,9 +231,11 @@ describe('the brain’s actions on usage', () => {
     await done($, 'a-pm-1')
     tokens = await paneUi($)
     await tokens.press({ key: 'tab-tokens' })
-    const after = /DEC-001[^\n]*\n[^\n]*/.exec(await textOf(tokens))?.[0] ?? ''
+    const shown = await textOf(tokens)
+    const after = /DEC-001[^\n]*\n[^\n]*/.exec(shown)?.[0] ?? ''
     expect(after).toMatch(/處置前 今日佔 50%/)
-    expect(after).not.toMatch(/NaN|undefined/)
+    // Each broken part on its own: counters, the day's total, a counter missing.
+    for (const id of ['DEC-001', 'DEC-002', 'DEC-003']) expect(new RegExp(`${id}[^\n]*\n[^\n]*`).exec(shown)?.[0] ?? 'missing').not.toMatch(/NaN|undefined|missing/)
     await tokens.unmount()
   })
 
@@ -338,6 +342,8 @@ describe('the brain’s actions on usage', () => {
         t('DEC-4', 'qa', { limit: 1_000_001 }),
         t('DEC-5', 'qa', { model: 'opus' }, { at: 'now' }),
         t('DEC-6', 'qa', { model: 'opus', speed: 'fast' }),
+        // One crew wrote: read back.
+        t('DEC-9', 'qa', { model: 'opus' }),
       ],
     })
     await start($)
@@ -346,7 +352,9 @@ describe('the brain’s actions on usage', () => {
     expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:pm', model: 'sonnet' })
     const ui = await paneUi($)
     await ui.press({ key: 'tab-tokens' })
-    expect(await textOf(ui)).not.toMatch(/DEC-\d|bad/)
+    const text = await textOf(ui)
+    expect(text).not.toMatch(/DEC-[1-6]\b|bad/)
+    expect(text).toMatch(/DEC-9/)
     await ui.unmount()
   })
 
