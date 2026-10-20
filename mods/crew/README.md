@@ -17,7 +17,7 @@ Five roles take a PRD to tested code, and you approve the designs:
   What counts as built:
   - Only commits on crew's branch count, made after crew made the branch and on no other branch. A `TASK-001: …` in your own history is not crew's work.
   - crew remembers each commit it has seen, and the task it did, so a merge or a deleted branch does not undo it. A later task that takes the same id on a board made again is not counted built by the earlier task's commits.
-  - A commit that an amend, a rebase or a reset takes off crew's branch no longer counts: the task is built by what the branch still holds.
+  - A commit that an amend, a rebase or a reset takes off crew's branch no longer counts: the task is built by what the branch still holds. So after a squash merge, delete crew's branch rather than resetting it to your main branch: a reset takes crew's commits off it, and its tasks would be built again.
   - A task whose worktree still holds changes not committed is not counted built: the full-stack is asked to commit them, revert them, or add build output to `.gitignore`.
   - A commit makes a task under way. It is done once the tech lead approves its newest commit.
 

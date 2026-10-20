@@ -923,7 +923,9 @@ const prdChanged = (state: FlowState, event: Extract<FlowEvent, { type: 'prd_cha
     route: routeFor('pm', tierFor({ kind: 'confirm_gaps', size: Math.max(1, event.added.length + event.removed.length) })),
   }
   if (state.stage === 'escalated') return { state: { ...state, synced: event.key }, actions: [message] }
-  return { state: { stage: 'splitting', round: 0, retries: 0, aligning: 0, synced: event.key }, actions: [message] }
+  // The features whose tasks the tech lead is to check against a new design are checked still, once the board is synced.
+  const recheck = [...new Set([...(state.redesigned ?? []), ...(state.rechecking ?? [])])]
+  return { state: { stage: 'splitting', round: 0, retries: 0, aligning: 0, synced: event.key, ...(recheck.length === 0 ? {} : { redesigned: recheck }) }, actions: [message] }
 }
 
 /** The PRD's requirements some feature in scope on the board already answers. */

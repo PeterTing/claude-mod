@@ -1238,6 +1238,13 @@ describe('a design sent back after the work is done', () => {
     expect(step({ stage: 'approving', round: 0, retries: 0 }, { type: 'designs_decided', board: early }).state.redesigned).toBeUndefined()
   })
 
+  test('keeps the features whose tasks are to be checked through a PRD change', () => {
+    const r = step({ stage: 'planning', round: 0, retries: 0, redesigned: ['PRD-002'], rechecking: ['PRD-001'] }, { type: 'prd_changed', board: planned2(), requirements: [], added: [], removed: [], key: 'k' })
+    expect(r.state.stage).toBe('splitting')
+    expect([...(r.state.redesigned ?? [])].sort()).toEqual(['PRD-001', 'PRD-002'])
+    expect(r.state.rechecking).toBeUndefined()
+  })
+
   test('has the tech lead check a feature’s tasks when its design is sent back while the person approves others', () => {
     const back = reject(planned2(), 'SCR-001', '要有比較表')
     const r = step({ stage: 'approving', round: 0, retries: 0 }, { type: 'designs_decided', board: back })
