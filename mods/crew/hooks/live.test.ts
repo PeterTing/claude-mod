@@ -408,6 +408,18 @@ describe('the full-stack’s commits', () => {
       const under: CrewLive = { ...reviewing }
       expect(snapshotOf({ board: both, live: under, now: NOW }).items.find(i => i.id === 'TASK-002')).toMatchObject({ owner: 'techlead', status: 'review', note: expect.stringMatching(/Tech lead 正在 review/) })
     })
+
+    test('call a review out of date once a newer commit lands, and only an approval stale', () => {
+      const building: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' } }
+      const at = (verdict: 'approve' | 'changes'): Tracker => review(both, [['TASK-001', { sha: 'abc1234def', verdict: 'approve' }], ['TASK-002', { sha: 'fed0000aaa', verdict }]])
+      // TASK-002 was reviewed at fed0000; def5678 came after, and is not reviewed yet.
+      for (const verdict of ['approve', 'changes'] as const) {
+        expect(snapshotOf({ board: at(verdict), live: building, now: NOW }).gates.find(g => g.id === 'G5')?.gaps).toEqual([{ id: 'TASK-002', title: '方案 API', status: 'review 過期，等重新 review' }])
+      }
+      // An approval of an older commit is stale; changes asked of one are no approval, so the stage is under way.
+      expect(snapshotOf({ board: at('approve'), live: building, now: NOW, prd: { requirements: reqs } }).requirements?.[0]?.layers.review).toEqual({ state: 'stale', note: '1/2' })
+      expect(snapshotOf({ board: at('changes'), live: building, now: NOW, prd: { requirements: reqs } }).requirements?.[0]?.layers.review).toEqual({ state: 'doing', note: '1/2' })
+    })
   })
 
   describe('and crew’s test runs on them', () => {

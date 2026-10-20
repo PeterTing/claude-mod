@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { parseCommand, resultsOf } from './runs'
+import type { TestCase } from './board'
+import { parseCommand, resultsOf, testMark } from './runs'
 
 const IDS = ['TC-001', 'TC-002', 'TC-003', 'TC-004']
 
@@ -17,6 +18,13 @@ describe('the person’s test command', () => {
       expect(r.ok).toBe(false)
     }
     expect(parseCommand('')).toMatchObject({ ok: false })
+  })
+
+  test('is at most 64 words of 500 characters each', () => {
+    expect(parseCommand(Array(64).fill('a').join(' ')).ok).toBe(true)
+    expect(parseCommand(Array(65).fill('a').join(' '))).toMatchObject({ ok: false, error: '指令太長了。' })
+    expect(parseCommand(`npm ${'x'.repeat(500)}`).ok).toBe(true)
+    expect(parseCommand(`npm ${'x'.repeat(501)}`)).toMatchObject({ ok: false, error: '指令太長了。' })
   })
 })
 
@@ -43,11 +51,19 @@ describe('results by test case', () => {
   test('count a failure over a pass, and nothing for a test case no line names with a result', () => {
     const output = ['✓ TC-001 add', 'FAILED tests/test_calc.py::test_TC_001_add - AssertionError', 'TC-002 is mentioned in a log line', '✓ TC-099 not on the board'].join('\n')
     expect(Object.fromEntries(resultsOf(output, IDS, 'TC-'))).toEqual({ 'TC-001': 'failed' })
+    // A pass printed after the failure, as a retry or a summary does, does not undo it.
+    expect(Object.fromEntries(resultsOf('✗ TC-002 sub\n✓ TC-002 sub (retry 1)', IDS, 'TC-'))).toEqual({ 'TC-002': 'failed' })
   })
 
   test('do not take a number that merely starts like a test case id', () => {
     expect(Object.fromEntries(resultsOf('✓ TC-0010 something\n✓ TC-1 short', IDS, 'TC-'))).toEqual({ 'TC-001': 'passed' })
     // TC-1 is TC-001 written short; TC-0010 is TC-010, which the board does not have.
+  })
+
+  test('take an id at the start of a word, or after a lower-case letter in a name like TestTC001, and no other', () => {
+    expect(Object.fromEntries(resultsOf('✓ TestTC001Add\n✓ test_tc_002_sub', IDS, 'TC-'))).toEqual({ 'TC-001': 'passed', 'TC-002': 'passed' })
+    // ATC-003 and 9TC-003 are other ids; etc_004 is a word that ends in tc, not TC-004.
+    expect(Object.fromEntries(resultsOf('✓ ATC-003 a\n✓ 9TC-003 b\n✗ log etc_004 rotated', IDS, 'TC-'))).toEqual({})
   })
 
   test('go by the runner’s own mark at the start or end of the line, not by words in a test’s name', () => {
@@ -65,6 +81,14 @@ describe('results by test case', () => {
   test('take a skipped or to-do test for no result', () => {
     const output = ['ok 1 - TC-001 adds # SKIP not ready', 'not ok 2 - TC-002 subtracts # TODO later', 'ok 3 - TC-003 # skip', 'ok 4 - TC-004 adds'].join('\n')
     expect(Object.fromEntries(resultsOf(output, IDS, 'TC-'))).toEqual({ 'TC-004': 'passed' })
+  })
+
+  test('are tied to the test case as written: a change to its title, steps, expected result or criteria makes it another', () => {
+    const tc = { id: 'TC-001', title: 'adds', steps: ['open', 'add'], expected: '2', acceptance_criteria: ['AC-001'] } as unknown as TestCase
+    expect(testMark({ ...tc })).toBe(testMark(tc))
+    for (const changed of [{ title: 'sums' }, { steps: ['open', 'sum'] }, { expected: '3' }, { acceptance_criteria: ['AC-002'] }]) {
+      expect(testMark({ ...tc, ...changed } as TestCase)).not.toBe(testMark(tc))
+    }
   })
 
   test('follow the board’s own test case prefix', () => {

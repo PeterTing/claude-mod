@@ -1014,6 +1014,17 @@ async function reviewMaterial($: any, task: string, sha: string): Promise<string
   }
 }
 
+/** A question for the person, numbered after the highest in use: its id. */
+async function addQuestion($: any, q: Omit<CrewLive['questions'][number], 'id' | 'status'>): Promise<string> {
+  let id = ''
+  await update($, live, l => {
+    const most = l.questions.reduce((n, x) => Math.max(n, Number(/^Q-(\d+)$/.exec(x.id)?.[1] ?? 0)), 0)
+    id = `Q-${String(most + 1).padStart(2, '0')}`
+    return { ...l, questions: [...l.questions, { ...q, id, status: 'open' as const }].slice(-MAX_QUESTIONS) }
+  })
+  return id
+}
+
 /** The person's decisions on designs, kept on this machine per PRD: a board brings none, and a rewritten design loses its own. */
 const decidedKey = (path: string): string => `designs:${files.root}:${path}`
 
@@ -1035,12 +1046,7 @@ async function askApproval($: any, design: { id: string; title: string; kind: st
   const t = await $.clock.now()
   const how = `/crew design ${design.id} 看內容；/crew approve ${design.id} 核准，或 /crew reject ${design.id} <原因> 退回`
   const question = cut(redact(`${design.id} ${design.title}（${design.kind === 'screen' ? '畫面' : '沒有畫面'}）的設計稿等你核准：${how}。`), 500)
-  let id = ''
-  await update($, live, s => {
-    const most = s.questions.reduce((n, q) => Math.max(n, Number(/^Q-(\d+)$/.exec(q.id)?.[1] ?? 0)), 0)
-    id = `Q-${String(most + 1).padStart(2, '0')}`
-    return { ...s, questions: [...s.questions, { id, question, item: design.id, from: 'crew' as const, status: 'open' as const, t }].slice(-MAX_QUESTIONS) }
-  })
+  const id = await addQuestion($, { question, item: design.id, from: 'crew', t })
   $.ui.toast(`crew：設計稿 ${design.id} 等你核准（${how}）`)
   await note($, { kind: 'ask', id, from: 'crew', question, item: design.id })
   await saveState($)
@@ -1090,12 +1096,7 @@ async function decide($: any, ids: readonly string[], verdict: 'approved' | 'rej
 async function ask($: any, from: CrewRole | 'crew' | 'brain', asked: string, item?: string): Promise<string> {
   const t = await $.clock.now()
   const question = cut(redact(asked), 500)
-  let id = ''
-  await update($, live, l => {
-    const most = l.questions.reduce((n, q) => Math.max(n, Number(/^Q-(\d+)$/.exec(q.id)?.[1] ?? 0)), 0)
-    id = `Q-${String(most + 1).padStart(2, '0')}`
-    return { ...l, questions: [...l.questions, { id, question, ...(item === undefined ? {} : { item }), from, status: 'open' as const, t }].slice(-MAX_QUESTIONS) }
-  })
+  const id = await addQuestion($, { question, ...(item === undefined ? {} : { item }), from, t })
   $.ui.toast(`crew：有一件事等你決定（/crew answer ${id} 你的回答）`)
   await note($, { kind: 'ask', id, from, question, ...(item === undefined ? {} : { item }) })
   await saveState($)

@@ -772,6 +772,28 @@ describe('the PRD as the flow holds the board to it', () => {
       expect(step(broken.state, { type: 'tests_ran', board: passedOf(all) }).state.stage).toBe('done')
     })
 
+    test('has the full-stack fix a third failed run, and asks the person only after it', () => {
+      const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
+      expect(step({ stage: 'testing', round: 0, retries: 0, runs: 2 }, { type: 'tests_ran', board: passedOf(all, ['TC-001']) }).state).toMatchObject({ stage: 'building', building: 'TASK-001', runs: 3 })
+    })
+
+    test('asks the person when a test case failed and the task it serves has no commit to fix', () => {
+      // TASK-001's commit is gone from the branch: there is nothing to fix on.
+      const gone = withCommits(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-002', 'abc0001', 'approve'), new Map([['TASK-002', ['abc0001']]])) ?? plannedTwo()
+      const r = step({ stage: 'testing', round: 0, retries: 0 }, { type: 'tests_ran', board: passedOf(gone, ['TC-001']) })
+      expect(r.state).toMatchObject({ stage: 'escalated', resumeAt: 'testing', runs: 1 })
+      expect(r.actions.some(a => a.type === 'ask_person' && /找不到對應的任務/.test(a.question))).toBe(true)
+    })
+
+    test('gives the full-stack the end of a long test output, where runners say what failed', () => {
+      const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
+      const output = `collecting tests…\n${'. '.repeat(3000)}\nFAILED test_TC_001 - assert 1 == 2`
+      const data = (step({ stage: 'testing', round: 0, retries: 0 }, { type: 'tests_ran', board: passedOf(all, ['TC-001']), output }).actions[0] as { data?: string }).data ?? ''
+      expect(data).toMatch(/FAILED test_TC_001 - assert 1 == 2$/)
+      expect(data).not.toMatch(/collecting tests/)
+      expect(data.length).toBeLessThan(4_100)
+    })
+
     test('runs the tests again once a commit after the run is approved', () => {
       const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
       const r = step({ stage: 'reviewing', round: 0, retries: 0, reviewing: { task: 'TASK-002', sha: 'abc0001' } }, { type: 'role_done', role: 'techlead', board: passedOf(all, [], true) })
@@ -836,6 +858,47 @@ describe('the PRD as the flow holds the board to it', () => {
       expect(step(again.state, { type: 'role_done', role: 'fullstack', board: asked }).state).toMatchObject({ stage: 'escalated', resumeAt: 'building' })
     })
 
+    test('counts a review’s changes once, though new criteria are tested and planned while the full-stack makes them', () => {
+      const asked = reviewed(committed(plannedTwo(), ['TASK-001']), 'TASK-001', 'abc0000', 'changes', '缺錯誤處理')
+      const fix = step({ stage: 'reviewing', round: 0, retries: 0, reviewing: { task: 'TASK-001', sha: 'abc0000' } }, { type: 'role_done', role: 'techlead', board: asked })
+      expect(fix.state).toMatchObject({ stage: 'building', fixing: 'abc0000', reviews: 1 })
+      // The PM adds a criterion meanwhile: QA tests it and the tech lead plans it.
+      const more = applyOps(asked, [{ op: 'add_criterion', feature: 'PRD-001', text: '可以改方案' }], ctx('pm'))
+      if (!more.ok) throw new Error(more.errors.join())
+      const toQa = step(fix.state, { type: 'role_done', role: 'pm', board: more.tracker, working: ['fullstack'] })
+      expect(toQa.actions[0]).toMatchObject({ role: 'qa', item: 'AC-003' })
+      const tested = applyOps(more.tracker, [tc(['AC-003'])], ctx('qa'))
+      if (!tested.ok) throw new Error(tested.errors.join())
+      const toTl = step(toQa.state, { type: 'role_done', role: 'qa', board: tested.tracker, working: ['fullstack'] })
+      expect(toTl.actions[0]).toMatchObject({ role: 'techlead', item: 'AC-003' })
+      const withTask = applyOps(tested.tracker, [{ op: 'add_task', feature: 'PRD-001', criteria: ['AC-003'], title: '改方案', detail: '', size: 'S' } as Op], ctx('techlead'))
+      if (!withTask.ok) throw new Error(withTask.errors.join())
+      const back = step(toTl.state, { type: 'role_done', role: 'techlead', board: withTask.tracker, working: ['fullstack'] })
+      // Back to the same fix: the full-stack hears it again, and it is still the first time the review sent the task back.
+      expect(back.state).toMatchObject({ stage: 'building', building: 'TASK-001', fixing: 'abc0000', reviews: 1 })
+      expect(back.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', item: 'TASK-001' })
+    })
+
+    test('has the full-stack make a third round of changes, and asks the person only at the fourth', () => {
+      const asked = reviewed(committed(plannedTwo(), ['TASK-001']), 'TASK-001', 'abc0000', 'changes', '還是不對')
+      const third = step({ stage: 'reviewing', round: 0, retries: 0, reviews: 2, reviewing: { task: 'TASK-001', sha: 'abc0000' } }, { type: 'role_done', role: 'techlead', board: asked })
+      expect(third.state).toMatchObject({ stage: 'building', building: 'TASK-001', reviews: 3 })
+    })
+
+    test('reviews the newest commit when one lands while the tech lead reads an older one', () => {
+      const newer = withCommits(plannedTwo(), new Map([['TASK-001', ['def0001', 'abc0000']]])) ?? plannedTwo()
+      const r = step({ stage: 'reviewing', round: 0, retries: 0, reviewing: { task: 'TASK-001', sha: 'abc0000' } }, { type: 'role_done', role: 'techlead', board: newer })
+      expect(r.state).toMatchObject({ stage: 'reviewing', reviewing: { task: 'TASK-001', sha: 'def0001' }, retries: 0 })
+      expect(r.actions[0]).toMatchObject({ type: 'review', task: 'TASK-001', sha: 'def0001' })
+    })
+
+    test('gives the next task’s review its own two tries, whatever the last one used', () => {
+      // TASK-001's review was asked for twice; its verdict lands, and TASK-002 is reviewed next.
+      const both = reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve')
+      const next = step({ stage: 'reviewing', round: 0, retries: 1, building: 'TASK-001', reviewing: { task: 'TASK-001', sha: 'abc0000' } }, { type: 'role_done', role: 'techlead', board: both })
+      expect(next.state).toMatchObject({ stage: 'reviewing', reviewing: { task: 'TASK-002', sha: 'abc0001' }, retries: 0 })
+    })
+
     test('asks the person once a task’s review has asked for changes three times', () => {
       const asked = reviewed(committed(plannedTwo(), ['TASK-001']), 'TASK-001', 'abc0000', 'changes', '還是不對')
       const r = step({ stage: 'reviewing', round: 0, retries: 0, reviews: 3, reviewing: { task: 'TASK-001', sha: 'abc0000' } }, { type: 'role_done', role: 'techlead', board: asked })
@@ -881,6 +944,10 @@ describe('the PRD as the flow holds the board to it', () => {
     test('waits for the tech lead’s review while another role’s run ends', () => {
       const s = { stage: 'reviewing' as const, round: 0, retries: 0, reviewing: { task: 'TASK-001', sha: 'abc0000' } }
       expect(step(s, { type: 'role_done', role: 'pm', board: committed(plannedTwo(), ['TASK-001']), working: ['techlead'] }).actions).toEqual([])
+      // A reply posted for the tech lead reaches it once its run is over, not while it reads the commit.
+      const inbox = { techlead: ['TASK-001'] }
+      expect(step(s, { type: 'role_done', role: 'pm', board: committed(plannedTwo(), ['TASK-001']), inbox, working: ['techlead'] }).actions).toEqual([])
+      expect(step(s, { type: 'role_done', role: 'pm', board: committed(plannedTwo(), ['TASK-001']), inbox }).actions[0]).toMatchObject({ type: 'message', role: 'techlead', item: 'TASK-001' })
     })
 
     test('goes back to the review once the person answers an escalated one', () => {
@@ -932,6 +999,11 @@ describe('the PRD as the flow holds the board to it', () => {
       // A review cut short by the restart is asked for again.
       const cut = step({ stage: 'reviewing', round: 0, retries: 0, reviewing: { task: 'TASK-001', sha: 'abc0000' } }, { type: 'resume', board: committed(plannedTwo(), ['TASK-001']), prd: { path: 'docs/PRD.md', size: 600 } })
       expect(cut.actions[0]).toMatchObject({ type: 'review', task: 'TASK-001', sha: 'abc0000' })
+      // A review that asked for changes before the restart goes to the full-stack, not to the tech lead again.
+      const asked = reviewed(committed(plannedTwo(), ['TASK-001']), 'TASK-001', 'abc0000', 'changes', '缺錯誤處理')
+      const fix = step({ stage: 'reviewing', round: 0, retries: 0, reviewing: { task: 'TASK-001', sha: 'abc0000' } }, { type: 'resume', board: asked, prd: { path: 'docs/PRD.md', size: 600 } })
+      expect(fix.state).toMatchObject({ stage: 'building', building: 'TASK-001', fixing: 'abc0000' })
+      expect(fix.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', item: 'TASK-001' })
     })
 
     test('does not start building a finished board’s tasks on a turn that is not the flow’s', () => {
@@ -1053,6 +1125,11 @@ describe('designs', () => {
   test('pick up after a restart: the designer goes on, or the person is asked again', () => {
     expect(step({ stage: 'designing', round: 0, retries: 0 }, { type: 'resume', board: tested(), prd: { path: 'docs/PRD.md', size: 600 } }).actions[0]).toMatchObject({ type: 'message', role: 'uiux' })
     expect(step({ stage: 'approving', round: 0, retries: 0 }, { type: 'resume', board: both(tested()), prd: { path: 'docs/PRD.md', size: 600 } })).toMatchObject({ actions: [{ type: 'approve', ids: ['SCR-001', 'SCR-002'] }] })
+    // Every design was approved before the restart: the tech lead plans.
+    const approved = decided(both(tested()), [['SCR-001', { verdict: 'approved' }], ['SCR-002', { verdict: 'approved' }]])
+    const r = step({ stage: 'approving', round: 0, retries: 0 }, { type: 'resume', board: approved, prd: { path: 'docs/PRD.md', size: 600 } })
+    expect(r.state.stage).toBe('planning')
+    expect(r.actions[0]).toMatchObject({ type: 'spawn', role: 'techlead' })
   })
 })
 

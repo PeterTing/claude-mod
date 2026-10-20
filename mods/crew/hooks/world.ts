@@ -85,6 +85,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     commands: [] as string[][],
     /** What `git status --porcelain` says in crew's worktree: changes not committed. */
     dirty: '',
+    /** Why `git status` fails in crew's worktree, when it does. */
+    unreadable: '',
     /** What it says in the person's checkout. */
     checkout: '',
     /** The checkout's branch, as `git symbolic-ref HEAD` says it. */
@@ -149,7 +151,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
       disk.set(`${at2}/.git`, `gitdir: ${ROOT}/.git/worktrees/x`)
       return ok()
     }
-    if (args[0] === 'status' && args[1] === '--porcelain') return ok(dir === ROOT ? git.checkout : git.dirty)
+    if (args[0] === 'status' && args[1] === '--porcelain') return dir !== ROOT && git.unreadable !== '' ? fail(git.unreadable) : ok(dir === ROOT ? git.checkout : git.dirty)
     if (args[0] === 'show') {
       // Each commit as `git show` prints it: its sha, its subject, and a diff.
       const shas = args.slice(1, args.indexOf('--') === -1 ? undefined : args.indexOf('--')).filter(a => !a.startsWith('-'))

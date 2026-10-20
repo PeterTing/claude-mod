@@ -260,7 +260,7 @@ const finish = (state: FlowState, board: Tracker, requirements?: readonly Requir
   const work = advance(state, board)
   if (work !== undefined) return work
   const g6 = gateG6(board)
-  if (g6.gaps.length > 0) return runTests(state)
+  if (g6.gaps.length > 0) return toTesting(state)
   const g2 = gateG2(board)
   const g4 = gateG4(board)
   const g5 = gateG5(board)
@@ -362,7 +362,7 @@ const afterDesign = (state: FlowState, board: Tracker, inbox: Inbox = {}, requir
 }
 
 /** crew runs the person's test command on its branch; the run's end takes the flow on. */
-const runTests = (state: FlowState): StepResult => {
+const toTesting = (state: FlowState): StepResult => {
   const { building: _, fixing: _f, reviewing: _r, ...rest } = state
   return { state: { ...rest, stage: 'testing' }, actions: [{ type: 'run_tests' }] }
 }
@@ -380,7 +380,9 @@ const OUTPUT = 4_000
 const afterRun = (state: FlowState, event: Extract<FlowEvent, { type: 'tests_ran' }>): StepResult => {
   const waiting = state.stage === 'testing' || state.stage === 'done' || (state.stage === 'escalated' && state.resumeAt === 'testing')
   if (!waiting) return { state, actions: [] }
-  const from: FlowState = state.stage === 'escalated' ? (({ resumeAt: _, ...rest }) => ({ ...rest, stage: 'testing' as const }))(state) : state
+  // A flow that waited for the person over the tests takes them on from testing.
+  const { resumeAt: _resume, ...unwaited } = state
+  const from: FlowState = state.stage === 'escalated' ? { ...unwaited, stage: 'testing' } : state
   const g6 = gateG6(event.board)
   if (g6.gaps.length === 0) return state.stage === 'done' ? { state, actions: [] } : finish(from, event.board, event.requirements)
   if (event.error !== undefined) return escalate(from, `crew 沒辦法跑測試：${event.error}。要怎麼處理？`, undefined, 'testing')
@@ -495,9 +497,11 @@ const review = (state: FlowState, board: Tracker, task: Task, sha: string, openi
 
 /** The review asked for changes: the full-stack makes them, and its next commit is reviewed; past three, the person decides. */
 const fix = (state: FlowState, task: Task, sha: string, notes: string): StepResult => {
+  const asked = state.building === task.id && state.fixing === sha
   // Already asked for: the full-stack's own run end takes it on.
-  if (state.stage === 'building' && state.building === task.id && state.fixing === sha) return { state, actions: [] }
-  const n = (state.building === task.id || state.reviewing?.task === task.id ? (state.reviews ?? 0) : 0) + 1
+  if (asked && state.stage === 'building') return { state, actions: [] }
+  // Asked for before the flow went to plan new criteria: asked again, but the review sent the task back only once.
+  const n = asked ? (state.reviews ?? 1) : (state.building === task.id || state.reviewing?.task === task.id ? (state.reviews ?? 0) : 0) + 1
   const { reviewing: _, ...rest } = state
   if (n > MAX_REVIEWS) {
     return escalate({ ...rest, building: task.id, reviews: n }, `${task.id} ${task.title} 的 review 退回 ${MAX_REVIEWS} 次了（最後一次：${notes.replace(/\s+/g, ' ').slice(0, 200)}）。要怎麼處理？`, task.id, 'building')
@@ -756,6 +760,14 @@ const afterConfirm = (state: FlowState, board: Tracker, inbox: Inbox = {}, requi
 const answerText = (question: string, answer: string): string =>
   `你之前的問題：${question}\n使用者的決定：${answer}\n請照這個決定處理看板，完成後用一句話回報。`
 
+/** The route a waiting flow resumes on: the reviewer's task's size, the builder's task's size, or the role's own. */
+const resumeRoute = (to: FlowRole, reviewed: Task | undefined, built: Task | undefined): Route => {
+  if (to === 'techlead') return reviewed === undefined ? tlRoute(1) : reviewRoute(reviewed)
+  if (to === 'fullstack') return built === undefined ? routeFor('fullstack', 'M') : fsRoute(built)
+  if (to === 'uiux') return uxRoute(1)
+  return routeFor('pm', tierFor({ kind: 'confirm_gaps', size: 1 }))
+}
+
 const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered' }>): StepResult => {
   const role = event.role ?? 'pm'
   // The full-stack goes on with its task on the model the task's size calls for: another model would start it afresh.
@@ -774,7 +786,7 @@ const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered'
   // The tests could not run, or kept failing: the person's answer goes to the full-stack fixing them, or the tests run again.
   if (resumeAt === 'testing') {
     const { resumeAt: _, ...rest } = state
-    if (state.building === undefined || task === undefined) return runTests({ ...rest, runs: 0 })
+    if (state.building === undefined || task === undefined) return toTesting({ ...rest, runs: 0 })
     return {
       state: { ...rest, stage: 'building', runs: 0, retries: 0 },
       actions: [{ ...message, role: 'fullstack', item: state.building, route: fsRoute(task) } as FlowAction],
@@ -787,18 +799,7 @@ const answered = (state: FlowState, event: Extract<FlowEvent, { type: 'answered'
     role: to,
     ...(resumeAt === 'reviewing' ? { text: `${message.text}\n然後用 review_submit 送出 ${state.reviewing?.task ?? ''} 的結論。` } : {}),
     item: to === 'fullstack' ? state.building : resumeAt === 'reviewing' ? state.reviewing?.task : message.item,
-    route:
-      to === 'techlead'
-        ? reviewed === undefined
-          ? tlRoute(1)
-          : reviewRoute(reviewed)
-        : to === 'fullstack'
-          ? task === undefined
-            ? routeFor('fullstack', 'M')
-            : fsRoute(task)
-          : to === 'uiux'
-            ? uxRoute(1)
-            : routeFor('pm', tierFor({ kind: 'confirm_gaps', size: 1 })),
+    route: resumeRoute(to, reviewed, task),
   } as FlowAction
   const { resumeAt: _, ...rest } = state
   return {
@@ -848,7 +849,7 @@ const resume = (was: FlowState, event: Extract<FlowEvent, { type: 'resume' }>): 
         actions: [{ type: 'message', role: 'qa', item: g4.gaps[0]?.id, text: resumeToQa(g4.gaps), route: routeFor('qa', tierFor({ kind: 'add_tests', size: g4.gaps.length })) }],
       }
     case 'testing':
-      return runTests(state)
+      return toTesting(state)
     case 'designing':
     case 'approving': {
       if (g4.gaps.length > 0) return afterPlan(state, event.board, {}, event.requirements)

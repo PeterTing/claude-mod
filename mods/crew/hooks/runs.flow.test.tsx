@@ -253,6 +253,28 @@ describe('crew’s test runs', () => {
     expect(w.toasts.some(t => /crew 的工作目錄有沒 commit 的修改（notes\.txt）/.test(t))).toBe(true)
   })
 
+  test('do not run in a worktree that is a link out of the repo, nor one git cannot read', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    await build($)
+    expect(w.tests.runs).toHaveLength(1)
+    // crew's worktree is now a link to a folder outside the repo, with a git checkout of its own.
+    w.disk.set('/elsewhere/.git', 'gitdir: /elsewhere/.git')
+    w.links.set(`${ROOT}/.crew/work/prd`, '/elsewhere')
+    await $.command.run(command('test'))
+    await tested()
+    expect(w.tests.runs).toHaveLength(1)
+    expect(w.toasts.some(t => /crew：\/repo\/\.crew\/work\/prd 是連結，或指到 repo 外/.test(t))).toBe(true)
+    // Back in place, but git cannot say what changed there.
+    w.links.delete(`${ROOT}/.crew/work/prd`)
+    w.git.unreadable = 'fatal: index file corrupt'
+    await $.command.run(command('test'))
+    await tested()
+    expect(w.tests.runs).toHaveLength(1)
+    expect(w.toasts.some(t => /git status 在 crew 的工作目錄沒有成功，所以沒有跑測試：fatal: index file corrupt/.test(t))).toBe(true)
+  })
+
   test('ask for a missing command once, with one notice', async ($, on) => {
     const w = world($, on)
     w.store.delete(`tests:${ROOT}`)

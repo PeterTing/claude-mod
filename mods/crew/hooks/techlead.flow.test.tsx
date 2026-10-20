@@ -236,6 +236,27 @@ describe('the tech lead’s review', () => {
     expect(thread).not.toMatch(/diff of/)
   })
 
+  test('reads only the commits since its approval when a task changes after it, within a bound', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    const first = w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    await approve($, 'TASK-001')
+    // TASK-002's commit changes TASK-001 too, approved already: so many files that the diff runs long.
+    const files = Array.from({ length: 2000 }, (_, i) => `src/generated/f${String(i).padStart(4, '0')}.ts`)
+    const later = w.commit('TASK-002, TASK-001: 取消流程，重新產生', 'crew/prd', files)
+    await done($, 'a-fullstack-5')
+    const text = w.sent.at(-1)?.text ?? ''
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
+    expect(text).toMatch(new RegExp(`diff of ${later}`))
+    expect(text).not.toMatch(new RegExp(`diff of ${first}`))
+    // The diff is cut short, its start kept.
+    expect(text).toMatch(/f0000\.ts/)
+    expect(text).not.toMatch(/f1999\.ts/)
+    expect(text.length).toBeLessThan(32_000)
+  })
+
   test('takes off a review the board brought that crew never recorded', async ($, on) => {
     const w = world($, on)
     await start($)
