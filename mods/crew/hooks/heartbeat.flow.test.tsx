@@ -339,4 +339,62 @@ describe('the heartbeat', () => {
     expect(w.spawned).toHaveLength(1)
     expect(w.sent.filter(m => m.to === 'a-pm-1').map(m => m.text).join('\n')).toMatch(/不打折[\s\S]*PRD 改了/)
   })
+  describe('starts a role a timer left waiting at any frame of the engine’s', () => {
+    const waiting = async ($: Engine, w: ReturnType<typeof world>) => {
+      await start($)
+      await $.command.run(command('start docs/PRD.md'))
+      await write($, 'a-pm-1', SPLIT)
+      await done($, 'a-pm-1')
+      await failed($, 'a-qa-2', 'error')
+      await $.command.run(command('rotate qa'))
+      const before = w.spawned.length
+      await w.clock.advance(BEAT)
+      expect(w.spawned).toHaveLength(before)
+      return before
+    }
+
+    test('the person’s prompt', async ($, on) => {
+      const w = world($, on)
+      const before = await waiting($, w)
+      await $.prompt.submit({ text: '進度如何？', wait: false, origin: { kind: 'composer' } } as never)
+      expect(w.spawned.slice(before).map(s => s.subagentType)).toEqual(['crew:qa'])
+    })
+
+    test('any tool call', async ($, on) => {
+      const w = world($, on)
+      on('tool.call', { tool: 'Read' }, () => ({ result: 'x' }))
+      const before = await waiting($, w)
+      await $.tool.call({ tool: 'Read', tool_use_id: 'r', file_path: `${ROOT}/README.md` } as never)
+      expect(w.spawned.slice(before).map(s => s.subagentType)).toEqual(['crew:qa'])
+    })
+
+    test('a turn’s end', async ($, on) => {
+      const w = world($, on)
+      const before = await waiting($, w)
+      await $.turn.complete({ answer: 'ok', durationMs: 5, isAborted: false, turnId: 'main-1', reason: 'answer' } as never)
+      expect(w.spawned.slice(before).map(s => s.subagentType)).toEqual(['crew:qa'])
+    })
+  })
+
+  test('starts a tech lead afresh for a commit after the finish at the next frame, never from the timer', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
+    await done($, 'a-qa-2')
+    await designed($)
+    await write($, 'a-techlead-4', PLAN)
+    await done($, 'a-techlead-4')
+    await build($)
+    expect((await $.command.run(command('status'))).text).toMatch(/done/)
+    await $.command.run(command('rotate techlead'))
+    w.commit('TASK-001: 文案修正')
+    const before = w.spawned.length
+    await w.clock.advance(BEAT)
+    expect(w.spawned).toHaveLength(before)
+    await $.command.run(command('status'))
+    expect(w.spawned.slice(before).map(s => s.subagentType)).toEqual(['crew:techlead'])
+  })
 })

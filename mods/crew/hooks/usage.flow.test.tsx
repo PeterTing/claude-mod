@@ -302,4 +302,63 @@ describe('the brain’s actions on usage', () => {
     expect(await tune({ role: 'qa', limit: 20_000 })).toMatch(/已提出建議/)
     expect(await tune({ role: 'qa', limit: 1_000_000 })).toMatch(/已提出建議/)
   })
+  test('apply a proposal kept over a restart once the person approves it', async ($, on) => {
+    const w = world($, on)
+    w.store.set(`state:${ROOT}`, {
+      prdPath: null,
+      flow: { stage: 'idle', round: 0, retries: 0 },
+      questions: [{ id: 'Q-01', question: '大腦建議：PM 之後的工作改用 Opus', item: 'tune', from: 'brain', t: NOW, status: 'open' }],
+      lead: 'person',
+      tunings: [{ id: 'Q-01', pending: true, role: 'pm', text: 'PM 之後的工作改用 Opus', change: { model: 'opus' }, reason: 'x', before: '今日佔 80%', wakes: 0, at: NOW }],
+    })
+    await start($)
+    const ui = await paneUi($)
+    await ui.press({ key: 'approve-Q-01' })
+    expect(await textOf(ui)).not.toMatch(/Q-01 大腦建議/)
+    await ui.unmount()
+    expect(w.toasts.some(t => /已執行大腦的建議/.test(t))).toBe(true)
+    await $.command.run(command('start docs/PRD.md'))
+    expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:pm', model: 'opus' })
+  })
+
+  test('read back no tuning below the person’s floor, nor of a shape crew never wrote', async ($, on) => {
+    const w = world($, on)
+    const t = (id: string, role: string, change: Record<string, unknown>, more: Record<string, unknown> = {}) => ({ id, role, text: id, change, reason: '', before: '', wakes: 0, at: NOW, ...more })
+    w.store.set(`state:${ROOT}`, {
+      prdPath: null,
+      flow: { stage: 'idle', round: 0, retries: 0 },
+      questions: [],
+      lead: 'person',
+      tuned: { pm: { model: 'haiku' }, qa: { limit: 5 }, uiux: { model: 'opus', extra: 1 }, designer: { model: 'opus' }, techlead: { effort: 'ultra' }, fullstack: { limit: 50_000.5 } },
+      tunings: [
+        t('DEC-1', 'pm', { model: 'haiku' }),
+        t('bad', 'qa', { model: 'opus' }),
+        t('DEC-2', 'designer', { model: 'opus' }),
+        t('DEC-3', 'qa', { model: 'gpt' }),
+        t('DEC-4', 'qa', { limit: 1_000_001 }),
+        t('DEC-5', 'qa', { model: 'opus' }, { at: 'now' }),
+        t('DEC-6', 'qa', { model: 'opus', speed: 'fast' }),
+      ],
+    })
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    // The PM runs on its own route, sonnet: haiku is below its floor.
+    expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:pm', model: 'sonnet' })
+    const ui = await paneUi($)
+    await ui.press({ key: 'tab-tokens' })
+    expect(await textOf(ui)).not.toMatch(/DEC-\d|bad/)
+    await ui.unmount()
+  })
+
+  test('take a typed approve of a role’s question for no out-of-date proposal', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 'q', agentId: 'a-pm-1', question: '年繳要做嗎？' } as never)
+    expect((await $.command.run(command('approve Q-01'))).text).toMatch(/不是等你核准的大腦建議/)
+    const ui = await paneUi($)
+    expect(await textOf(ui)).toMatch(/Q-01/)
+    await ui.unmount()
+    void w
+  })
 })
