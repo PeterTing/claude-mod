@@ -111,6 +111,20 @@ describe('the board held to the PRD', () => {
     expect(w.spawned.at(-1)?.prompt).toMatch(/取消訂閱/)
   })
 
+  test('starts the PM afresh at crew’s next frame when the look’s timer cannot wake the agent it has', async ($, on) => {
+    const w = world($, on, { deliver: false })
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    const before = w.spawned.length
+    // The PM is on the split, in an agent that can take no message: the change needs a fresh one.
+    w.disk.set(PRD_PATH, CHANGED)
+    await w.clock.advance(10_000)
+    expect(w.spawned).toHaveLength(before)
+    await $.command.run(command('status'))
+    expect(w.spawned.slice(before).map(s => s.subagentType)).toEqual(['crew:pm'])
+    expect(w.spawned.at(-1)?.prompt).toMatch(/PRD 改了/)
+  })
+
   test('picks up a PRD changed while Claude Code was closed', async ($, on) => {
     const w = world($, on)
     await start($)

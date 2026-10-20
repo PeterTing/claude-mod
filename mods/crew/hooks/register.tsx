@@ -766,12 +766,13 @@ async function withWorkdir($: any, role: CrewRole, work: string): Promise<string
 
 type WaitingStart = { role: CrewRole; asked: Route; given: string; reason?: string; run: 'flow' | 'person' }
 
-/** Roles a timer asked to start, for the PRD crew followed then: one per role, the newest. */
-const waitingStarts: { start: WaitingStart; prd: string | null }[] = []
+/** Roles a timer asked to start, for the PRD crew followed then and the agent the role had: one per role, the newest. */
+const waitingStarts: { start: WaitingStart; prd: string | null; agent?: string }[] = []
 
 async function waitForFrame($: any, start: WaitingStart) {
-  const prd = (await read($, live)).prdPath
-  waitingStarts.splice(0, waitingStarts.length, ...waitingStarts.filter(w => w.start.role !== start.role), { start, prd })
+  const l = await read($, live)
+  const agent = l.roles[start.role].agentId
+  waitingStarts.splice(0, waitingStarts.length, ...waitingStarts.filter(w => w.start.role !== start.role), { start, prd: l.prdPath, ...(agent === undefined ? {} : { agent }) })
 }
 
 /**
@@ -780,9 +781,11 @@ async function waitForFrame($: any, start: WaitingStart) {
  * followed. No hold meets a waiting start: the heartbeat holds no flow while
  * one waits, and a restart or reload starts the module, and its list, anew.
  *
- * A role the frame's own work set to work is not started again: on the
- * flow's run, the flow gave it its stage's work and takes the next step when
- * it ends; on the person's question, the waiting work follows the answer.
+ * A role the frame's own work set to work, in an agent other than the one
+ * it had, is not started again: on the flow's run, the flow gave it its
+ * stage's work and takes the next step when it ends; on the person's
+ * question, the waiting work follows the answer. The agent it had, one the
+ * timer could not wake, is replaced as the timer asked.
  */
 async function startWaiting($: any) {
   if (waitingStarts.length === 0) return
@@ -793,7 +796,7 @@ async function startWaiting($: any) {
       if (w.prd !== l.prdPath) continue
       const { role, asked, given, reason, run } = w.start
       const r = l.roles[role]
-      if (r.state === 'working' && r.agentId !== undefined) {
+      if (r.state === 'working' && r.agentId !== undefined && r.agentId !== w.agent) {
         if (r.run !== 'person') continue
         const work: CrewWork = { kind: 'message', route: asked, text: given, run }
         await update($, live, s => ({ ...s, pending: { ...s.pending, [role]: [...(s.pending[role] ?? []), work] } }))
