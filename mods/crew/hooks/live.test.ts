@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { CrewLive } from '../types'
 import { applyOps, newTracker } from './board'
 import type { Op, Tracker } from './board'
-import { emptyLive, snapshotOf } from './live'
+import { emptyLive, metricsOf, snapshotOf, usageSignals } from './live'
 import { barCells, percent } from './model'
 import type { Snapshot } from './model'
 import { bandText, bar } from './views'
@@ -551,5 +551,37 @@ describe('the UI/UX designer’s designs', () => {
     expect(snap.items.find(i => i.id === 'SCR-001')).toMatchObject({ owner: 'uiux', status: 'done', note: expect.stringMatching(/PRD-001・畫面 · 你核准了/) })
     expect(snap.items.find(i => i.id === 'SCR-002')).toMatchObject({ owner: 'uiux', status: 'review', note: expect.stringMatching(/PRD-002・沒有畫面 · 等你核准/) })
     expect(snap.roles.find(r => r.id === 'uiux')).toMatchObject({ state: 'working', doing: '畫設計稿', route: { tier: 'S', model: 'Sonnet', effort: 'medium' } })
+  })
+})
+
+describe('usage signals for the brain', () => {
+  const day = (usage: CrewLive['usage']): CrewLive => ({ ...emptyLive(), usage })
+  const u = (input: number, cacheRead: number, cacheWrite: number) => ({ input, output: 0, cacheRead, cacheWrite, wakes: 1, rotations: 0 })
+
+  test('name a role over 40% of a day big enough to tell, and one reading under 60% from the cache', () => {
+    const l = day({ fullstack: u(31_000, 85_000, 50_000), pm: u(6_000, 27_000, 5_000) })
+    expect(usageSignals(l).map(x => x.key)).toEqual(['share:fullstack', 'hit:fullstack'])
+    expect(usageSignals(l).map(x => x.text)).toEqual(['全端今日佔 81%（超過 40%）', '全端快取命中率 51%（低於 60%）'])
+    // A day under 50K, or a role under it, says nothing.
+    expect(usageSignals(day({ fullstack: u(3_000, 1_000, 4_000) }))).toEqual([])
+  })
+
+  test('name a role past its context threshold, its own or the brain’s', () => {
+    const l = { ...emptyLive(), roles: { ...emptyLive().roles, qa: { ...emptyLive().roles.qa, context: 70_000, limit: 60_000 } } }
+    expect(usageSignals(l)).toEqual([{ key: 'context:qa', text: 'QA 的 context 70K 超過門檻 60K' }])
+    expect(usageSignals({ ...l, tuned: { qa: { limit: 80_000 } } })).toEqual([])
+  })
+
+  test('name two roles going back and forth on one item more than six times', () => {
+    const msgs = (n: number) => Array.from({ length: n }, (_, i) => ({ t: i, item: 'AC-007', from: i % 2 === 0 ? 'PM' : 'QA', text: '…' }))
+    expect(usageSignals({ ...emptyLive(), threads: { 'AC-007': msgs(6) } })).toEqual([])
+    expect(usageSignals({ ...emptyLive(), threads: { 'AC-007': msgs(7) } })).toEqual([{ key: 'pingpong:AC-007', text: 'QA 和 PM 在 AC-007 來回 7 次（超過 6 次）' }])
+    // A third voice breaks the run.
+    expect(usageSignals({ ...emptyLive(), threads: { 'AC-007': [...msgs(4), { t: 9, item: 'AC-007', from: '你', text: '…' }, ...msgs(4)] } })).toEqual([])
+  })
+
+  test('measure a role by its share, cache hit rate and context', () => {
+    const l = { ...day({ fullstack: u(31_000, 85_000, 50_000), pm: u(6_000, 27_000, 5_000) }), roles: { ...emptyLive().roles, fullstack: { ...emptyLive().roles.fullstack, context: 96_000 } } }
+    expect(metricsOf(l, 'fullstack')).toBe('今日佔 81% · 命中率 51% · context 96K')
   })
 })

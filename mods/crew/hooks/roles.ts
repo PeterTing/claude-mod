@@ -215,15 +215,18 @@ export const TOOL_SPECS = [
   {
     name: 'crew',
     description:
-      '指揮 crew 產品團隊（PM、QA、UI/UX、Tech lead、全端），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM、QA、UI/UX、Tech lead 或全端；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作；test：用使用者設定的測試指令重跑測試（指令只能由使用者自己在右側面板設定）；design：讀一份設計稿（設計稿只能由使用者自己在右側面板核准或退回）。角色的回覆和要使用者決定的事會再通知你。',
+      '指揮 crew 產品團隊（PM、QA、UI/UX、Tech lead、全端），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM、QA、UI/UX、Tech lead 或全端；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作；test：用使用者設定的測試指令重跑測試（指令只能由使用者自己在右側面板設定）；design：讀一份設計稿（設計稿只能由使用者自己在右側面板核准或退回）；tune：crew 提醒 token 用量時，調整某個角色之後的工作用的 model、effort 或輪替門檻 limit（不能低於使用者定的下限；使用者設定先問他時，會變成等他核准的建議）。角色的回覆和要使用者決定的事會再通知你。',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { enum: ['start', 'ask', 'answer', 'status', 'remember', 'recall', 'rotate', 'resume', 'test', 'design'] },
+        action: { enum: ['start', 'ask', 'answer', 'status', 'remember', 'recall', 'rotate', 'resume', 'test', 'design', 'tune'] },
         path: { type: 'string', description: 'PRD 檔案路徑（start）' },
-        role: { enum: ['pm', 'qa', 'uiux', 'techlead', 'fullstack'], description: 'ask、rotate 的對象' },
+        role: { enum: ['pm', 'qa', 'uiux', 'techlead', 'fullstack'], description: 'ask、rotate、tune 的對象' },
+        model: { enum: ['haiku', 'sonnet', 'opus'], description: 'tune：這個角色之後的工作用的模型' },
+        effort: { enum: ['low', 'medium', 'high', 'xhigh', 'max'], description: 'tune：這個角色之後的工作用的 effort' },
+        limit: { type: 'integer', minimum: 20000, maximum: 1000000, description: 'tune：這個角色的輪替門檻（context token 數）' },
         question: { type: 'string', description: '要回答的問題編號，例如 Q-01（answer）；設計稿編號，例如 SCR-001（design）' },
-        text: { type: 'string', description: '問題、回答、偏好或關鍵字' },
+        text: { type: 'string', description: '問題、回答、偏好、關鍵字，或 tune 的原因' },
       },
       required: ['action'],
     },

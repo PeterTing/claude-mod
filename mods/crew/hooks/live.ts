@@ -5,7 +5,7 @@ import { estimateTokens } from './memory'
 import type { MemoryEntry } from './memory'
 import { droppedRequirements, gateG0, refsOf } from './prd'
 import type { Requirement } from './prd'
-import { percent, ROLE_NAMES } from './model'
+import { hitRate, percent, ROLE_NAMES } from './model'
 import type { Feature, Gate, Item, RequirementRow, RoleId, RoleRow, Snapshot, Stage, StageCell, Tier, UsageRow } from './model'
 
 /** A team that has not started. */
@@ -76,6 +76,63 @@ const residentOf = (r: NonNullable<CrewLive['resident']>, now: number) => {
     ...(r.found === undefined ? {} : { found: r.found }),
     ...(r.resumed === undefined ? {} : { resumed: r.resumed }),
   }
+}
+
+const HOUR = 3_600_000
+
+/** A time of day, as the pane says it: 13:02. */
+export const clockOf = (t: number): string => {
+  const d = new Date(t)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+const spentOf = (u: CrewUsage | undefined): number => (u === undefined ? 0 : u.input + u.output + u.cacheRead + u.cacheWrite)
+
+/** A role's numbers today, as the brain's actions are measured: its share of the day, its cache hit rate, its context. */
+export const metricsOf = (live: CrewLive, role: string): string => {
+  const all = Object.values(live.usage).reduce((n, u) => n + spentOf(u), 0)
+  const u = live.usage[role]
+  const share = all === 0 ? 0 : Math.round((spentOf(u) / all) * 100)
+  const rate = u === undefined ? 0 : hitRate({ role: role as RoleId, ...u })
+  const context = live.roles[role as RoleId]?.context ?? 0
+  return `今日佔 ${share}% · 命中率 ${rate}% · context ${Math.round(context / 1000)}K`
+}
+
+/** The least a day, or a role's own use, must be before a share or a hit rate says anything. */
+const SIGNIFICANT = 50_000
+
+/** A role's name joined to what follows: `全端今日佔`, `Tech lead 今日佔`. */
+export const said = (role: RoleId, rest: string): string => (/[A-Za-z]$/.test(ROLE_NAMES[role]) ? `${ROLE_NAMES[role]} ${rest}` : `${ROLE_NAMES[role]}${rest}`)
+
+/**
+ * What crew tells the brain about usage, worked out in code: a role over 40%
+ * of the day, a role reading under 60% from the cache, a role past its context
+ * threshold, two roles going back and forth on one item more than six times.
+ * Each with its key, told at most once an hour.
+ */
+export const usageSignals = (live: CrewLive): { key: string; text: string }[] => {
+  const out: { key: string; text: string }[] = []
+  const all = Object.values(live.usage).reduce((n, u) => n + spentOf(u), 0)
+  for (const role of ['pm', 'uiux', 'fullstack', 'qa', 'techlead'] as const) {
+    const u = live.usage[role]
+    const spent = spentOf(u)
+    if (all >= SIGNIFICANT && spent / all > 0.4) out.push({ key: `share:${role}`, text: said(role, `今日佔 ${Math.round((spent / all) * 100)}%（超過 40%）`) })
+    const rate = u === undefined ? 100 : hitRate({ role, ...u })
+    if (spent >= SIGNIFICANT && rate < 60) out.push({ key: `hit:${role}`, text: said(role, `快取命中率 ${rate}%（低於 60%）`) })
+    const r = live.roles[role]
+    const limit = live.tuned?.[role]?.limit ?? r.limit
+    if (limit !== undefined && r.context > limit) out.push({ key: `context:${role}`, text: said(role, `的 context ${Math.round(r.context / 1000)}K 超過門檻 ${Math.round(limit / 1000)}K`) })
+  }
+  for (const [item, messages] of Object.entries(live.threads)) {
+    // The latest run of messages two senders passed back and forth, newest first.
+    const from = messages.filter(m => m.kind === undefined || m.kind === 'message').map(m => m.from)
+    const [a, b] = [from.at(-1), from.at(-2)]
+    if (a === undefined || b === undefined || a === b) continue
+    let n = 2
+    while (from[from.length - 1 - n] === (n % 2 === 0 ? a : b)) n += 1
+    if (n > 6) out.push({ key: `pingpong:${item}`, text: `${b} 和 ${a} 在 ${item} 來回 ${n} 次（超過 6 次）` })
+  }
+  return out
 }
 
 const DAY = 86_400_000
@@ -454,6 +511,8 @@ export const snapshotOf = ({
         age: ageOf(q.t, now),
         // crew's question on a design is the person's to approve or send back in the pane.
         ...(q.from === 'crew' && q.item !== undefined && /^SCR-\d+$/.test(q.item) ? { kind: 'design' as const, design: q.item } : {}),
+        // The brain's proposal on usage is the person's to approve or not.
+        ...(q.from === 'brain' && q.item === 'tune' ? { kind: 'proposal' as const } : {}),
       })),
     ...(live.paused === undefined || live.prdPath === null ? {} : { start: { prds: [], resumable: heldText(live), ...(live.paused === 'offer' ? {} : { paused: true }) } }),
     ...(live.resident === undefined ? {} : { resident: residentOf(live.resident, now) }),
@@ -481,8 +540,14 @@ export const snapshotOf = ({
     usage,
     tiers,
     brainShare: today + brain === 0 ? 0 : brain / (today + brain),
-    alerts: [],
-    actions: [],
+    // What crew told the brain in the last hour, and what the brain did about usage.
+    alerts: (live.alerts ?? []).filter(a => now - a.at < HOUR).map(a => ({ text: a.text, at: clockOf(a.at) })),
+    actions: (live.tunings ?? []).map(t => ({
+      id: t.id,
+      text: t.text,
+      before: t.before,
+      ...(t.pending === true ? { pending: t.id } : (live.usage[t.role]?.wakes ?? 0) > t.wakes ? { after: metricsOf(live, t.role) } : {}),
+    })),
     injected: { count: live.injected.count, average: live.injected.count === 0 ? 0 : Math.round(live.injected.tokens / live.injected.count) },
     chores: total(live.usage.memory),
     ...(board === null || prd === undefined

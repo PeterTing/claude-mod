@@ -140,7 +140,19 @@ export type CrewLive = {
   paused?: 'offer' | 'person' | 'stalled'
   /** crew's heartbeat: when it last looked, what it found and did; and where a restart went on from. */
   resident?: { checkedAt: number; found?: string; resumed?: string }
+  /** Reminders on usage sent to the brain: the condition, what was said, when; one per condition an hour. */
+  alerts?: { key: string; text: string; at: number }[]
+  /** The brain's tuning of each role's work from now on: a model, an effort, a rotation threshold. */
+  tuned?: Record<string, CrewTuning>
+  /**
+   * The brain's actions on usage: taken (a decision, `DEC-`), or waiting for
+   * the person (a question, `Q-`); what they change, why, and the role's
+   * numbers before, with its wakes then, so the numbers since show after it ran.
+   */
+  tunings?: { id: string; pending?: boolean; role: string; text: string; change: CrewTuning; reason: string; before: string; wakes: number; at: number }[]
 }
+
+export type CrewTuning = { model?: 'haiku' | 'sonnet' | 'opus'; effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; limit?: number }
 
 export type CrewSignals = {
   /** The PRD file's version (time and size) crew last took in; '' before the first look. */

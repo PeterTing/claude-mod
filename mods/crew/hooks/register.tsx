@@ -8,7 +8,7 @@ import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './con
 import { DEMO } from './demo'
 import { answeredOf, RUNNING, step } from './flow'
 import type { FlowAction, FlowEvent } from './flow'
-import { dayOf, emptyLive, HEARTBEAT_MS, snapshotOf, STAGE_OF } from './live'
+import { dayOf, emptyLive, HEARTBEAT_MS, metricsOf, said, snapshotOf, STAGE_OF, usageSignals } from './live'
 import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, redact, searchMemories, serializeMemories } from './memory'
 import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { ROLE_NAMES } from './model'
@@ -23,8 +23,8 @@ import type { Requirement } from './prd'
 import { composeStart, relatedOf, threadLines, wakePlan, withMemories, workingSet } from './pack'
 import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
 import type { CrewRole } from './roles'
-import { routeFor } from './router'
-import type { Route } from './router'
+import { floorOf, labelOf, routeFor, tunedRoute } from './router'
+import type { Route, Tuning } from './router'
 import { bandText, CrewPane } from './views'
 import type { Actions } from './views'
 
@@ -648,10 +648,12 @@ const withUnread = (l: CrewLive, role: CrewRole, text: string, item?: string): s
  * the work and its recent thread lines go first, the work last. With a reason,
  * it replaces the role's agent (a rotation) and carries its last report.
  */
-async function startRole($: any, role: CrewRole, route: Route, given: string, reason?: string, run: 'flow' | 'person' = 'flow') {
+async function startRole($: any, role: CrewRole, asked: Route, given: string, reason?: string, run: 'flow' | 'person' = 'flow') {
   const work = await withWorkdir($, role, given)
   if (work === undefined) return
   const l = await read($, live)
+  // The brain's tuning of the role, as the person let it act, runs the role's work from now on.
+  const route = tunedRoute(asked, l.tuned?.[role])
   const was = l.roles[role]
   const task = withUnread(l, role, work)
   const pack = await recall($, `${task}\n${l.prdPath ?? ''}`, { role })
@@ -751,10 +753,12 @@ async function withWorkdir($: any, role: CrewRole, work: string): Promise<string
   return `${work}\n\n${WORKDIR}${wd.dir}（分支 ${wd.branch}）。所有修改和 git 指令都在這個目錄裡做，例如 git -C ${wd.dir} commit。`
 }
 
-async function deliver($: any, role: CrewRole, route: Route, given: string, item?: string, run: 'flow' | 'person' = 'flow') {
+async function deliver($: any, role: CrewRole, asked: Route, given: string, item?: string, run: 'flow' | 'person' = 'flow') {
   const work = await withWorkdir($, role, given)
   if (work === undefined) return
   const l0 = await read($, live)
+  // The brain's tuning of the role, as the person let it act, runs the role's work from now on.
+  const route = tunedRoute(asked, l0.tuned?.[role])
   const state = l0.roles[role]
   // A role at work is never replaced: the message waits in its inbox, and a rotation waits for it to be idle.
   const busy = state.state === 'working' && state.agentId !== undefined
@@ -1310,6 +1314,98 @@ async function resumeOnStart($: any) {
   flushBrain($, true)
 }
 
+const HOUR = 3_600_000
+
+/** The most tokens one tool output of a role's may take before the brain hears of it. */
+const OUTPUT_TOKENS = 10_000
+
+/**
+ * A reminder on usage for the brain, at most once an hour for the same
+ * condition: kept for the pane, and said with what the brain may do about it,
+ * as the person lets it act. True when it was told.
+ */
+async function raiseAlert($: any, key: string, text: string, now: number): Promise<boolean> {
+  const l = await read($, live)
+  if ((l.alerts ?? []).some(a => a.key === key && now - a.at < HOUR)) return false
+  await update($, live, s => ({ ...s, alerts: [...(s.alerts ?? []).filter(a => now - a.at < 24 * HOUR), { key, text, at: now }].slice(-50) }))
+  const asks = (await loadSettings($)).tuning === 'ask'
+  tellBrain(
+    `token 用量提醒：${text}。要處置的話用 crew 工具的 tune（role 加上 model、effort 或 limit），或 rotate，或用 ask 請 Tech lead 把任務拆小；不需要就不處置。` +
+      (asks ? '使用者設定先問使用者：你的處置會變成建議，他在面板核准才執行。' : '使用者設定自動：你的處置會直接執行，並記成一條決定。') +
+      '不能為了省 token 跳過關卡、測試或 review。',
+  )
+  return true
+}
+
+/** What a tuning changes, said as the pane says it. */
+const tuningText = (role: CrewRole, t: Tuning): string => {
+  const name = ROLE_NAMES[role]
+  const parts: string[] = []
+  if (t.model !== undefined || t.effort !== undefined) parts.push(`${name}之後的工作改用 ${[t.model === undefined ? undefined : labelOf(t.model), t.effort].filter(x => x !== undefined).join('・')}`)
+  if (t.limit !== undefined) parts.push(`${name}的輪替門檻改成 ${Math.round(t.limit / 1000)}K`)
+  return parts.join('，')
+}
+
+/**
+ * The brain's action on a role's usage: a model, an effort or a rotation
+ * threshold for the role's work from now on, never below the person's floor
+ * for the role. As the person set it, it takes effect and is kept as a
+ * decision, or waits as a proposal for them to approve in the pane.
+ */
+async function tune($: any, input: { role?: unknown; model?: unknown; effort?: unknown; limit?: unknown; text?: unknown }): Promise<string> {
+  const role = typeof input.role === 'string' && isCrewRole(input.role) ? input.role : undefined
+  if (role === undefined) return 'role 要是 pm、qa、uiux、techlead 或 fullstack。'
+  const model = input.model === 'haiku' || input.model === 'sonnet' || input.model === 'opus' ? input.model : undefined
+  const effort = ['low', 'medium', 'high', 'xhigh', 'max'].includes(String(input.effort)) ? (input.effort as Tuning['effort']) : undefined
+  const limit = typeof input.limit === 'number' && Number.isInteger(input.limit) && input.limit >= 20_000 && input.limit <= 1_000_000 ? input.limit : undefined
+  const change: Tuning = { ...(model === undefined ? {} : { model }), ...(effort === undefined ? {} : { effort }), ...(limit === undefined ? {} : { limit }) }
+  if (Object.keys(change).length === 0) return '請說要換的模型、effort 或輪替門檻：model（haiku、sonnet、opus）、effort（low 到 max）或 limit（20000 到 1000000 token）。'
+  const floor = floorOf(role, change)
+  if (floor !== undefined) return `低於${ROLE_NAMES[role]}的下限 ${floor}，不能這樣改：下限是使用者定的。`
+  const reason = cut(redact(typeof input.text === 'string' ? input.text.trim() : ''), 300)
+  const text = tuningText(role, change)
+  const l = await read($, live)
+  const before = metricsOf(l, role)
+  const wakes = l.usage[role]?.wakes ?? 0
+  const t = await $.clock.now()
+  if ((await loadSettings($)).tuning === 'ask') {
+    const id = await addQuestion($, { question: `大腦建議：${text}${reason === '' ? '' : `（${reason}）`}`, item: 'tune', from: 'brain', t })
+    await update($, live, s => ({ ...s, tunings: [...(s.tunings ?? []), { id, pending: true, role, text, change, reason, before, wakes, at: t }].slice(-30) }))
+    $.ui.toast(`crew：大腦建議${text}，在右側面板「待你決定」核准或不要`)
+    await saveState($)
+    return `已提出建議，等使用者核准（${id}）：${text}。`
+  }
+  const id = await applyTuning($, role, change, text, reason)
+  await update($, live, s => ({ ...s, tunings: [...(s.tunings ?? []), { id, role, text, change, reason, before, wakes, at: t }].slice(-30) }))
+  return `已處置（${id}）：${text}。`
+}
+
+/** A tuning takes effect for the role's work from now on, and is kept as a decision: its id. */
+async function applyTuning($: any, role: CrewRole, change: Tuning, text: string, reason: string): Promise<string> {
+  await update($, live, s => ({ ...s, tuned: { ...(s.tuned ?? {}), [role]: { ...(s.tuned?.[role] ?? {}), ...change } } }))
+  const r = await remember($, { type: 'DEC', text: `大腦處置 token 用量：${text}${reason === '' ? '' : `。原因：${reason}`}`, source: 'brain' })
+  return r.ok ? r.entry.id : '（沒有記成決定）'
+}
+
+/** The person's word on the brain's proposal: approved, it takes effect and is kept as a decision; not, it changes nothing. */
+async function decideTuning($: any, question: string, approved: boolean): Promise<string> {
+  const l = await read($, live)
+  const p = (l.tunings ?? []).find(x => x.pending === true && x.id === question)
+  if (p === undefined || !isCrewRole(p.role)) return `${question} 不是等你核准的大腦建議。`
+  await update($, live, s => ({ ...s, questions: s.questions.map(q => (q.id === question ? { ...q, status: 'answered' as const, answer: approved ? '核准' : '不要' } : q)) }))
+  if (!approved) {
+    await update($, live, s => ({ ...s, tunings: (s.tunings ?? []).filter(x => x.id !== question) }))
+    await saveState($)
+    tellBrain(`使用者沒有核准你的建議（${question}）：${p.text}。`)
+    return `沒有執行大腦的建議：${p.text}。`
+  }
+  const id = await applyTuning($, p.role, p.change, p.text, p.reason)
+  await update($, live, s => ({ ...s, tunings: (s.tunings ?? []).map(x => (x.id === question ? { ...x, id, pending: undefined } : x)) }))
+  await saveState($)
+  tellBrain(`使用者核准了你的建議（${question}，記成 ${id}）：${p.text}。`)
+  return `已執行大腦的建議（${id}）：${p.text}。`
+}
+
 /** How long a question may wait for the person before crew reminds them, once. */
 const REMIND_AFTER_MS = 2 * 3_600_000
 
@@ -1386,6 +1482,10 @@ async function lookAfter($: any, now: number): Promise<string[]> {
         else if (after === 'testing') found.push('流程完成後測試結果過期 → 重跑測試')
         else if (after !== 'done') found.push(`流程完成後看板有變動 → 接續「${STAGE_OF[after] ?? after}」`)
       }
+    }
+    // Usage worked out in code: the brain hears of each condition at most once an hour.
+    for (const s of usageSignals(await read($, live))) {
+      if (await raiseAlert($, s.key, s.text, now)) found.push(`${s.text} → 已告訴大腦`)
     }
     // A question the person left for two hours is brought up once.
     for (const q of (await read($, live)).questions) {
@@ -2211,6 +2311,8 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
   if (verb === 'approve' || verb === 'reject') {
     // A design is the person's to approve, typed by them: not the brain's, another plugin's or a peer's to decide for them.
     if (!typed) return '設計稿要使用者自己在右側面板核准或退回。'
+    // The brain's proposal on usage, approved or not by the person's own word.
+    if (rest.length === 1 && /^Q-\d+$/.test(rest[0] ?? '')) return decideTuning($, rest[0] ?? '', verb === 'approve')
     if (verb === 'approve') {
       const ids = rest.filter(x => /^SCR-\d+$/.test(x))
       if (ids.length === 0 || ids.length !== rest.length) return '用法：/crew approve SCR-001 [SCR-002 …]'
@@ -2425,13 +2527,13 @@ function paneActions($: any, snap: Snapshot): Actions {
     answer: (id, text) => person('answer', [id, text]),
     approve: id => {
       const scr = design(id)
-      if (scr === undefined) return said('這件事不能用核准決定，請在下面的框回答。')
-      person('approve', [scr])
+      if (scr !== undefined) return person('approve', [scr])
+      void decideTuning($, id, true).then(said)
     },
     reject: (id, reason) => {
       const scr = design(id)
-      if (scr === undefined) return said('這件事不能用退回決定，請在下面的框回答。')
-      person('reject', [scr, reason ?? ''])
+      if (scr !== undefined) return person('reject', [scr, reason ?? ''])
+      void decideTuning($, id, false).then(said)
     },
     viewDesign: id => void update($, designOpen, () => id),
     ask: (role, text) => {
@@ -2571,6 +2673,18 @@ export const register: Register = on => {
     // The person's own Enter at the prompt, or their Remote Control client: what only they may do is taken from these alone.
     const kind = (e as { origin?: { kind?: string } }).origin?.kind
     return { text: await crewVerb($, verb, rest, 'person', kind === 'composer' || kind === 'bridge') }
+  })
+
+  // A role's single tool output past 10K tokens is a usage reminder for the brain.
+  on('tool.call', async ($, e: any, next) => {
+    const r = await next(e)
+    const role = e.agentId === undefined ? undefined : (await read($, live)).agents[e.agentId]
+    if (role !== undefined) {
+      const out = (r as { result?: unknown } | undefined)?.result
+      const size = estimateTokens(typeof out === 'string' ? out : JSON.stringify(out ?? ''))
+      if (size > OUTPUT_TOKENS) await raiseAlert($, `output:${role}`, said(role, `一次工具輸出約 ${Math.round(size / 1000)}K token（超過 10K）：${String(e.tool)}`), await $.clock.now())
+    }
+    return r
   })
 
   on('tool.call', { tool: 'mcp__crew__board_read' }, async ($, e: any) => {
@@ -2740,8 +2854,12 @@ export const register: Register = on => {
       design: words(e.question),
     }
     const verb = str(e.action)
+    if (verb === 'tune') {
+      await boot.ready
+      return { result: await tune($, e) }
+    }
     const rest = Object.hasOwn(args, verb) ? args[verb] : undefined
-    if (rest === undefined) return { result: 'action 要是 start、ask、answer、status、remember、recall、rotate、resume、test 或 design。' }
+    if (rest === undefined) return { result: 'action 要是 start、ask、answer、status、remember、recall、rotate、resume、test、design 或 tune。' }
     await boot.ready
     return { result: await crewVerb($, verb, rest, 'brain') }
   })

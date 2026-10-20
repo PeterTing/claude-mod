@@ -73,6 +73,27 @@ export const tierFor = (task: TaskSignals): Tier => {
 
 const higher = <T>(order: readonly T[], a: T, b: T): T => (order.indexOf(a) >= order.indexOf(b) ? a : b)
 
+/** What the brain may set for a role's work from now on: a model, an effort, a rotation threshold. */
+export type Tuning = { model?: Model; effort?: Effort; limit?: number }
+
+/** A role's route with the brain's tuning on it. */
+export const tunedRoute = (route: Route, tuning: Tuning | undefined): Route => ({
+  ...route,
+  ...(tuning?.model === undefined ? {} : { model: tuning.model, label: MODEL_LABELS[tuning.model] }),
+  ...(tuning?.effort === undefined ? {} : { effort: tuning.effort }),
+  ...(tuning?.limit === undefined ? {} : { limit: tuning.limit }),
+})
+
+/** The role's floor, said as `Sonnet・high`, when a tuning would go below it; undefined when it keeps to it. */
+export const floorOf = (role: RoleId, tuning: Tuning): string | undefined => {
+  const floor = FLOORS[role]
+  const low = (tuning.model !== undefined && MODELS.indexOf(tuning.model) < MODELS.indexOf(floor.model)) || (tuning.effort !== undefined && EFFORTS.indexOf(tuning.effort) < EFFORTS.indexOf(floor.effort))
+  return low ? `${MODEL_LABELS[floor.model]}・${floor.effort}` : undefined
+}
+
+/** A model's name as the pane says it. */
+export const labelOf = (model: Model): string => MODEL_LABELS[model]
+
 /**
  * The model, effort and context limit a role runs a task of this tier on.
  * `beyond` is an XL task that failed again: Opus at max.

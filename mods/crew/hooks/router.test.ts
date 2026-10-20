@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { routeFor, tierFor } from './router'
+import { floorOf, routeFor, tierFor, tunedRoute } from './router'
 
 describe('tierFor', () => {
   test('sizes a PRD split by how long the PRD is', () => {
@@ -56,5 +56,22 @@ describe('routeFor', () => {
 
   test('escalates past XL to Opus max', () => {
     expect(routeFor('fullstack', 'XL', { beyond: true })).toMatchObject({ label: 'Opus', effort: 'max', limit: 256_000 })
+  })
+})
+
+describe('a route the brain tuned', () => {
+  test('takes the model, effort and threshold the brain set for the role, and nothing else', () => {
+    const base = routeFor('fullstack', 'S')
+    expect(tunedRoute(base, undefined)).toEqual(base)
+    expect(tunedRoute(base, { model: 'opus', effort: 'xhigh' })).toEqual({ ...base, model: 'opus', label: 'Opus', effort: 'xhigh' })
+    expect(tunedRoute(base, { limit: 80_000 })).toEqual({ ...base, limit: 80_000 })
+  })
+
+  test('never goes below the role’s floor', () => {
+    expect(floorOf('fullstack', { model: 'haiku' })).toBe('Sonnet・high')
+    expect(floorOf('fullstack', { effort: 'medium' })).toBe('Sonnet・high')
+    expect(floorOf('techlead', { model: 'sonnet' })).toBe('Opus・high')
+    expect(floorOf('qa', { model: 'sonnet', effort: 'medium' })).toBeUndefined()
+    expect(floorOf('fullstack', { limit: 80_000 })).toBeUndefined()
   })
 })
