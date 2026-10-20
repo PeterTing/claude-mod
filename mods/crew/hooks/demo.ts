@@ -304,7 +304,7 @@ const EMPTY: Snapshot = {
 /** Claude Code started again on an unfinished PRD: crew offers to go on. */
 const RESTART: Snapshot = {
   ...NORMAL,
-  start: { prds: [], resumable: '上次的 PRD-001 會員訂閱 v1 停在「實作」（全端 TASK-12）' },
+  start: { prds: [], resumable: '上次的 PRD-001 會員訂閱 v1 停在「實作」（全端 TASK-12）。要接續嗎？' },
   resident: { checked: '剛剛', next: '5 分鐘後' },
 }
 

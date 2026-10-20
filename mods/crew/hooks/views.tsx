@@ -370,7 +370,7 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
     <Box flexDirection="column" gap={1}>
       {snap.start?.resumable !== undefined && (
         <Box flexDirection="row" gap={1}>
-          <Text color="suggestion">{snap.start.paused === true ? `${snap.start.resumable}，暫停中。` : `${snap.start.resumable}。要接續嗎？`}</Text>
+          <Text color="suggestion">{snap.start.resumable}</Text>
           <Button key="resume" label="接續" variant="primary" onPress={() => act.resume()} />
           {snap.start.paused !== true && <Button key="not-now" label="先不要" onPress={() => act.notNow()} />}
         </Box>

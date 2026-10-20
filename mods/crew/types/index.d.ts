@@ -133,8 +133,13 @@ export type CrewLive = {
   pending: Record<string, CrewWork[]>
   /** What crew last saw of the PRD and the board, checked every few seconds: the board is held to the PRD as it stands. */
   signals: CrewSignals
-  /** A running flow held until the person goes on: offered when Claude Code started, or put off by the person. */
-  paused?: 'offer' | 'person'
+  /**
+   * A running flow held until the person goes on: offered when Claude Code
+   * started, put off by the person, or stopped again after the heartbeat woke it.
+   */
+  paused?: 'offer' | 'person' | 'stalled'
+  /** crew's heartbeat: when it last looked, what it found and did; and where a restart went on from. */
+  resident?: { checkedAt: number; found?: string; resumed?: string }
 }
 
 export type CrewSignals = {

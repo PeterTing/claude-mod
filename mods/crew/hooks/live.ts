@@ -38,7 +38,7 @@ export const emptyLive = (): CrewLive => ({
 })
 
 /** The stage of the seven a flow stage stands in, as the progress row names it. */
-const STAGE_OF: Record<string, string> = {
+export const STAGE_OF: Record<string, string> = {
   splitting: '規格',
   writing_tests: '測試案例',
   adding_tests: '測試案例',
@@ -57,6 +57,25 @@ const stoppedAt = (live: CrewLive): string => {
   const f = live.flow
   const on = f.stage === 'building' && f.building !== undefined ? `（全端 ${f.building}）` : f.stage === 'reviewing' && f.reviewing !== undefined ? `（Tech lead ${f.reviewing.task}）` : ''
   return `上次的 ${live.prdPath ?? ''} 停在「${STAGE_OF[f.stage] ?? f.stage}」${on}`
+}
+
+/** A held flow, in a sentence that says what the person can do. */
+const heldText = (live: CrewLive): string => {
+  if (live.paused === 'stalled') return `${stoppedAt(live).replace(/^上次的 \S+ 停在/, '流程停在')}，叫醒過一次還是停住。要再試一次嗎？`
+  return live.paused === 'person' ? `${stoppedAt(live)}，暫停中。` : `${stoppedAt(live)}。要接續嗎？`
+}
+
+/** How often crew looks after its work on its own, in code, with no model call. */
+export const HEARTBEAT_MS = 300_000
+
+const residentOf = (r: NonNullable<CrewLive['resident']>, now: number) => {
+  const left = Math.max(0, Math.ceil((r.checkedAt + HEARTBEAT_MS - now) / 60_000))
+  return {
+    checked: ageOf(r.checkedAt, now),
+    next: left === 0 ? '馬上' : `${left} 分鐘後`,
+    ...(r.found === undefined ? {} : { found: r.found }),
+    ...(r.resumed === undefined ? {} : { resumed: r.resumed }),
+  }
 }
 
 const DAY = 86_400_000
@@ -436,7 +455,8 @@ export const snapshotOf = ({
         // crew's question on a design is the person's to approve or send back in the pane.
         ...(q.from === 'crew' && q.item !== undefined && /^SCR-\d+$/.test(q.item) ? { kind: 'design' as const, design: q.item } : {}),
       })),
-    ...(live.paused === undefined || live.prdPath === null ? {} : { start: { prds: [], resumable: stoppedAt(live), ...(live.paused === 'person' ? { paused: true } : {}) } }),
+    ...(live.paused === undefined || live.prdPath === null ? {} : { start: { prds: [], resumable: heldText(live), ...(live.paused === 'offer' ? {} : { paused: true }) } }),
+    ...(live.resident === undefined ? {} : { resident: residentOf(live.resident, now) }),
     items: [...items, ...designItems, ...taskItems],
     threads: Object.entries(live.threads).map(([item, messages]) => ({
       item,

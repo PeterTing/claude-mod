@@ -8,7 +8,7 @@ import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './con
 import { DEMO } from './demo'
 import { answeredOf, RUNNING, step } from './flow'
 import type { FlowAction, FlowEvent } from './flow'
-import { dayOf, emptyLive, snapshotOf } from './live'
+import { dayOf, emptyLive, HEARTBEAT_MS, snapshotOf, STAGE_OF } from './live'
 import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, redact, searchMemories, serializeMemories } from './memory'
 import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { ROLE_NAMES } from './model'
@@ -1310,6 +1310,96 @@ async function resumeOnStart($: any) {
   flushBrain($, true)
 }
 
+/** How long a question may wait for the person before crew reminds them, once. */
+const REMIND_AFTER_MS = 2 * 3_600_000
+
+/** What the heartbeat did: the stop it last woke a role for, the questions it reminded the person of, and its timer. */
+const heart: { woke?: string; reminded: Set<string>; timer?: { cancel: () => void } } = { reminded: new Set() }
+
+/** The role a stage of the flow waits on. */
+const STAGE_ROLE: Record<string, string> = {
+  splitting: 'PM',
+  confirming: 'PM',
+  writing_tests: 'QA',
+  adding_tests: 'QA',
+  designing: 'UI/UX',
+  planning: 'Tech lead',
+  reviewing: 'Tech lead',
+  building: '全端',
+  testing: 'crew',
+}
+
+/** A running flow stopped with nobody at work, nothing queued and nothing waiting for the person: where it stopped. */
+function stoppedKey(l: CrewLive): string | undefined {
+  if (l.prdPath === null || l.paused !== undefined || !RUNNING.includes(l.flow.stage)) return undefined
+  if (ending.count > 0 || waking.count > 0) return undefined
+  if (CREW_ROLES.some(r => l.roles[r].state === 'working') || Object.values(l.pending).some(p => p.length > 0)) return undefined
+  if (l.questions.some(q => q.status === 'open')) return undefined
+  if (l.flow.stage === 'testing' && (testing.running !== undefined || testing.asked !== undefined || testing.queued !== undefined)) return undefined
+  return `${l.flow.stage}:${l.flow.building ?? ''}:${l.flow.reviewing?.task ?? ''}`
+}
+
+/**
+ * crew looks after its work every few minutes, in code, with no model call: a
+ * stopped flow is woken once and then held for the person; a finished flow
+ * takes on what came after it (a commit, a result out of date); a question the
+ * person left for two hours is brought up once. The pane says what it found.
+ */
+async function heartbeat($: any, acting = true) {
+  const now = await $.clock.now()
+  // The look when Claude Code starts only says crew is on: what goes on is the person's to say, in the pane.
+  const found = acting ? await lookAfter($, now) : []
+  await update($, live, s => {
+    const { found: _, ...was } = s.resident ?? { checkedAt: now }
+    return { ...s, resident: { ...was, checkedAt: now, ...(found.length === 0 ? {} : { found: found.join('；') }) } }
+  })
+}
+
+/** What the heartbeat finds and does, in the pane's words. */
+async function lookAfter($: any, now: number): Promise<string[]> {
+  const found: string[] = []
+  try {
+    const l = await read($, live)
+    const key = stoppedKey(l)
+    if (key !== undefined) {
+      const where = `流程停在「${STAGE_OF[l.flow.stage] ?? l.flow.stage}」`
+      if (heart.woke === key) {
+        await update($, live, s => ({ ...s, paused: 'stalled' as const }))
+        const text = `${where}，叫醒過一次還是停住：在右側面板決定要不要再接續。`
+        $.ui.toast(`crew：${text}`)
+        if (l.lead === 'brain') tellBrain(text)
+        found.push(`${where}，叫醒過一次還是停住 → 等你決定`)
+      } else {
+        heart.woke = key
+        const said = await resumeFlow($)
+        const woke = l.flow.stage === 'testing' ? '重跑測試' : `已叫醒 ${STAGE_ROLE[l.flow.stage] ?? '角色'} 接續`
+        found.push(said.startsWith('接續') ? `${where}，沒有角色在工作 → ${woke}（第 1 次）` : `${where}，沒有角色在工作，沒有接續：${said}`)
+      }
+    } else if (l.prdPath !== null && l.paused === undefined && l.flow.stage === 'done' && ending.count === 0 && waking.count === 0) {
+      await syncCommits($)
+      const board = await loadBoard($)
+      if (board !== null) {
+        const requirements = (await prdView($))?.requirements
+        await feed($, { type: 'look', board, ...(requirements === undefined ? {} : { requirements }) })
+        const after = (await read($, live)).flow.stage
+        if (after === 'reviewing') found.push('流程完成後多了新的 commit → 已排給 Tech lead review')
+        else if (after === 'testing') found.push('流程完成後測試結果過期 → 重跑測試')
+        else if (after !== 'done') found.push(`流程完成後看板有變動 → 接續「${STAGE_OF[after] ?? after}」`)
+      }
+    }
+    // A question the person left for two hours is brought up once.
+    for (const q of (await read($, live)).questions) {
+      if (q.status !== 'open' || now - q.t < REMIND_AFTER_MS || heart.reminded.has(q.id)) continue
+      heart.reminded.add(q.id)
+      $.ui.toast(`crew：${q.id} 已經等你 2 小時了，在右側面板「待你決定」處理`)
+      found.push(`${q.id} 已經等你 2 小時 → 已提醒你`)
+    }
+  } catch (err) {
+    $.ui.log(`crew: the heartbeat stopped early: ${String(err)}`, { to: 'debug' })
+  }
+  return found
+}
+
 /** The person's settings for this repo, on this machine: the pane on load, and how the brain acts on usage. */
 type CrewSettings = { openOnLoad: boolean; tuning: 'auto' | 'ask' }
 
@@ -1390,9 +1480,12 @@ async function resumeFlow($: any): Promise<string> {
   await syncCommits($)
   const board = await loadBoard($)
   if (board === null) return `沒有接續：${boardProblem() ?? '找不到看板 prd-tracker.json。'}`
+  const at = new Date(await $.clock.now())
+  const from = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')} 從 ${STAGE_OF[l.flow.stage] ?? l.flow.stage} 接續`
   await update($, live, s => {
     const { paused: _, ...going } = s
-    return going
+    // A restart's offer taken: the pane says where the work went on from.
+    return l.paused === 'offer' ? { ...going, resident: { checkedAt: s.resident?.checkedAt ?? 0, ...(s.resident?.found === undefined ? {} : { found: s.resident.found }), resumed: from } } : going
   })
   // Only a split needs the PRD itself; tests and gaps go on from the board.
   if ('error' in prd && l.flow.stage === 'splitting') return `沒有接續：${prd.error}`
@@ -2446,6 +2539,10 @@ export const register: Register = on => {
     await resumeOnStart($)
     // crew is run from its pane: it opens on load unless the person said not to.
     if ((await loadSettings($)).openOnLoad && !declined.now) await $.ui.open({ id: PANE, title: 'Crew' })
+    // From now on crew looks after its work every few minutes; the first look only says it is on.
+    await heartbeat($, false)
+    heart.timer?.cancel()
+    heart.timer = $.clock.every(HEARTBEAT_MS, () => void heartbeat($))
     // The PRD may have changed while Claude Code was closed; from now on crew looks every few seconds.
     prdCache.view = undefined
     await update($, live, l => ({ ...l, signals: { ...l.signals, prdVersion: '' } }))

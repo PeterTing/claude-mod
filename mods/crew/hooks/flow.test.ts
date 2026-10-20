@@ -1214,6 +1214,43 @@ describe('designs', () => {
   })
 })
 
+describe('a look at a finished flow', () => {
+  const doneBoard = (): Tracker => builtOf(planned(SPLIT, [tc(['AC-001', 'AC-002'])], [{ feature: 'PRD-001', criteria: ['AC-001', 'AC-002'] }]))
+  const DONE: FlowState = { stage: 'done', round: 0, retries: 0 }
+
+  test('leaves a board that still meets every gate alone', () => {
+    expect(step(DONE, { type: 'look', board: doneBoard() })).toEqual({ state: DONE, actions: [] })
+  })
+
+  test('takes a commit made after it finished to review, and a result out of date to a new run', () => {
+    const b = doneBoard()
+    const later = withCommits(b, new Map([['TASK-001', ['fff0009', 'abcd000']]])) ?? b
+    expect(step(DONE, { type: 'look', board: later })).toMatchObject({ state: { stage: 'reviewing', reviewing: { task: 'TASK-001', sha: 'fff0009' } }, actions: [{ type: 'review', task: 'TASK-001' }] })
+    expect(step(DONE, { type: 'look', board: passedOf(b, [], true) })).toMatchObject({ state: { stage: 'testing' }, actions: [{ type: 'run_tests' }] })
+  })
+
+  test('leaves work that never was, such as a design or a run a board from before crew made them never had, to a start', () => {
+    const b = doneBoard()
+    // No design at all: the board was finished by an older crew.
+    const undesigned: Tracker = { ...b, prd_items: b.prd_items.map(i => ({ ...i, crew_designs: [] })) }
+    expect(step(DONE, { type: 'look', board: undesigned }).actions).toEqual([])
+    // No result at all: tests never ran.
+    const unrun: Tracker = { ...b, prd_items: b.prd_items.map(i => ({ ...i, test_cases: i.test_cases.map(c => ({ ...c, crew_result: undefined })) })) }
+    expect(step(DONE, { type: 'look', board: unrun }).actions).toEqual([])
+    // A task never built.
+    const more = applyOps(b, [{ op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '補強', detail: '', size: 'S' } as Op], ctx('techlead'))
+    if (!more.ok) throw new Error(more.errors.join())
+    expect(step(DONE, { type: 'look', board: more.tracker }).actions).toEqual([])
+  })
+
+  test('leaves a flow under way, or waiting for the person, to its own turns', () => {
+    const later = withCommits(doneBoard(), new Map([['TASK-001', ['fff0009', 'abcd000']]])) ?? doneBoard()
+    for (const stage of ['building', 'reviewing', 'testing', 'escalated', 'approving', 'idle'] as const) {
+      expect(step({ stage, round: 0, retries: 0 }, { type: 'look', board: later }).actions).toEqual([])
+    }
+  })
+})
+
 describe('a design sent back after the work is done', () => {
   const two = (): Tracker => bare(WORLD_SPLIT as unknown as Op[], [tc(['AC-001', 'AC-002'])])
   const approvedAll = (t: Tracker): Tracker => designedOf(t)

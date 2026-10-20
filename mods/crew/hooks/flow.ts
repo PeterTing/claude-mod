@@ -116,6 +116,8 @@ export type FlowEvent =
   | { type: 'tests_ran'; board: Tracker; output?: string; error?: string; requirements?: readonly Requirement[] }
   /** The person approved or sent back designs: `board` carries the decisions. */
   | { type: 'designs_decided'; board: Tracker; requirements?: readonly Requirement[] }
+  /** crew's heartbeat looked at the board: a finished flow takes on what came after it, such as a commit or a result out of date. */
+  | { type: 'look'; board: Tracker; requirements?: readonly Requirement[] }
   /** Claude Code started again on a flow the last session left running: its roles are gone. */
   | { type: 'resume'; board: Tracker; prd: { path: string; size: number; text?: string }; requirements?: readonly Requirement[] }
 
@@ -426,6 +428,29 @@ const afterRun = (state: FlowState, event: Extract<FlowEvent, { type: 'tests_ran
     state: { ...rest, stage: 'building', building: task.id, fixing: tip, tips: tipsOf(event.board), runs, retries: 0, reviews: 0, round: 0 },
     actions: [{ type: 'message', role: 'fullstack', item: task.id, text, route: fsRoute(task), ...(data === undefined ? {} : { data }) }],
   }
+}
+
+/**
+ * The heartbeat's look at a finished flow: only what came after the finish
+ * takes it on again, a newer commit to review or a result out of date to a new
+ * run. Work that never was (a design or a run an older board never had, a task
+ * never built) waits for the person to start it. A flow under way, or waiting
+ * for the person, takes the board on at its own turns.
+ */
+const look = (state: FlowState, board: Tracker): StepResult => {
+  const none = { state, actions: [] }
+  if (state.stage !== 'done') return none
+  const tasks = liveTasks(board)
+  if (tasks.some(t => tipOf(t) === undefined)) return none
+  const newer = tasks.find(t => !approvedNow(t))
+  if (newer !== undefined) {
+    const tip = tipOf(newer) ?? ''
+    const r = reviewOf(newer)
+    return r?.sha === tip && r.verdict === 'changes' ? fix(state, newer, tip, r.notes ?? '') : review(state, board, newer, tip, '流程完成後多了新的 commit。')
+  }
+  const cases = liveCasesOf(board)
+  if (cases.length > 0 && cases.every(c => resultOf(c) !== undefined) && cases.some(c => resultOf(c)?.stale === true)) return toTesting(state)
+  return none
 }
 
 /** The tasks in the plan: in a feature in scope, not dropped, in the order the tech lead numbered them. */
@@ -952,6 +977,7 @@ export const step = (state: FlowState, event: FlowEvent): StepResult => {
     return { state: marked, actions: [] }
   }
   if (event.type === 'resume') return resume(state, event)
+  if (event.type === 'look') return look(state, event.board)
   if (event.type === 'start') {
     if (RUNNING.includes(state.stage)) {
       return { state, actions: [{ type: 'status', text: 'PM＋QA 正在進行，等這一輪完成再開始新的。' }] }
