@@ -165,9 +165,9 @@ footer { font-size: var(--step--1); color: var(--muted); border-top: 1px solid v
   <h1>Crew：常駐的產品開發 agent 團隊</h1>
   <p class="lede">PM、UI/UX 設計師、全端工程師、QA 工程師、Tech lead 五個角色常駐在你的 Claude Code 裡，把 PRD 拆成各自的工作項目，彼此討論、互相確認。你的主對話是協調所有角色的大腦。每個角色的 context 都有上限，靠存在 repo 的記憶接續先前的事。</p>
   <div class="chips">
-    <span class="chip wait">第 3 階段完成・大腦指揮與重開接續・已過上線前 review</span>
-    <span class="chip">2026-10-15</span>
-    <span class="chip">Claude Code 2.1.299</span>
+    <span class="chip wait">第 5 階段完成・0.5.0 常駐與面板操作・已過上線前 review</span>
+    <span class="chip">2026-10-20</span>
+    <span class="chip">Claude Code 2.1.304</span>
     <span class="chip">名稱 crew</span>
   </div>
 </header>
@@ -811,7 +811,7 @@ flowchart LR
 </section>
 
 <section id="phase5">
-  <h2>第 5 階段：常駐與優化（設計稿）</h2>
+  <h2>第 5 階段：常駐與優化（2026-10-20，0.5.0）</h2>
   <p class="prose">你確認的決定（2026-10-20）：介面照設計稿；流程停住時叫醒一次、再停住就問你；等你決定的問題超過 2 小時提醒一次；大腦處置做成開關（自動／先問你），預設先問你，用按鈕切換；所有操作都在面板上完成，不用指令。</p>
   <p class="prose">讓 crew 開著就會自己照顧工作：每隔一段時間用程式檢查一次，有事才叫醒角色；重開 Claude Code 後從原本的地方接續；token 用量異常時提醒大腦，由大腦處置。設計稿在 <code>/crew demo</code>：<code>/crew demo normal overview</code>、<code>/crew demo attention tokens</code> 等。</p>
   <h3>全部在面板操作（2026-10-20 你的要求）</h3>
@@ -839,7 +839,7 @@ flowchart LR
   <h3>介面</h3>
   <ul class="plain prose">
     <li><strong>每個分頁上方多一行「常駐」</strong>：平常是「常駐 ✓ 心跳 2 分鐘前 · 下次 3 分鐘後 · 大腦摘要 12:30 送出，2 則等 13:00」；心跳有發現時變成黃色，寫出發現什麼、做了什麼；重開過會多一行「重開接續：13:02 從 building 接續（全端，TASK-15）」。</li>
-    <li><strong>Token 分頁最上面顯示大腦處置的模式</strong>：「自動（大腦自己處置，事後記成決定）」或「先問你（大腦提出建議，你核准才執行）」，用 <code>/crew tuning auto</code>、<code>/crew tuning ask</code> 切換；只有你親手輸入的才算。先問你模式下，大腦的建議會出現在「待你決定」（「Q-04 大腦建議：…」），<code>/crew approve</code> 才執行。</li>
+    <li><strong>Token 分頁最上面顯示大腦處置的模式</strong>：「自動（大腦自己處置，事後記成決定）」或「先問你（大腦提出建議，你核准才執行）」，用 Token 分頁或設定分頁的［自動］［先問你］切換，預設先問你。先問你模式下，大腦的建議會出現在「待你決定」（「Q-04 大腦建議：…」），你按［核准］才執行、按［不要］就不執行。</li>
     <li><strong>Token 分頁</strong>：提醒每一則都標時間和門檻（「全端今日佔 46%（超過 40%） · 12:41」）；大腦處置每一則都是一條決定，附處置前和現在的數字（「處置前 命中率 52% · context 96K → 現在 命中率 81% · context 8K」），剛處置的寫「之後的數字等下一輪」。</li>
   </ul>
   <h3>行為</h3>
@@ -852,16 +852,34 @@ flowchart LR
         <li>等你決定的問題放超過 2 小時：提醒你一次。</li>
       </ul>
     </li>
-    <li><strong>重開接續</strong>（已經有，這階段補實機驗證）：流程跑到一半關掉 Claude Code，再開時從原本的階段接續，角色帶記憶包重開，不重播舊對話。</li>
+    <li><strong>重開接續</strong>：流程跑到一半關掉 Claude Code（或更新 crew），再開時不會自己動：面板最上面問「上次的 PRD 停在哪裡，要接續嗎？」，你按［接續］才從原本的階段接續，角色帶記憶包重開，不重播舊對話；按［先不要］就停著，之後在設定分頁按［接續］。</li>
     <li><strong>Token 提醒</strong>：用程式判斷，同一條件一小時最多提醒一次：某角色佔今日總量超過 40%；快取命中率低於 60%（當天用量超過 50K 才算）；喚醒時 context 已超過門檻；兩個角色在同一個項目來回超過 6 次；單次工具輸出超過 10K token。</li>
     <li><strong>大腦處置</strong>：大腦用 crew 工具輪替角色（已有）、調整某角色下一個項目的模型或 effort、調整輪替門檻，或請 Tech lead 把任務拆小。依你設的模式自動執行或先問你；每次處置都寫成一條決定，面板顯示前後對照。底線：不能為了省 token 跳過關卡、測試或 review。</li>
     <li><strong>大腦摘要</strong>：角色的例行回報（做完一項、輪替、心跳的例行處理）每 30 分鐘合成一則送給大腦；需要大腦判斷的（提醒、流程卡住、要你決定的事）立刻送。</li>
   </ul>
+  <h3>實作時發現的引擎限制</h3>
+  <ul class="plain prose">
+    <li><strong>計時器開的角色用不了 crew 的工具</strong>：實機跑時，心跳從計時器重開的全端每次呼叫 crew 工具都得到「no tool.call hook answered」。用一個小 mod 實驗確認：在 hook 裡開、並等它做完的 agent 正常；從計時器、或 hook 結束後還在跑的程式開的 agent，引擎把它整輪都當成 crew 自己的程式，跳過 crew 所有的 hook。對已經存在的角色送訊息（叫醒）則不受影響。</li>
+    <li><strong>修法</strong>：計時器做的事（心跳、每 10 秒看 PRD、測試執行）一路標明「來自計時器」；要開新角色時先排著，等下一個真的 hook（你的指令、面板操作、任何工具呼叫、角色一輪結束）再開。排著的期間心跳把它當成「有工作在進行」，不會判定流程停住；同一個角色只排最新的一個；你重設流程或換 PRD 時，排著的舊工作直接作廢。安靜的 session 裡，排著的角色要等你下一個動作才開始，心跳會寫「Claude Code 有下一個動作時開始」。</li>
+    <li><strong>面板的按鈕同理</strong>：按鈕的工作改在引擎的按鍵、輸入、選單 hook 裡做完，不放在按鈕自己的處理函式裡，否則從面板開始的角色一樣用不了工具。工作出錯時面板會說原因；超過 hook 的時間預算還在做時，會說「還在處理，完成時會通知你」。</li>
+  </ul>
+  <h3>暫停中的流程只聽你的</h3>
+  <p class="prose">重開後停著等你接續、你按了［先不要］、或心跳叫醒一次還是停住時，流程都是暫停中。暫停中只有你本人（面板操作，或親手輸入的指令）能讓它往下走：大腦不能代你接續、代你轉達回答、跑測試，也不能去問角色（避免花 token）。開始新的 PRD 也要等流程結束或重設。</p>
   <h3>驗證</h3>
   <ul class="plain prose">
-    <li>流程跑到一半關掉 Claude Code，再開，確認自己接續到完成。</li>
-    <li>故意製造用量異常（例如把某角色的用量灌高、讓命中率掉下來），確認提醒出現、大腦處置、面板顯示前後對照。</li>
-    <li>故意讓流程停住，確認心跳在 5 分鐘內叫醒角色接續。</li>
+    <li><strong>自動測試</strong>：750 個測試全過，型別檢查乾淨。新加的守門都用「故意改壞程式、確認測試會失敗」驗證：計時器標記在每一條路徑上被拿掉、排著的角色在每一種 hook（指令、提示、工具呼叫、角色一輪結束、面板）沒有開出來、排程不去重、心跳不看排著的角色、排著的工作不比對 PRD、重設前先開角色、大腦的調整重開後沒存或沒讀回，都各有測試抓到；唯一抓不到的一個是等價的改法（測試執行出錯時流程只會問你，不會開角色）。</li>
+    <li><strong>大腦的調整重開後還在</strong>：等你核准的建議和已經執行的調整都會存起來，重開後照樣能核准或不要；讀回時再檢查一次格式和你定的下限。重開前沒留下內容的舊建議，按下去會說「已經失效」並關掉，不會一直卡在待你決定。</li>
+    <li><strong>實機（Claude Code 2.1.304，計算機 PRD，最後的程式 91e25a4；修正過程中在 4cf6876 也跑過一次，結果相同）</strong>：
+      <ul class="plain">
+        <li>開啟時面板自己打開，顯示「crew 已載入，還沒有開始的 PRD」、PRD 選單和［開始］［這次不用］。</li>
+        <li>全端做到一半（68%）關掉 Claude Code；再開時面板問「上次的 docs/PRD.md 停在「實作」（全端 TASK-001）。要接續嗎？」，輸入框上方顯示「⏸ 等你接續」，接續前沒有開任何角色（第一個角色在按下接續後 1 秒才開）。</li>
+        <li>接續後約 1.5 分鐘完成：全端 commit 三次（第一次測試找不到測試檔，自己補上 <code>tests/__init__.py</code>），七個關卡全部 ✓，進度 100%（29/29）；面板記下「重開接續：22:45 從 實作 接續」。</li>
+        <li>預先灌高的用量觸發兩則提醒（全端今日佔 83%、快取命中率 54%），大腦收到後告訴你這兩件事，並列出可以做的調整（例如 tune 全端改用較省的設定、調低輪替門檻），沒有自己動手；這次它沒有送出建議，所以面板上沒有要你核准的項目（核准與不要的流程由自動測試涵蓋）。</li>
+        <li>兩個 session 的 log 裡沒有任何「no tool.call hook answered」，也沒有 hook 超時；被跳過的 hook 只有 crew 自己送出的訊息和提醒。</li>
+      </ul>
+    </li>
+    <li><strong>沒有實機驗證</strong>：面板的按鈕要用滑鼠點，tmux 裡點不到，所以實機是用指令走同一套流程；按鈕本身由自動測試涵蓋（按鈕的 hook 拿掉時有 22 個測試失敗）。請你在面板上實際按幾個按鈕確認。</li>
+    <li><strong>上線前 review</strong>：安全、品質、測試三個 reviewer 各審四到八輪，最後都沒有 critical 或 important。過程中抓到並修好的重點：計時器的判斷用全域計數，會把真的 hook 開的角色也擋下來；排著的角色在 hook 做完自己的工作後又開一次，把同一個角色開成兩個、蓋掉你剛問的問題；暫停中的流程可以被大腦用回答、跑測試、問角色繞過；大腦的調整重開後消失；心跳記得「叫醒過」不會清掉。</li>
   </ul>
 </section>
 
@@ -875,7 +893,7 @@ flowchart LR
     <div class="phase"><span class="pn">3</span><div class="body"><h3>切片 B：記憶與輪替 <span class="tag ok">完成</span></h3><p class="meta">記憶分層、檢索、輪替、壓縮 hook、每日整理、你直接問角色的指令。大腦摘要移到第 5 階段。</p><p class="meta">驗證：記憶抽考、長時間 context 上限測試、開與不開記憶的 token 比較。</p></div></div>
     <div class="phase"><span class="pn">4a</span><div class="body"><h3>開發狀態對準 PRD、即時更新 <span class="tag ok">完成</span></h3><p class="meta">PRD 需求編號、G0、每 10 秒檢查 PRD、以 PRD 需求為單位的進度。</p><p class="meta">驗證：單元與整合測試，加上實跑改 PRD。</p></div></div>
     <div class="phase"><span class="pn">4b–f</span><div class="body"><h3>切片 C：Tech lead、全端、Review、測試執行、UI/UX <span class="tag ok">完成</span></h3><p class="meta">G3、G2、G5、G6，以及 code review 流程。進度表的每一欄都要接上真實訊號：commit、review 對應的 sha、測試結果、你的核准。用一個小功能從 PRD 走到驗收。</p><p class="meta">驗證：先做設計稿請你確認，再端到端實跑，附證據。</p></div></div>
-    <div class="phase"><span class="pn">5</span><div class="body"><h3>常駐與優化 <span class="tag">設計稿，等你確認</span></h3><p class="meta">心跳、重開接續、token 提醒和大腦的處置流程。</p><p class="meta">驗證：關掉再開 Claude Code 後接續工作；製造用量異常，確認提醒和處置都有出現。</p></div></div>
+    <div class="phase"><span class="pn">5</span><div class="body"><h3>常駐與優化 <span class="tag ok">完成</span></h3><p class="meta">心跳、重開接續、token 提醒和大腦的處置流程。</p><p class="meta">驗證：關掉再開 Claude Code 後接續工作；製造用量異常，確認提醒和處置都有出現。</p></div></div>
     <div class="phase"><span class="pn">6</span><div class="body"><h3>上架</h3><p class="meta">請沒有參與實作的 agent 做獨立的安全、品質、測試 review，critical 和 important 清零後，收進 marketplace 的自製 mod。</p></div></div>
     <div class="phase opt"><span class="pn">之後</span><div class="body"><h3>選用</h3><p class="meta">向量檢索（抽考不達標才做）、雲端排程、Notion 同步（會連網，審查等級變 L3）。</p></div></div>
   </div>

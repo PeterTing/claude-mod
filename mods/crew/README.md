@@ -40,7 +40,7 @@ The plan, with what each phase checked, is in [`docs/plans/crew-plan.zh-TW.html`
 When Claude Code starts, crew's pane opens on the right (in a terminal 144 columns wide or more; 110 once you have opened it). Everything crew does on your word is a button, a picker or a field there; no command is needed.
 
 - **Start.** Pick a PRD from the repo (files with PRD, spec or 需求 in their path come first) or type its path, then 開始. 這次不用 closes the pane for this session.
-- **After a restart.** A PRD crew left unfinished is held: the pane says where it stopped and asks 接續 or 先不要. Nothing runs, and nothing is spent, until you press 接續.
+- **After a restart.** A PRD crew left unfinished is held: the pane says where it stopped and asks 接續 or 先不要. Nothing runs, and nothing is spent, until you go on: 接續, or your own answer to a question or 跑測試. While a flow is held, Claude cannot go on for you: it cannot resume it, relay an answer, run the tests or ask a role. A flow is held the same way after 先不要, and when the heartbeat woke it once and it stopped at the same place again.
 - **待你決定.** Answer a role's question in the field under it. Read a design, approve it, or send it back with a reason. Approve the brain's proposals, or not.
 - **Each role's row.** 問 opens a field to ask that role; 輪替 has it start from a fresh context the next time it is woken.
 - **記憶.** Search the team's memory, and save a preference.
@@ -57,6 +57,7 @@ A press or a field in the pane is yours alone: no plugin or model can raise one,
   - A finished flow takes on only what came after the finish: a newer commit goes to the tech lead's review, a test result out of date to a new run. Work an older board never had (designs, test runs, unbuilt tasks) waits for you.
   - A question you left for two hours is brought up once.
   - The pane's 常駐 line says when crew last looked, what it found and did, and where a restart went on from. The look when Claude Code starts only marks the time.
+  - A role the heartbeat, the PRD check or a test run needs to start afresh starts at Claude Code's next action (a command, a prompt, a tool call, a role's turn end, any press in the pane), not from the timer itself: the engine runs an agent a timer starts as crew's own code and skips crew's hooks for it, so it could use none of crew's tools. In a quiet session it waits for your next action, and the 常駐 line says so. Waking a role whose agent is still there works from the timer.
 - **Token reminders**, worked out in code, each condition at most once an hour: a role over 40% of the day; a role reading under 60% from the cache (both only on a day, and a role, over 50K tokens); a role past its context threshold; two senders going back and forth on one item more than six times; a role's single tool output over 10K tokens. Claude hears of each, and the Token tab lists them with the time.
 - **What Claude may do about usage.** With the `crew` tool's `tune`, Claude can set a role's model, effort or rotation threshold for its work from now on, never below the floor you set for that role. By default it asks you first: its proposal waits under 待你決定. Switch to 自動 in 設定 to let it act on its own. Either way each action is kept as a decision, and the Token tab shows the role's numbers before and since. Nothing skips a gate, a test or a review to save tokens.
 
