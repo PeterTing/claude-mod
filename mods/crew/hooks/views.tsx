@@ -460,16 +460,36 @@ function DecisionRow({ el, d, act }: { el: Elements; d: Decision; act: Actions }
   )
 }
 
-/** What crew offers when it loads with no PRD: one picked from the repo or typed, or not now. */
-function StartScreen({ el, snap, act }: { el: Elements; snap: Snapshot; act: Actions }) {
+/**
+ * The repo's PRDs to pick from, and the one a start begins: a picker where the
+ * surface has one, a button for each where it has none (a phone).
+ */
+function PrdPicker({ el, snap, act, id, label }: { el: Elements; snap: Snapshot; act: Actions; id: string; label: string }) {
   const { Box, Text, Button, Select } = el
   const prds = snap.start?.prds ?? []
+  const chosen = prds.find(p => p.path === snap.start?.chosen) ?? prds[0]
+  if (chosen === undefined) return null
+  return (
+    <Box flexDirection="column">
+      {Select !== undefined ? (
+        <Select key={id} label={label} value={chosen.path} options={prds.map(p => ({ value: p.path, label: `${p.path}　${p.title}` }))} onSelect={(path: string) => act.pick(path)} />
+      ) : (
+        prds.map((p, i) => <Button key={`prd-option-${i}`} label={`${p.path}　${p.title}`} variant={p.path === chosen.path ? 'primary' : 'secondary'} onPress={() => act.pick(p.path)} />)
+      )}
+      <Text dimColor>
+        會開始：{chosen.path}　{chosen.title}
+      </Text>
+    </Box>
+  )
+}
+
+/** What crew offers when it loads with no PRD: one picked from the repo or typed, or not now. */
+function StartScreen({ el, snap, act }: { el: Elements; snap: Snapshot; act: Actions }) {
+  const { Box, Text, Button } = el
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold>crew 已載入，還沒有開始的 PRD。</Text>
-      {prds.length > 0 && Select !== undefined && (
-        <Select key="prd-pick" label="PRD 檔案" value={snap.start?.chosen ?? prds[0]?.path} options={prds.map(p => ({ value: p.path, label: `${p.path}　${p.title}` }))} onSelect={(path: string) => act.pick(path)} />
-      )}
+      {PrdPicker({ el, snap, act, id: 'prd-pick', label: 'PRD 檔案' })}
       {Field({ el, id: 'prd-path', label: '或輸入路徑', placeholder: 'docs/PRD.md', submit: '開始', what: 'PRD 路徑', onSubmit: path => act.start(path) })}
       <Box flexDirection="row" gap={1}>
         <Button key="start" label="開始" variant="primary" onPress={() => act.start()} />
@@ -485,16 +505,13 @@ function Settings({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapsho
   const { Box, Text, Button } = el
   const tuning = snap.tuning ?? 'ask'
   const open = snap.settings?.openOnLoad ?? true
-  const { Select } = el
   const prds = snap.start?.prds ?? []
   return (
     <Box flexDirection="column" gap={1}>
       {snap.prd !== null && prds.length > 0 && (
         <Box flexDirection="column">
           <Text bold>PRD</Text>
-          {Select !== undefined && (
-            <Select key="prd-switch" label="換一份" value={snap.start?.chosen ?? prds[0]?.path} options={prds.map(p => ({ value: p.path, label: `${p.path}　${p.title}` }))} onSelect={(path: string) => act.pick(path)} />
-          )}
+          {PrdPicker({ el, snap, act, id: 'prd-switch', label: '換一份' })}
           <Box flexDirection="row" gap={1}>
             <Button key="switch-prd" label="改跟這一份" onPress={() => act.start()} />
             <Text dimColor>看板會對準選的 PRD；流程還在進行時要先等這一輪做完。</Text>
@@ -778,6 +795,8 @@ export function bandText(snap: Snapshot, label = 'crew（設計稿）'): string 
     ...(snap.progress !== null ? [`進度 ${percentOf(snap.progress)}%（${snap.progress.done}/${snap.progress.total}）`] : []),
     ...(snap.alignment === undefined ? [] : [alignmentWord(snap.alignment)]),
     `待你決定 ${snap.decisions.length}`,
+    // A flow held for the person is said here too, for when the pane is closed.
+    ...(snap.start?.resumable !== undefined ? ['⏸ 等你接續'] : []),
     ...(snap.alerts.length > 0 ? [`⚠ ${snap.alerts.length} 則提醒`] : []),
     `今日 ${tokens(snap.today)} tok`,
     roles,

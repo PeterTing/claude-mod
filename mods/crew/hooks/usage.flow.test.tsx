@@ -90,6 +90,9 @@ describe('the brain’s actions on usage', () => {
     const id = /(Q-\d+) 大腦建議：全端之後的工作改用 Opus・xhigh/.exec(text)?.[1] ?? ''
     expect(id).not.toBe('')
     expect(await ui.find({ key: `reject-${id}` })).toBeDefined()
+    // The brain cannot settle its own proposal by answering it.
+    expect(String((await crew($, { action: 'answer', question: id, text: '核准' })).result)).toMatch(/大腦的建議要使用者自己在右側面板核准/)
+    expect(await textOf(ui)).toMatch(new RegExp(`${id} 大腦建議`))
     await ui.press({ key: `approve-${id}` })
     await ui.unmount()
     // Recorded as a decision, and shown with the numbers before it.

@@ -8,7 +8,7 @@ import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './con
 import { DEMO } from './demo'
 import { answeredOf, RUNNING, step } from './flow'
 import type { FlowAction, FlowEvent } from './flow'
-import { clockOf, dayOf, emptyLive, HEARTBEAT_MS, metricsOf, said, snapshotOf, STAGE_OF, usageSignals } from './live'
+import { clockOf, dayOf, dayTotal, emptyLive, HEARTBEAT_MS, metricsOf, roleSays, snapshotOf, STAGE_OF, STAGE_ROLE, stopKey, usageSignals } from './live'
 import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, redact, searchMemories, serializeMemories } from './memory'
 import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { ROLE_NAMES } from './model'
@@ -648,7 +648,8 @@ const withUnread = (l: CrewLive, role: CrewRole, text: string, item?: string): s
  * the work and its recent thread lines go first, the work last. With a reason,
  * it replaces the role's agent (a rotation) and carries its last report.
  */
-async function startRole($: any, role: CrewRole, asked: Route, given: string, reason?: string, run: 'flow' | 'person' = 'flow') {
+async function startRole($: any, role: CrewRole, asked: Route, given: string, reason?: string, run: 'flow' | 'person' = 'flow', now = false) {
+  if (!now && timers.running > 0) return waitForFrame($, { role, asked, given, ...(reason === undefined ? {} : { reason }), run })
   const work = await withWorkdir($, role, given)
   if (work === undefined) return
   const l = await read($, live)
@@ -751,6 +752,49 @@ async function withWorkdir($: any, role: CrewRole, work: string): Promise<string
     return undefined
   }
   return `${work}\n\n${WORKDIR}${wd.dir}（分支 ${wd.branch}）。所有修改和 git 指令都在這個目錄裡做，例如 git -C ${wd.dir} commit。`
+}
+
+/**
+ * A timer's callback is crew's own code, outside any hook: an agent it starts
+ * runs as crew's own, and the engine skips every crew hook for it (its tools
+ * answer nothing, its turns end unseen). So timer work is counted, and a role
+ * it starts waits for crew's next frame: a redraw, a command, a turn's end.
+ */
+const timers = { running: 0 }
+
+/** Runs a timer's work, counted. */
+async function onTimer(work: () => Promise<unknown>) {
+  timers.running += 1
+  try {
+    await work()
+  } finally {
+    timers.running -= 1
+  }
+}
+
+type WaitingStart = { role: CrewRole; asked: Route; given: string; reason?: string; run: 'flow' | 'person' }
+
+/** Roles a timer asked to start, for the PRD crew followed then. */
+const waitingStarts: { start: WaitingStart; prd: string | null }[] = []
+
+async function waitForFrame($: any, start: WaitingStart) {
+  waitingStarts.push({ start, prd: (await read($, live)).prdPath })
+  // The change redraws crew's band and pane: the next frame is near.
+  await update($, live, s => ({ ...s, waiting: waitingStarts.length }))
+}
+
+/** Starts the roles a timer asked for, in a frame of the engine's or the person's: the PRD's own, if it is still the one followed. */
+async function startWaiting($: any) {
+  if (waitingStarts.length === 0) return
+  await serial('starts', async () => {
+    const due = waitingStarts.splice(0)
+    const prd = (await read($, live)).prdPath
+    for (const w of due) if (w.prd === prd) await startRole($, w.start.role, w.start.asked, w.start.given, w.start.reason, w.start.run, true)
+    await update($, live, s => {
+      const { waiting: _, ...rest } = s
+      return rest
+    })
+  })
 }
 
 async function deliver($: any, role: CrewRole, asked: Route, given: string, item?: string, run: 'flow' | 'person' = 'flow') {
@@ -882,7 +926,7 @@ const NO_COMMAND = '還沒有設定測試指令。請在右側面板的「設定
 const runName = (t: number): string => new Date(t).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
 
 /** A run under way, one waiting for it, and one asked for and not yet started: a request made meanwhile joins it. */
-const testing: { running?: Promise<string>; queued?: Promise<string>; asked?: object } = {}
+const testing: { running?: Promise<string>; queued?: Promise<string>; asked?: object; busy?: boolean } = {}
 
 /** How long a run asked for may wait for its timer: past it, the timer is taken for one a hook refused, which never fires. */
 const LOST_TIMER = 60_000
@@ -894,7 +938,7 @@ const laterTests = ($: any) => {
   testing.asked = asked
   $.clock.after(0, () => {
     if (testing.asked === asked) testing.asked = undefined
-    return runTests($)
+    return onTimer(() => runTests($))
   })
   const lost = () => {
     if (testing.asked === asked) testing.asked = undefined
@@ -911,10 +955,15 @@ const laterTests = ($: any) => {
 function runTests($: any): Promise<string> {
   if (testing.queued !== undefined) return testing.queued
   const ahead = testing.running
-  const run = (ahead ?? Promise.resolve('')).then(() => {
+  const run = (ahead ?? Promise.resolve('')).then(async () => {
     // It starts now: a later request waits for it anew.
     testing.queued = undefined
-    return runSafely($)
+    testing.busy = true
+    try {
+      return await runSafely($)
+    } finally {
+      testing.busy = false
+    }
   })
   if (ahead !== undefined) testing.queued = run
   testing.running = run.catch(() => '')
@@ -1235,7 +1284,12 @@ async function feed($: any, event: FlowEvent) {
   await serial('flow', async () => {
     const before = (await read($, live)).flow
     const r = step(before, event)
-    await update($, live, l => ({ ...l, flow: r.state }))
+    // A flow that moved on, by any way the person took, is held no more: the heartbeat and the PRD look after it again.
+    await update($, live, l => {
+      if (l.paused === undefined || r.state.stage === before.stage) return { ...l, flow: r.state }
+      const { paused: _, ...going } = l
+      return { ...going, flow: r.state }
+    })
     await saveState($)
     await execute($, r.actions)
   })
@@ -1325,7 +1379,7 @@ async function resumeOnStart($: any) {
   const open = l.questions.filter(q => q.status === 'open').length
   // A flow left running when Claude Code closed goes on once the person says so, in the pane: nothing is spent before.
   const stopped = RUNNING.includes(l.flow.stage) && Object.keys(l.agents).length === 0
-  const reloaded = l.flow.stage === 'testing' && testing.running === undefined
+  const reloaded = l.flow.stage === 'testing' && !testsUnderWay()
   if (stopped || reloaded) await update($, live, s => ({ ...s, paused: 'offer' as const }))
   if (open > 0) $.ui.toast(`crew：有 ${open} 件事等你決定，在右側面板處理`)
   flushBrain($, true)
@@ -1384,16 +1438,17 @@ async function tune($: any, input: { role?: unknown; model?: unknown; effort?: u
   const l = await read($, live)
   const before = metricsOf(l, role)
   const wakes = l.usage[role]?.wakes ?? 0
+  const base = { day: l.usageDay, role: l.usage[role] ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, wakes: 0, rotations: 0 }, total: dayTotal(l) }
   const t = await $.clock.now()
   if ((await loadSettings($)).tuning === 'ask') {
     const id = await addQuestion($, { question: `大腦建議：${text}${reason === '' ? '' : `（${reason}）`}`, item: 'tune', from: 'brain', t })
-    await update($, live, s => ({ ...s, tunings: [...(s.tunings ?? []), { id, pending: true, role, text, change, reason, before, wakes, at: t }].slice(-30) }))
+    await update($, live, s => ({ ...s, tunings: [...(s.tunings ?? []), { id, pending: true, role, text, change, reason, before, wakes, at: t, base }].slice(-30) }))
     $.ui.toast(`crew：大腦建議${text}，在右側面板「待你決定」核准或不要`)
     await saveState($)
     return `已提出建議，等使用者核准（${id}）：${text}。`
   }
   const id = await applyTuning($, role, change, text, reason)
-  await update($, live, s => ({ ...s, tunings: [...(s.tunings ?? []), { id, role, text, change, reason, before, wakes, at: t }].slice(-30) }))
+  await update($, live, s => ({ ...s, tunings: [...(s.tunings ?? []), { id, role, text, change, reason, before, wakes, at: t, base }].slice(-30) }))
   return `已處置（${id}）：${text}。`
 }
 
@@ -1417,7 +1472,11 @@ async function decideTuning($: any, question: string, approved: boolean): Promis
     return `沒有執行大腦的建議：${p.text}。`
   }
   const id = await applyTuning($, p.role, p.change, p.text, p.reason)
-  await update($, live, s => ({ ...s, tunings: (s.tunings ?? []).map(x => (x.id === question ? { ...x, id, pending: undefined } : x)) }))
+  // The action takes effect now: its numbers before, and what comes since, are measured from now.
+  const at = await read($, live)
+  const role = p.role
+  const since = { before: metricsOf(at, role), wakes: at.usage[role]?.wakes ?? 0, at: await $.clock.now(), base: { day: at.usageDay, role: at.usage[role] ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, wakes: 0, rotations: 0 }, total: dayTotal(at) } }
+  await update($, live, s => ({ ...s, tunings: (s.tunings ?? []).map(x => (x.id === question ? { ...x, ...since, id, pending: undefined } : x)) }))
   await saveState($)
   tellBrain(`使用者核准了你的建議（${question}，記成 ${id}）：${p.text}。`, 'digest')
   return `已執行大腦的建議（${id}）：${p.text}。`
@@ -1426,31 +1485,17 @@ async function decideTuning($: any, question: string, approved: boolean): Promis
 /** How long a question may wait for the person before crew reminds them, once. */
 const REMIND_AFTER_MS = 2 * 3_600_000
 
-/** What the heartbeat did: the stop it last woke a role for, the questions it reminded the person of, and its timer. */
-const heart: { woke?: string; reminded: Set<string>; timer?: { cancel: () => void } } = { reminded: new Set() }
-
-/** The role a stage of the flow waits on. */
-const STAGE_ROLE: Record<string, string> = {
-  splitting: 'PM',
-  confirming: 'PM',
-  writing_tests: 'QA',
-  adding_tests: 'QA',
-  designing: 'UI/UX',
-  planning: 'Tech lead',
-  reviewing: 'Tech lead',
-  building: '全端',
-  testing: 'crew',
-}
+/** What the heartbeat did: the stop it last woke a role for, and its timer. */
+const heart: { woke?: string; timer?: { cancel: () => void } } = {}
 
 /** A running flow stopped with nobody at work, nothing queued and nothing waiting for the person: where it stopped. */
 function stoppedKey(l: CrewLive): string | undefined {
-  if (l.prdPath === null || l.paused !== undefined || !RUNNING.includes(l.flow.stage)) return undefined
-  if (ending.count > 0 || waking.count > 0) return undefined
-  if (CREW_ROLES.some(r => l.roles[r].state === 'working') || Object.values(l.pending).some(p => p.length > 0)) return undefined
-  if (l.questions.some(q => q.status === 'open')) return undefined
-  if (l.flow.stage === 'testing' && (testing.running !== undefined || testing.asked !== undefined || testing.queued !== undefined)) return undefined
-  return `${l.flow.stage}:${l.flow.building ?? ''}:${l.flow.reviewing?.task ?? ''}`
+  if (ending.count > 0 || waking.count > 0 || testsUnderWay()) return undefined
+  return stopKey(l, RUNNING)
 }
+
+/** A test run under way, waiting its turn, or asked for and not yet started. */
+const testsUnderWay = (): boolean => testing.busy === true || testing.asked !== undefined || testing.queued !== undefined
 
 /**
  * crew looks after its work every few minutes, in code, with no model call: a
@@ -1484,11 +1529,12 @@ async function lookAfter($: any, now: number): Promise<string[]> {
         found.push(`${where}，叫醒過一次還是停住 → 等你決定`)
       } else {
         heart.woke = key
-        const said = await resumeFlow($)
-        const woke = l.flow.stage === 'testing' ? '重跑測試' : `已叫醒 ${STAGE_ROLE[l.flow.stage] ?? '角色'} 接續`
+        const said = await resumeFlow($, false)
+        const role = STAGE_ROLE[l.flow.stage] ?? '角色'
+        const woke = l.flow.stage === 'testing' ? '重跑測試' : waitingStarts.length > 0 ? `會叫醒 ${role} 接續（Claude Code 有下一個動作時開始）` : `已叫醒 ${role} 接續`
         found.push(said.startsWith('接續') ? `${where}，沒有角色在工作 → ${woke}（第 1 次）` : `${where}，沒有角色在工作，沒有接續：${said}`)
       }
-    } else if (l.prdPath !== null && l.paused === undefined && l.flow.stage === 'done' && ending.count === 0 && waking.count === 0) {
+    } else if (l.prdPath !== null && l.paused === undefined && l.flow.stage === 'done' && ending.count === 0 && waking.count === 0 && !testsUnderWay()) {
       await syncCommits($)
       const board = await loadBoard($)
       if (board !== null) {
@@ -1508,8 +1554,8 @@ async function lookAfter($: any, now: number): Promise<string[]> {
     }
     // A question the person left for two hours is brought up once.
     for (const q of (await read($, live)).questions) {
-      if (q.status !== 'open' || now - q.t < REMIND_AFTER_MS || heart.reminded.has(q.id)) continue
-      heart.reminded.add(q.id)
+      if (q.status !== 'open' || now - q.t < REMIND_AFTER_MS || (await read($, live)).reminded?.includes(q.id) === true) continue
+      await update($, live, s => ({ ...s, reminded: [...(s.reminded ?? []), q.id].slice(-100) }))
       $.ui.toast(`crew：${q.id} 已經等你 2 小時了，在右側面板「待你決定」處理`)
       found.push(`${q.id} 已經等你 2 小時 → 已提醒你`)
     }
@@ -1533,8 +1579,8 @@ async function saveSettings($: any, change: Partial<CrewSettings>) {
   await $.store.set(settingsKey(), { ...(await loadSettings($)), ...change })
 }
 
-/** The person said not now on the start screen: the pane stays closed for this session. */
-const declined = { now: false }
+/** The largest file the start screen reads a title from: a PRD is a document, not a dump. */
+const TITLE_READ = 1_000_000
 
 /** Files that are about the repo, not a product to build. */
 const NOT_A_PRD = /^(readme|changelog|license|claude|agents|contributing|code_of_conduct|security)\.md$/i
@@ -1547,15 +1593,17 @@ async function prdCandidates($: any): Promise<{ path: string; title: string }[]>
   if (now - candidates.at < 30_000) return candidates.list
   const found: string[] = []
   const look = async (dir: string, depth: number) => {
-    let entries: { name: string; kind: string }[] = []
+    let entries: { name: string; kind: string; size?: number }[] = []
     try {
-      entries = (await $.fs.list(dir === '' ? files.root : `${files.root}/${dir}`)) as { name: string; kind: string }[]
+      entries = (await $.fs.list(dir === '' ? files.root : `${files.root}/${dir}`)) as { name: string; kind: string; size?: number }[]
     } catch {
       return
     }
     for (const e of entries) {
+      // Hidden files and folders are not offered, nor read: the PRD's own rule on private places holds too.
+      if (e.name.startsWith('.')) continue
       const path = dir === '' ? e.name : `${dir}/${e.name}`
-      if (e.kind === 'file' && /\.md$/i.test(e.name) && !NOT_A_PRD.test(e.name)) found.push(path)
+      if (e.kind === 'file' && /\.md$/i.test(e.name) && !NOT_A_PRD.test(e.name) && prdName(fullPathOf(path)) && (e.size ?? 0) <= TITLE_READ) found.push(path)
       if (e.kind === 'dir' && depth > 0 && (dir !== '' || e.name === 'docs')) await look(path, depth - 1)
     }
   }
@@ -1567,7 +1615,7 @@ async function prdCandidates($: any): Promise<{ path: string; title: string }[]>
     let title = path.split('/').pop() ?? path
     try {
       const head = /^#\s+(.+)$/m.exec(((await $.fs.read(`${files.root}/${path}`)) as string).slice(0, 4_000))
-      if (head?.[1] !== undefined) title = cut(head[1].trim(), 60)
+      if (head?.[1] !== undefined) title = cut(redact(head[1].trim()), 60)
     } catch {
       // Unreadable: offered by its name.
     }
@@ -1579,9 +1627,15 @@ async function prdCandidates($: any): Promise<{ path: string; title: string }[]>
 }
 
 /** Starts the roles of a running flow again, fresh, from what the board shows; says what it did. */
-async function resumeFlow($: any): Promise<string> {
+async function resumeFlow($: any, fresh = true): Promise<string> {
   const l = await read($, live)
-  if (!RUNNING.includes(l.flow.stage) || l.prdPath === null) return '沒有進行中的 PRD 可以接續。'
+  if (!RUNNING.includes(l.flow.stage) || l.prdPath === null) {
+    await update($, live, s => {
+      const { paused: _, ...going } = s
+      return going
+    })
+    return '沒有進行中的 PRD 可以接續。'
+  }
   // A role still at work is left alone; one whose agent is gone without a word is not at work, and is let go.
   const running = new Set(((await $.agent.list()) as { id: string; status?: string }[]).filter(a => a.status === 'running').map(a => a.id))
   const busy = CREW_ROLES.find(r => l.roles[r].state === 'working' && running.has(l.roles[r].agentId ?? ''))
@@ -1599,8 +1653,7 @@ async function resumeFlow($: any): Promise<string> {
   await syncCommits($)
   const board = await loadBoard($)
   if (board === null) return `沒有接續：${boardProblem() ?? '找不到看板 prd-tracker.json。'}`
-  const at = new Date(await $.clock.now())
-  const from = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')} 從 ${STAGE_OF[l.flow.stage] ?? l.flow.stage} 接續`
+  const from = `${clockOf(await $.clock.now())} 從 ${STAGE_OF[l.flow.stage] ?? l.flow.stage} 接續`
   await update($, live, s => {
     const { paused: _, ...going } = s
     // A restart's offer taken: the pane says where the work went on from.
@@ -1609,8 +1662,9 @@ async function resumeFlow($: any): Promise<string> {
   // Only a split needs the PRD itself; tests and gaps go on from the board.
   if ('error' in prd && l.flow.stage === 'splitting') return `沒有接續：${prd.error}`
   const text: string = 'error' in prd ? '' : await $.fs.read(prd.full)
-  // The roles' old conversations are gone or stuck: whoever the flow calls starts fresh.
-  await update($, live, s => ({ ...s, roles: Object.fromEntries(CREW_ROLES.map(r => [r, { ...s.roles[r], rotate: true }])) as CrewLive['roles'] }))
+  // The roles' old conversations are gone or stuck: whoever the flow calls starts fresh. The heartbeat's wake
+  // reaches the roles' own agents instead, with a message a timer can send.
+  if (fresh) await update($, live, s => ({ ...s, roles: Object.fromEntries(CREW_ROLES.map(r => [r, { ...s.roles[r], rotate: true }])) as CrewLive['roles'] }))
   $.ui.toast(`crew：接續 ${l.prdPath}（${l.flow.stage}）`)
   await note($, { kind: 'resume', path: l.prdPath, stage: l.flow.stage })
   const requirements = (await prdView($))?.requirements
@@ -2208,7 +2262,11 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     await saveState($)
     return '已清掉這個 session 的 crew 狀態。看板（prd-tracker.json）、討論串和記憶（.crew/memory）都保留。'
   }
-  if (verb === 'resume') return resumeFlow($)
+  if (verb === 'resume') {
+    // A flow held for the person goes on by their own word: the pane's 接續, or a command they typed.
+    if ((await read($, live)).paused !== undefined && !typed) return '流程暫停中：要使用者自己在右側面板按［接續］。'
+    return resumeFlow($)
+  }
   if (verb === 'answer') {
     const [id = '', ...words] = rest
     const answer = cut(redact(words.join(' ')), 500)
@@ -2216,6 +2274,8 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     if (q === undefined || answer === '') return '用法：/crew answer <Q-編號> <回答>，編號要是還沒回答的問題。'
     // A design waits for the person's approval, not an answer: it is approved or sent back by them alone.
     if (q.from === 'crew' && q.item !== undefined && /^SCR-\d+$/.test(q.item)) return `${q.item} 是設計稿：請在右側面板核准，或寫原因退回。`
+    // So does the brain's proposal on usage: the brain cannot settle its own.
+    if (q.from === 'brain' && q.item === 'tune') return '大腦的建議要使用者自己在右側面板核准或不要。'
     await update($, live, l => ({ ...l, questions: l.questions.map(x => (x.id === id ? { ...x, status: 'answered' as const, answer } : x)) }))
     // An answer the brain relays is recorded as the brain's, so it can be traced.
     const decided = by === 'brain' ? `使用者決定（經大腦轉達）：${answer}` : `使用者決定：${answer}`
@@ -2522,7 +2582,9 @@ function previewActions($: any, snap: Snapshot): Actions {
 function paneActions($: any, snap: Snapshot): Actions {
   const said = (text: string) => $.ui.toast(`crew：${text}`)
   const person = (verb: string, rest: string[]) =>
-    void crewVerb($, verb, rest, 'person', true).then(said, (err: unknown) => said(`沒有完成：${cut(squeeze(String(err)), 200)}`))
+    void startWaiting($)
+      .then(() => crewVerb($, verb, rest, 'person', true))
+      .then(said, (err: unknown) => said(`沒有完成：${cut(squeeze(String(err)), 200)}`))
   const design = (id: string) => {
     const d = snap.decisions.find(x => x.id === id)
     return d?.kind === 'design' ? d.design : undefined
@@ -2540,7 +2602,7 @@ function paneActions($: any, snap: Snapshot): Actions {
     notNow: () =>
       void (async () => {
         if ((await read($, live)).paused === 'offer') return void (await update($, live, s => ({ ...s, paused: 'person' as const })))
-        declined.now = true
+        await update($, live, s => ({ ...s, declined: true }))
         await $.ui.close({ id: PANE })
       })(),
     resume: () => person('resume', []),
@@ -2667,11 +2729,17 @@ export const register: Register = on => {
     }
     await resumeOnStart($)
     // crew is run from its pane: it opens on load unless the person said not to.
-    if ((await loadSettings($)).openOnLoad && !declined.now) await $.ui.open({ id: PANE, title: 'Crew' })
+    const opens = (await loadSettings($)).openOnLoad && (await read($, live)).declined !== true
+    if (opens) await $.ui.open({ id: PANE, title: 'Crew' })
+    // A held flow is said in a notice too when the pane stays closed.
+    const held = await read($, live)
+    if (!opens && held.paused === 'offer' && held.prdPath !== null) {
+      $.ui.toast(`crew：上次的 ${held.prdPath} 停在「${STAGE_OF[held.flow.stage] ?? held.flow.stage}」。要接續的話，打開 crew 面板按［接續］。`)
+    }
     // From now on crew looks after its work every few minutes; the first look only says it is on.
     await heartbeat($, false)
     heart.timer?.cancel()
-    heart.timer = $.clock.every(HEARTBEAT_MS, () => void heartbeat($))
+    heart.timer = $.clock.every(HEARTBEAT_MS, () => void onTimer(() => heartbeat($)))
     // The roles' routine news goes to the brain every half hour, in one message.
     digest.nextAt = (await $.clock.now()) + DIGEST_MS
     digest.timer?.cancel()
@@ -2681,7 +2749,7 @@ export const register: Register = on => {
     await update($, live, l => ({ ...l, signals: { ...l.signals, prdVersion: '' } }))
     await watch($)
     watching.timer?.cancel()
-    watching.timer = $.clock.every(WATCH_MS, () => void watch($))
+    watching.timer = $.clock.every(WATCH_MS, () => void onTimer(() => watch($)))
     // Notes no role notice came for go out on their own after a minute. One timer per session, even after a reload.
     brain.timer?.cancel()
     brain.timer = $.clock.every(BRAIN_TICK_MS, () => {
@@ -2698,6 +2766,7 @@ export const register: Register = on => {
   for (const role of CREW_ROLES) on('agent.offer', { agent: `crew:${role}` }, ($, e, next) => (waking.count > 0 ? next(e) : { isOffered: false }))
 
   on('command.run', { command: 'crew' }, async ($, e) => {
+    await startWaiting($)
     // A command typed while the session is still starting waits for crew's roles and tools.
     await boot.ready
     const [verb = '', ...rest] = e.args.trim().split(/\s+/).filter(Boolean)
@@ -2708,12 +2777,15 @@ export const register: Register = on => {
 
   // A role's single tool output past 10K tokens is a usage reminder for the brain.
   on('tool.call', async ($, e: any, next) => {
+    await startWaiting($)
     const r = await next(e)
     const role = e.agentId === undefined ? undefined : (await read($, live)).agents[e.agentId]
     if (role !== undefined) {
-      const out = (r as { result?: unknown } | undefined)?.result
+      // Measured as the model reads it: the result's text, else the result itself.
+      const read_ = r as { result?: unknown; text?: unknown } | undefined
+      const out = typeof read_?.text === 'string' ? read_.text : read_?.result
       const size = estimateTokens(typeof out === 'string' ? out : JSON.stringify(out ?? ''))
-      if (size > OUTPUT_TOKENS) await raiseAlert($, `output:${role}`, said(role, `一次工具輸出約 ${Math.round(size / 1000)}K token（超過 10K）：${String(e.tool)}`), await $.clock.now())
+      if (size > OUTPUT_TOKENS) await raiseAlert($, `output:${role}`, roleSays(role, `一次工具輸出約 ${Math.round(size / 1000)}K token（超過 10K）：${String(e.tool)}`), await $.clock.now())
     }
     return r
   })
@@ -2949,6 +3021,7 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    await startWaiting($)
     const kind = e.origin.kind
     if (kind === 'task-notification' || kind === 'peer' || kind === 'peer-send-message' || kind === 'coordinator') {
       const ids = crewIds(await read($, live))
@@ -3004,6 +3077,7 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    await startWaiting($)
     const before = await read($, live)
     const role = e.agentId === undefined ? undefined : before.agents[e.agentId]
     if (role === undefined) return next(e)

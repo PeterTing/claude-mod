@@ -437,7 +437,7 @@ const afterRun = (state: FlowState, event: Extract<FlowEvent, { type: 'tests_ran
  * never built) waits for the person to start it. A flow under way, or waiting
  * for the person, takes the board on at its own turns.
  */
-const look = (state: FlowState, board: Tracker): StepResult => {
+const afterLook = (state: FlowState, board: Tracker): StepResult => {
   const none = { state, actions: [] }
   if (state.stage !== 'done') return none
   const tasks = liveTasks(board)
@@ -977,7 +977,7 @@ export const step = (state: FlowState, event: FlowEvent): StepResult => {
     return { state: marked, actions: [] }
   }
   if (event.type === 'resume') return resume(state, event)
-  if (event.type === 'look') return look(state, event.board)
+  if (event.type === 'look') return afterLook(state, event.board)
   if (event.type === 'start') {
     if (RUNNING.includes(state.stage)) {
       return { state, actions: [{ type: 'status', text: 'PM＋QA 正在進行，等這一輪完成再開始新的。' }] }

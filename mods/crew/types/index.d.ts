@@ -149,7 +149,25 @@ export type CrewLive = {
    * the person (a question, `Q-`); what they change, why, and the role's
    * numbers before, with its wakes then, so the numbers since show after it ran.
    */
-  tunings?: { id: string; pending?: boolean; role: string; text: string; change: CrewTuning; reason: string; before: string; wakes: number; at: number }[]
+  tunings?: {
+    id: string
+    pending?: boolean
+    role: string
+    text: string
+    change: CrewTuning
+    reason: string
+    before: string
+    wakes: number
+    at: number
+    /** The role's counters and the day's total when the action took effect: what came since is measured from them. */
+    base?: { day: string; role: CrewUsage; total: number }
+  }[]
+  /** The person said not now on the start screen: the pane stays closed for this session. */
+  declined?: boolean
+  /** Questions the heartbeat already brought up to the person. */
+  reminded?: string[]
+  /** Roles a timer asked to start, waiting for crew's next frame (a redraw): how many. */
+  waiting?: number
 }
 
 export type CrewTuning = { model?: 'haiku' | 'sonnet' | 'opus'; effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; limit?: number }

@@ -25,6 +25,8 @@ describe('crew from its pane', () => {
     const w = world($, on)
     w.disk.set(`${ROOT}/docs/specs/checkout.md`, '# 結帳流程\n\n- 可以用信用卡付款')
     w.disk.set(`${ROOT}/README.md`, '# repo')
+    // A hidden folder's file is no PRD to offer, and nothing it holds is read.
+    w.disk.set(`${ROOT}/docs/.private/plan.md`, '# 內部計畫')
     await start($)
     expect(w.panes).toContain('open:crew')
     const ui = await paneUi($)
@@ -32,6 +34,7 @@ describe('crew from its pane', () => {
     const pick = (await ui.find({ key: 'prd-pick' })) as unknown as { props: { value: string; options: { value: string; label: string }[] } }
     // PRDs first, then the other documents; a README is no PRD.
     expect(pick.props.options.map(o => o.value)).toEqual(['docs/PRD.md', 'docs/specs/checkout.md'])
+    expect(w.reads.get(`${ROOT}/docs/.private/plan.md`) ?? 0).toBe(0)
     expect(pick.props.options[0]?.label).toMatch(/docs\/PRD\.md　會員訂閱/)
     await ui.select({ key: 'prd-pick', value: 'docs/specs/checkout.md' })
     await ui.press({ key: 'start' })
@@ -90,6 +93,10 @@ describe('crew from its pane', () => {
     await ui.press({ key: 'not-now' })
     expect(w.spawned).toEqual([])
     expect(await textOf(ui)).toMatch(/停在「實作」（全端 TASK-001），暫停中。/)
+    // The person holds it: the brain cannot go on for them.
+    const r = (await $.tool.call({ tool: 'mcp__crew__crew', tool_use_id: 'go', action: 'resume' } as never)) as { result: unknown }
+    expect(String(r.result)).toMatch(/流程暫停中：要使用者自己在右側面板按［接續］/)
+    expect(w.spawned).toEqual([])
     expect(await ui.find({ key: 'not-now' })).toBeUndefined()
     await ui.press({ key: 'resume' })
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:fullstack'])

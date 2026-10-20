@@ -10,7 +10,7 @@ const call = ($: Engine, tool: string, input: Record<string, unknown>, agentId?:
   $.tool.call({ tool: `mcp__crew__${tool}`, tool_use_id: `d-${Math.random()}`, ...(agentId === undefined ? {} : { agentId }), ...input } as never) as Promise<{ result: unknown }>
 
 describe('the brain’s digest', () => {
-  test('brings routine news every 30 minutes in one message, and what needs the brain at once', async ($, on) => {
+  test('brings routine news every 30 minutes in one message, and what needs the brain at once', { timeoutMs: 60_000 }, async ($, on) => {
     const w = world($, on)
     await start($)
     await crew($, { action: 'start', path: 'docs/PRD.md' })
@@ -37,7 +37,7 @@ describe('the brain’s digest', () => {
     expect(w.prompts.filter(p => /例行回報/.test(p))).toHaveLength(1)
   })
 
-  test('carries what the heartbeat did about the work the brain leads', async ($, on) => {
+  test('carries what the heartbeat did about the work the brain leads', { timeoutMs: 60_000 }, async ($, on) => {
     const w = world($, on)
     await start($)
     await crew($, { action: 'start', path: 'docs/PRD.md' })

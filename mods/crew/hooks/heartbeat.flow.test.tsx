@@ -33,21 +33,43 @@ describe('the heartbeat', () => {
     await failed($, 'a-qa-2', 'error')
     const before = w.spawned.length
     await w.clock.advance(BEAT)
-    expect(w.spawned).toHaveLength(before + 1)
-    expect(w.spawned.at(-1)?.subagentType).toBe('crew:qa')
+    // QA's own agent is woken with a message: no new agent from the timer.
+    expect(w.spawned).toHaveLength(before)
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-qa-2' })
     let ui = await paneUi($)
     expect(await textOf(ui)).toMatch(/常駐 ⚠ 心跳 剛剛發現：流程停在「測試案例」，沒有角色在工作 → 已叫醒 QA 接續（第 1 次）/)
     await ui.unmount()
     // It stops again at the same place: the person decides.
-    await failed($, 'a-qa-3', 'error')
+    await failed($, 'a-qa-2', 'error')
     await w.clock.advance(BEAT)
-    expect(w.spawned).toHaveLength(before + 1)
+    expect(w.spawned).toHaveLength(before)
     expect(w.toasts.some(t => /流程停在「測試案例」，叫醒過一次還是停住/.test(t))).toBe(true)
     ui = await paneUi($)
     expect(await textOf(ui)).toMatch(/流程停在「測試案例」，叫醒過一次還是停住。要再試一次嗎？/)
+    // The person goes on: the roles start afresh, from the press.
     await ui.press({ key: 'resume' })
-    expect(w.spawned).toHaveLength(before + 2)
+    expect(w.spawned).toHaveLength(before + 1)
+    expect(w.spawned.at(-1)?.subagentType).toBe('crew:qa')
     await ui.unmount()
+  })
+
+  test('starts a role a timer needs afresh at crew’s next frame, never from the timer itself', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await failed($, 'a-qa-2', 'error')
+    // QA is to start from a fresh context next time.
+    await $.command.run(command('rotate qa'))
+    const before = w.spawned.length
+    await w.clock.advance(BEAT)
+    // Started from the timer, the engine would take the role's whole run for crew's own code and skip
+    // crew's hooks for it: its tools would answer nothing. It waits for a frame instead.
+    expect(w.spawned).toHaveLength(before)
+    await $.command.run(command('status'))
+    expect(w.spawned).toHaveLength(before + 1)
+    expect(w.spawned.at(-1)?.subagentType).toBe('crew:qa')
   })
 
   test('takes a commit made after the flow finished to the tech lead’s review', async ($, on) => {
@@ -74,7 +96,7 @@ describe('the heartbeat', () => {
     await approve($, 'TASK-001')
   })
 
-  test('reminds the person once of a question that waited two hours', async ($, on) => {
+  test('reminds the person once of a question that waited two hours', { timeoutMs: 60_000 }, async ($, on) => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
@@ -83,6 +105,81 @@ describe('the heartbeat', () => {
     expect(w.toasts.filter(t => /Q-01 已經等你 2 小時/.test(t))).toHaveLength(1)
     await w.clock.advance(3 * BEAT)
     expect(w.toasts.filter(t => /Q-01 已經等你 2 小時/.test(t))).toHaveLength(1)
+  })
+
+  test('lets a hold go once the flow moves on without 接續, so the heartbeat looks after it again', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
+    await done($, 'a-qa-2')
+    await designed($)
+    await write($, 'a-techlead-4', PLAN)
+    await done($, 'a-techlead-4')
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    await approve($, 'TASK-001')
+    w.commit('TASK-002: 取消流程')
+    await done($, 'a-fullstack-5')
+    // The run is asked for, and Claude Code reloads before it starts: the flow is held in testing.
+    w.refuse.timers = 1
+    await approve($, 'TASK-002')
+    // The lost run is given up on, as a reloaded crew starts with none asked for.
+    await w.clock.advance(60_000)
+    await start($)
+    const ui = await paneUi($)
+    expect(await textOf(ui)).toMatch(/停在「測試結果」。要接續嗎？/)
+    // The person runs the tests from the settings tab instead of 接續: they pass, and the flow is done.
+    await ui.press({ key: 'tab-settings' })
+    await ui.press({ key: 'run-tests' })
+    await w.clock.advance(1)
+    expect((await $.command.run(command('status'))).text).toMatch(/done/)
+    await ui.press({ key: 'tab-overview' })
+    expect(await textOf(ui)).not.toMatch(/要接續嗎|暫停中/)
+    await ui.unmount()
+    // Not held any more: a commit made after the finish goes to review at the next look.
+    w.commit('TASK-001: 文案修正')
+    await w.clock.advance(BEAT)
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
+  })
+
+  test('wakes a stopped flow though the brain’s proposal on usage waits for the person', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await $.tool.call({ tool: 'mcp__crew__crew', tool_use_id: 'tn', action: 'tune', role: 'qa', limit: 80_000 } as never)
+    await failed($, 'a-qa-2', 'error')
+    const before = w.sent.length
+    await w.clock.advance(BEAT)
+    expect(w.sent.length).toBe(before + 1)
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-qa-2' })
+  })
+
+  test('says a held flow on the line above the prompt, and in a notice, when the pane does not open', async ($, on) => {
+    const w = world($, on)
+    w.store.set(`settings:${ROOT}`, { openOnLoad: false, tuning: 'ask' })
+    let t = newTracker('repo')
+    for (const [by, ops] of [
+      ['pm', SPLIT],
+      ['qa', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }]],
+      ['techlead', PLAN],
+    ] as const) {
+      const r = applyOps(t, ops as unknown as Op[], { by, today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
+      if (!r.ok) throw new Error(r.errors.join())
+      t = r.tracker
+    }
+    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(t))
+    w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, questions: [], lead: 'person' })
+    await start($)
+    expect(w.panes).not.toContain('open:crew')
+    expect(w.toasts.some(t => /上次的 docs\/PRD\.md 停在「實作」[\s\S]*打開 crew 面板/.test(t))).toBe(true)
+    const band = await $.ui.mount({ plugin: 'crew', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 2, bodyColumns: 140 } } as never)
+    expect(await textOf(band)).toMatch(/⏸ 等你接續/)
+    await band.unmount()
   })
 
   test('does nothing for a flow the person holds', async ($, on) => {

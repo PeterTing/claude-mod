@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { CrewLive } from '../types'
 import { applyOps, newTracker } from './board'
 import type { Op, Tracker } from './board'
-import { emptyLive, metricsOf, snapshotOf, usageSignals } from './live'
+import { emptyLive, metricsOf, snapshotOf, stopKey, usageSignals } from './live'
 import { barCells, percent } from './model'
 import type { Snapshot } from './model'
 import { bandText, bar } from './views'
@@ -583,5 +583,67 @@ describe('usage signals for the brain', () => {
   test('measure a role by its share, cache hit rate and context', () => {
     const l = { ...day({ fullstack: u(31_000, 85_000, 50_000), pm: u(6_000, 27_000, 5_000) }), roles: { ...emptyLive().roles, fullstack: { ...emptyLive().roles.fullstack, context: 96_000 } } }
     expect(metricsOf(l, 'fullstack')).toBe('今日佔 81% · 命中率 51% · context 96K')
+  })
+})
+
+describe('the brain’s actions on usage, measured', () => {
+  const at = (role: Partial<CrewLive['usage'][string]>) => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, wakes: 0, rotations: 0, ...role })
+  const action = (day: string): NonNullable<CrewLive['tunings']>[number] => ({
+    id: 'DEC-007',
+    role: 'fullstack',
+    text: '全端之後的工作改用 Sonnet・high',
+    change: { model: 'sonnet' },
+    reason: '',
+    before: '今日佔 80% · 命中率 75% · context 96K',
+    wakes: 3,
+    at: 0,
+    base: { day, role: at({ input: 100_000, cacheRead: 300_000, wakes: 3 }), total: 500_000 },
+  })
+  const now = (tunings: NonNullable<CrewLive['tunings']>, usage: CrewLive['usage']): CrewLive => ({
+    ...emptyLive(),
+    usageDay: '2026-10-15',
+    usage,
+    tunings,
+    roles: { ...emptyLive().roles, fullstack: { ...emptyLive().roles.fullstack, context: 8_000 } },
+  })
+
+  test('by what came since: the role’s share and hit rate since the action, and its context now', () => {
+    const usage = { fullstack: at({ input: 110_000, cacheRead: 340_000, wakes: 4 }), pm: at({ input: 150_000 }) }
+    const snap = snapshotOf({ board: null, live: now([action('2026-10-15')], usage), now: 0 })
+    expect(snap.actions).toEqual([{ id: 'DEC-007', text: '全端之後的工作改用 Sonnet・high', before: '今日佔 80% · 命中率 75% · context 96K', after: '之後佔 50% · 命中率 80% · context 8K' }])
+  })
+
+  test('waiting for the role to run again before there is anything since', () => {
+    const usage = { fullstack: at({ input: 100_000, cacheRead: 300_000, wakes: 3 }), pm: at({ input: 100_000 }) }
+    expect(snapshotOf({ board: null, live: now([action('2026-10-15')], usage), now: 0 }).actions[0]?.after).toBeUndefined()
+  })
+
+  test('from the start of a new day, once the day has turned since the action', () => {
+    const usage = { fullstack: at({ input: 10_000, cacheRead: 30_000, wakes: 1 }), pm: at({ input: 40_000 }) }
+    expect(snapshotOf({ board: null, live: now([action('2026-10-14')], usage), now: 0 }).actions[0]?.after).toBe('之後佔 50% · 命中率 75% · context 8K')
+  })
+})
+
+describe('where a running flow stopped', () => {
+  const RUN = ['building', 'reviewing', 'testing']
+  const at = (flow: CrewLive['flow'], more: Partial<CrewLive> = {}): CrewLive => ({ ...emptyLive(), prdPath: 'docs/PRD.md', flow, ...more })
+
+  test('is the stage, the task and the commit it was at: another round of changes is another stop', () => {
+    const first = stopKey(at({ stage: 'building', round: 0, retries: 0, building: 'TASK-001', fixing: 'abc0001' }), RUN)
+    const later = stopKey(at({ stage: 'building', round: 0, retries: 0, building: 'TASK-001', fixing: 'abc0002' }), RUN)
+    expect(first).toBeDefined()
+    expect(later).not.toBe(first)
+    expect(stopKey(at({ stage: 'reviewing', round: 0, retries: 0, reviewing: { task: 'TASK-001', sha: 'abc0001' } }), RUN)).not.toBe(stopKey(at({ stage: 'reviewing', round: 0, retries: 0, reviewing: { task: 'TASK-001', sha: 'abc0002' } }), RUN))
+  })
+
+  test('is no stop while someone works, work is queued, the flow is held, or the person has a question to answer', () => {
+    const flow = { stage: 'building' as const, round: 0, retries: 0, building: 'TASK-001' }
+    expect(stopKey(at(flow, { roles: { ...emptyLive().roles, fullstack: { ...emptyLive().roles.fullstack, state: 'working' } } }), RUN)).toBeUndefined()
+    expect(stopKey(at(flow, { pending: { fullstack: [{ kind: 'message', text: 'x', route: { tier: 'S', model: 'sonnet', label: 'Sonnet', effort: 'high', limit: 60_000 }, run: 'flow' }] } as never }), RUN)).toBeUndefined()
+    expect(stopKey(at(flow, { paused: 'person' }), RUN)).toBeUndefined()
+    expect(stopKey(at(flow, { questions: [{ id: 'Q-01', question: 'q', from: 'pm', status: 'open', t: 0 }] }), RUN)).toBeUndefined()
+    // The brain's proposal on usage is no question about the flow.
+    expect(stopKey(at(flow, { questions: [{ id: 'Q-02', question: 'q', from: 'brain', item: 'tune', status: 'open', t: 0 }] }), RUN)).toBeDefined()
+    expect(stopKey(at({ stage: 'done', round: 0, retries: 0 }), RUN)).toBeUndefined()
   })
 })

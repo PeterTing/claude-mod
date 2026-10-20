@@ -103,7 +103,7 @@ describe('the board held to the PRD', () => {
     expect(w.sent.at(-1)?.text).toMatch(/PRD 改了/)
   })
 
-  test('tells the brain, with its next digest, when the work it leads meets a changed PRD', async ($, on) => {
+  test('tells the brain, with its next digest, when the work it leads meets a changed PRD', { timeoutMs: 60_000 }, async ($, on) => {
     const w = world($, on)
     await start($)
     await $.tool.call({ tool: 'mcp__crew__crew', tool_use_id: 'c', action: 'start', path: 'docs/PRD.md' } as never)

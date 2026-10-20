@@ -471,6 +471,18 @@ describe('the pane, which does everything with no command', () => {
     }
   })
 
+  test('says which PRD a start begins, and on a phone lists the PRDs as buttons to pick from', async ($, on) => {
+    staged(on)
+    await demo($, 'empty overview')
+    const desk = await $.ui.mount(pane('terminal'))
+    expect(await shown(desk)).toMatch(/會開始：docs\/PRD\.md　會員訂閱 v1/)
+    await desk.unmount()
+    const phone = await $.ui.mount({ ...pane('desktop'), surface: 'mobile' as never })
+    expect(await shown(phone)).toMatch(/會開始：docs\/PRD\.md　會員訂閱 v1/)
+    for (const key of ['prd-option-0', 'prd-option-1', 'start']) expect(await phone.find({ key })).toBeDefined()
+    await phone.unmount()
+  })
+
   test('says where to type on a surface with no text field, and keeps its buttons', async ($, on) => {
     staged(on)
     await demo($, 'attention overview')

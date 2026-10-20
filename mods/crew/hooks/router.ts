@@ -76,8 +76,8 @@ const higher = <T>(order: readonly T[], a: T, b: T): T => (order.indexOf(a) >= o
 /** What the brain may set for a role's work from now on: a model, an effort, a rotation threshold. */
 export type Tuning = { model?: Model; effort?: Effort; limit?: number }
 
-/** A role's route with the brain's tuning on it. */
-export const tunedRoute = (route: Route, tuning: Tuning | undefined): Route => ({
+/** A role's route with the brain's tuning on it; the step up of a task that failed again (Opus at max) stands. */
+export const tunedRoute = (route: Route, tuning: Tuning | undefined): Route => (route.effort === 'max' ? route : {
   ...route,
   ...(tuning?.model === undefined ? {} : { model: tuning.model, label: MODEL_LABELS[tuning.model] }),
   ...(tuning?.effort === undefined ? {} : { effort: tuning.effort }),

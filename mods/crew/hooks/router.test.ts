@@ -67,6 +67,11 @@ describe('a route the brain tuned', () => {
     expect(tunedRoute(base, { limit: 80_000 })).toEqual({ ...base, limit: 80_000 })
   })
 
+  test('gives way to the step up a task that failed again takes', () => {
+    const beyond = routeFor('fullstack', 'XL', { beyond: true })
+    expect(tunedRoute(beyond, { model: 'sonnet', effort: 'high' })).toEqual(beyond)
+  })
+
   test('never goes below the role’s floor', () => {
     expect(floorOf('fullstack', { model: 'haiku' })).toBe('Sonnet・high')
     expect(floorOf('fullstack', { effort: 'medium' })).toBe('Sonnet・high')

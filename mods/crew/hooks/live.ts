@@ -98,11 +98,57 @@ export const metricsOf = (live: CrewLive, role: string): string => {
   return `今日佔 ${share}% · 命中率 ${rate}% · context ${Math.round(context / 1000)}K`
 }
 
+/** What came since the brain's action took effect: the role's share and hit rate since, its context now; nothing before it ran again. */
+const sinceOf = (live: CrewLive, t: NonNullable<CrewLive['tunings']>[number]): { after?: string } => {
+  const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, wakes: 0, rotations: 0 }
+  // A day that turned since the action counts from its start: usage starts again each day.
+  const base = t.base === undefined || t.base.day !== live.usageDay ? { role: zero, total: 0 } : t.base
+  const u = live.usage[t.role] ?? zero
+  if (u.wakes <= base.role.wakes) return {}
+  const d = { input: u.input - base.role.input, output: u.output - base.role.output, cacheRead: u.cacheRead - base.role.cacheRead, cacheWrite: u.cacheWrite - base.role.cacheWrite }
+  const all = Object.values(live.usage).reduce((n, x) => n + spentOf(x), 0) - base.total
+  const mine = d.input + d.output + d.cacheRead + d.cacheWrite
+  const share = all <= 0 ? 0 : Math.round((mine / all) * 100)
+  const read = d.input + d.cacheRead + d.cacheWrite
+  const rate = read <= 0 ? 0 : Math.round((d.cacheRead / read) * 100)
+  return { after: `之後佔 ${share}% · 命中率 ${rate}% · context ${Math.round((live.roles[t.role as RoleId]?.context ?? 0) / 1000)}K` }
+}
+
+/** The day's total tokens, as a brain's action is measured against it. */
+export const dayTotal = (live: CrewLive): number => Object.values(live.usage).reduce((n, x) => n + spentOf(x), 0)
+
+/** The role a stage of the flow waits on. */
+export const STAGE_ROLE: Record<string, string> = {
+  splitting: 'PM',
+  confirming: 'PM',
+  writing_tests: 'QA',
+  adding_tests: 'QA',
+  designing: 'UI/UX',
+  planning: 'Tech lead',
+  reviewing: 'Tech lead',
+  building: '全端',
+  testing: 'crew',
+}
+
+/**
+ * Where a running flow stopped, as the board and crew's record say it: the
+ * stage, the task in hand and the commit it was at, so a later stop of the
+ * same task (another round of changes) is another stop. Undefined while
+ * anyone is at work, work is queued, or the person has the flow to decide on;
+ * the brain's proposal on usage is no such thing.
+ */
+export const stopKey = (l: CrewLive, running: readonly string[]): string | undefined => {
+  if (l.prdPath === null || l.paused !== undefined || !running.includes(l.flow.stage)) return undefined
+  if ((['pm', 'qa', 'uiux', 'techlead', 'fullstack'] as const).some(r => l.roles[r].state === 'working') || Object.values(l.pending).some(p => p.length > 0)) return undefined
+  if (l.questions.some(q => q.status === 'open' && !(q.from === 'brain' && q.item === 'tune'))) return undefined
+  return `${l.flow.stage}:${l.flow.building ?? ''}:${l.flow.fixing ?? ''}:${l.flow.reviewing?.task ?? ''}:${l.flow.reviewing?.sha ?? ''}`
+}
+
 /** The least a day, or a role's own use, must be before a share or a hit rate says anything. */
 const SIGNIFICANT = 50_000
 
 /** A role's name joined to what follows: `全端今日佔`, `Tech lead 今日佔`. */
-export const said = (role: RoleId, rest: string): string => (/[A-Za-z]$/.test(ROLE_NAMES[role]) ? `${ROLE_NAMES[role]} ${rest}` : `${ROLE_NAMES[role]}${rest}`)
+export const roleSays = (role: RoleId, rest: string): string => (/[A-Za-z]$/.test(ROLE_NAMES[role]) ? `${ROLE_NAMES[role]} ${rest}` : `${ROLE_NAMES[role]}${rest}`)
 
 /**
  * What crew tells the brain about usage, worked out in code: a role over 40%
@@ -116,12 +162,12 @@ export const usageSignals = (live: CrewLive): { key: string; text: string }[] =>
   for (const role of ['pm', 'uiux', 'fullstack', 'qa', 'techlead'] as const) {
     const u = live.usage[role]
     const spent = spentOf(u)
-    if (all >= SIGNIFICANT && spent / all > 0.4) out.push({ key: `share:${role}`, text: said(role, `今日佔 ${Math.round((spent / all) * 100)}%（超過 40%）`) })
+    if (all >= SIGNIFICANT && spent / all > 0.4) out.push({ key: `share:${role}`, text: roleSays(role, `今日佔 ${Math.round((spent / all) * 100)}%（超過 40%）`) })
     const rate = u === undefined ? 100 : hitRate({ role, ...u })
-    if (spent >= SIGNIFICANT && rate < 60) out.push({ key: `hit:${role}`, text: said(role, `快取命中率 ${rate}%（低於 60%）`) })
+    if (spent >= SIGNIFICANT && rate < 60) out.push({ key: `hit:${role}`, text: roleSays(role, `快取命中率 ${rate}%（低於 60%）`) })
     const r = live.roles[role]
     const limit = live.tuned?.[role]?.limit ?? r.limit
-    if (limit !== undefined && r.context > limit) out.push({ key: `context:${role}`, text: said(role, `的 context ${Math.round(r.context / 1000)}K 超過門檻 ${Math.round(limit / 1000)}K`) })
+    if (limit !== undefined && r.context > limit) out.push({ key: `context:${role}`, text: roleSays(role, `的 context ${Math.round(r.context / 1000)}K 超過門檻 ${Math.round(limit / 1000)}K`) })
   }
   for (const [item, messages] of Object.entries(live.threads)) {
     // The latest run of messages two senders passed back and forth, newest first.
@@ -546,7 +592,7 @@ export const snapshotOf = ({
       id: t.id,
       text: t.text,
       before: t.before,
-      ...(t.pending === true ? { pending: t.id } : (live.usage[t.role]?.wakes ?? 0) > t.wakes ? { after: metricsOf(live, t.role) } : {}),
+      ...(t.pending === true ? { pending: t.id } : sinceOf(live, t)),
     })),
     injected: { count: live.injected.count, average: live.injected.count === 0 ? 0 : Math.round(live.injected.tokens / live.injected.count) },
     chores: total(live.usage.memory),
