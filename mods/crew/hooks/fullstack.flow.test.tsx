@@ -516,6 +516,27 @@ describe('the full-stack', () => {
     expect(text).not.toBe('')
   })
 
+  test('says a change to its memory made before its own write to it, and a memory deleted, during the full-stack’s run', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    const save = (text: string) => $.tool.call({ tool: 'mcp__crew__memory_save', tool_use_id: `m-${text}`, agentId: 'a-techlead-4', type: 'MEM', text } as never)
+    await save('金流用 Stripe')
+    const memory = `${ROOT}/.crew/memory/memories.jsonl`
+    // Someone edits the memory, then the tech lead saves one: crew's write keeps the edit, and the edit is still told.
+    w.disk.set(memory, `${w.disk.get(memory) ?? ''}{"id":"MEM-099","type":"MEM","text":"手改"}\n`)
+    await save('退款走原路')
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    expect(w.toasts.filter(t => /crew 的檔案 \.crew\/memory\/memories\.jsonl 被 crew 以外的人改了/.test(t))).toHaveLength(1)
+    await approve($, 'TASK-001')
+    // The memory is deleted during the next run: that is a change too.
+    w.disk.delete(memory)
+    w.commit('TASK-002: 取消流程')
+    await done($, 'a-fullstack-5')
+    expect(w.toasts.filter(t => /crew 的檔案 \.crew\/memory\/memories\.jsonl 被 crew 以外的人改了/.test(t))).toHaveLength(2)
+  })
+
   test('counts its memory as changed when reading it fails, rather than stopping there', async ($, on) => {
     const w = world($, on)
     await start($)
@@ -599,6 +620,21 @@ describe('the full-stack', () => {
     expect(await paneText($, 'progress')).toMatch(/→ 實作 0\/2/)
     // The branch is still crew's: a reset is no branch made again.
     expect(w.toasts.some(t => /不是 crew 自己的分支/.test(t))).toBe(false)
+  })
+
+  test('keeps a task’s commit and approval once crew’s branch is merged into another and kept', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.commit('TASK-001: 方案頁')
+    await done($, 'a-fullstack-5')
+    await approve($, 'TASK-001')
+    // The person merges crew's branch into main, and keeps crew's branch.
+    w.git.branches.set('main', [...(w.git.branches.get('crew/prd') ?? [])])
+    await w.clock.advance(40_000)
+    const task = (JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[]; crew_review?: { verdict: string } }[] }[] }).prd_items.flatMap(i => i.tasks ?? []).find(t => t.id === 'TASK-001')
+    expect(task?.crew_commits).toHaveLength(1)
+    expect(task?.crew_review?.verdict).toBe('approve')
   })
 
   test('does not take a file merely named like crew’s own for one', async ($, on) => {

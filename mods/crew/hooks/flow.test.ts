@@ -783,7 +783,8 @@ describe('the PRD as the flow holds the board to it', () => {
       const landed = step(broken.state, { type: 'tests_ran', board: passedOf(all) }).state
       expect(landed.stage).toBe('done')
       expect(landed.resumeAt).toBeUndefined()
-      // The person's answer gives the full-stack three runs afresh.
+      // The person's answer gives the tests three runs afresh, run again or with the full-stack fixing them.
+      expect(step({ ...third.state, runs: 4 }, { type: 'answered', question: 'q', answer: '再跑', escalation: true, board: all }).state).toMatchObject({ stage: 'testing', runs: 0 })
       expect(step({ ...third.state, building: 'TASK-001' }, { type: 'answered', question: 'q', answer: '再修', escalation: true, board: all }).state).toMatchObject({ stage: 'building', runs: 0 })
     })
 
@@ -843,6 +844,32 @@ describe('the PRD as the flow holds the board to it', () => {
       const r = step(s, { type: 'role_done', role: 'fullstack', board: asked })
       expect(r.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', item: 'TASK-002' })
       expect((r.actions[0] as { text: string }).text).toMatch(/TASK-002 還沒有新的 commit/)
+    })
+
+    test('does not take a task’s commit taken off its branch while the full-stack fixes the tests as the fix', () => {
+      const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
+      const fix = step({ stage: 'testing', round: 0, retries: 0 }, { type: 'tests_ran', board: passedOf(all, ['TC-001']) })
+      // TASK-002's commit is reset away meanwhile: no fix landed.
+      const gone = withCommits(all, new Map([['TASK-001', ['abc0000']]])) ?? all
+      const r = step(fix.state, { type: 'role_done', role: 'fullstack', board: gone })
+      expect((r.actions[0] as { text: string }).text).toMatch(/TASK-001 還沒有新的 commit/)
+    })
+
+    test('starts a task planned while the full-stack fixed the tests afresh, no longer measured by the run', () => {
+      const all = reviewed(reviewed(committed(plannedTwo(), ['TASK-001', 'TASK-002']), 'TASK-001', 'abc0000', 'approve'), 'TASK-002', 'abc0001', 'approve')
+      const fix = step({ stage: 'testing', round: 0, retries: 0 }, { type: 'tests_ran', board: passedOf(all, ['TC-001']) })
+      expect(fix.state.tips).toBeDefined()
+      const more = applyOps(all, [{ op: 'add_criterion', feature: 'PRD-001', text: '可以改方案' }], ctx('pm'))
+      if (!more.ok) throw new Error(more.errors.join())
+      const tested2 = applyOps(more.tracker, [tc(['AC-003'])], ctx('qa'))
+      if (!tested2.ok) throw new Error(tested2.errors.join())
+      const withTask = applyOps(tested2.tracker, [{ op: 'add_task', feature: 'PRD-001', criteria: ['AC-003'], title: '改方案', detail: '', size: 'S' } as Op], ctx('techlead'))
+      if (!withTask.ok) throw new Error(withTask.errors.join())
+      let s = step(fix.state, { type: 'role_done', role: 'pm', board: more.tracker, working: ['fullstack'] }).state
+      s = step(s, { type: 'role_done', role: 'qa', board: tested2.tracker, working: ['fullstack'] }).state
+      const r = step(s, { type: 'role_done', role: 'techlead', board: withTask.tracker })
+      expect(r.state).toMatchObject({ stage: 'building', building: 'TASK-003' })
+      expect(r.state.tips).toBeUndefined()
     })
 
     test('counts a test-run fix committed under another task’s id', () => {
@@ -1002,6 +1029,13 @@ describe('the PRD as the flow holds the board to it', () => {
       const r = step(s, { type: 'answered', question: 'q', answer: '照規格', escalation: true, board: committed(plannedTwo(), ['TASK-001']) })
       expect(r.state).toMatchObject({ stage: 'reviewing', retries: 0 })
       expect(r.actions[0]).toMatchObject({ type: 'message', role: 'techlead', item: 'TASK-001' })
+      // On the route a review of that task takes, by its size, not a plan's.
+      const big = committed(plannedTwo(), ['TASK-001'])
+      const xl: Tracker = { ...big, prd_items: big.prd_items.map(i => ({ ...i, tasks: (i.tasks ?? []).map(t => ({ ...(t as object), size: 'XL' })) })) }
+      const back = step(s, { type: 'answered', question: 'q', answer: '照規格', escalation: true, board: xl })
+      const asked = step({ ...s, stage: 'reviewing', retries: 0 }, { type: 'role_done', role: 'techlead', board: xl })
+      expect((back.actions[0] as { route: unknown }).route).toEqual((asked.actions[0] as { route: unknown }).route)
+      expect((back.actions[0] as { route: { label: string } }).route.label).toBe('Opus')
     })
 
     test('sends the full-stack back to a task with no commit, then asks the person, whose answer goes to the full-stack', () => {

@@ -282,10 +282,10 @@ const boardProblem = (): string | undefined => problemOf(cache.boardStatus)
  */
 const ownFiles: { written: Map<string, string>; foreign: Set<string> } = { written: new Map(), foreign: new Set() }
 
-/** What one of crew's files holds now, as a fingerprint: undefined when it is not there; a link, a path out of the repo, or a file it cannot read is not read, and counts as a change. */
-async function ownFileNow($: any, path: string): Promise<string | undefined> {
+/** What one of crew's files holds now, as a fingerprint, or that it is gone; a link, a path out of the repo, or a file it cannot read is not read, and counts as a change. */
+async function ownFileNow($: any, path: string): Promise<string> {
   try {
-    if (!(await $.fs.exists(path))) return undefined
+    if (!(await $.fs.exists(path))) return GONE
     if (!(await staysIn($, path)) || ((await $.fs.stat(path)) as { kind: string }).kind !== 'file') return UNREADABLE
     return fingerprint(await $.fs.read(path))
   } catch {
@@ -294,21 +294,19 @@ async function ownFileNow($: any, path: string): Promise<string | undefined> {
 }
 
 const UNREADABLE = 'unreadable'
+/** crew never deletes its own files: one gone is someone else's change. */
+const GONE = 'gone'
 
 /** One of crew's files, changed since crew last wrote it or set the mark, is someone else's change: checked before each of crew's own writes, and after a full-stack run. */
 async function noteForeign($: any, path: string) {
   const last = ownFiles.written.get(path)
   if (last === undefined) return
-  const now = await ownFileNow($, path)
-  if (now !== undefined && now !== last) ownFiles.foreign.add(path)
+  if ((await ownFileNow($, path)) !== last) ownFiles.foreign.add(path)
 }
 
 /** crew's files as they are now become the mark: a change made before now is not the next run's to tell. */
 async function markOwnFiles($: any) {
-  for (const path of ownFiles.written.keys()) {
-    const now = await ownFileNow($, path)
-    if (now !== undefined) ownFiles.written.set(path, now)
-  }
+  for (const path of ownFiles.written.keys()) ownFiles.written.set(path, await ownFileNow($, path))
   ownFiles.foreign.clear()
 }
 
