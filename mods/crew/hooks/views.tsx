@@ -10,6 +10,8 @@ import {
   tokens,
 } from './model'
 import type { Decision, Feature, Gate, Item, ItemStatus, LayerState, Progress, RequirementRow, RoleId, RoleRow, Route, Snapshot, StageCell, Tuning } from './model'
+import { redact } from './memory'
+import { cut } from './prd'
 
 /** The elements a surface draws with, as `$.ui.resolve(e)` hands them over; a phone's has no text field or picker. */
 export type Elements = { Box: any; Text: any; Button: any; Input?: any; Select?: any }
@@ -438,7 +440,12 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
         </Box>
       )}
       {snap.progress !== null && ProgressSummary({ el, p: snap.progress })}
-      {snap.prd === null && StartScreen({ el, snap, act })}
+      {snap.boardProblem?.prd !== undefined && (
+        <Text color="warning">
+          ⚠ crew 停在 {snap.boardProblem.prd}：{snap.boardProblem.text}
+        </Text>
+      )}
+      {snap.prd === null && snap.boardProblem?.prd === undefined && StartScreen({ el, snap, act })}
       <Box flexDirection="column">
         {Row({ el, cells: [['11%', '角色', { dimColor: true }], ['9%', '狀態', { dimColor: true }], ['28%', '正在做', { dimColor: true }], ['17%', '模型', { dimColor: true }], ['11%', 'context', { dimColor: true }], ['8%', '今日', { dimColor: true }]] })}
         {snap.roles.map(r => (
@@ -551,6 +558,7 @@ function StartScreen({ el, snap, act }: { el: Elements; snap: Snapshot; act: Act
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold>crew 已載入，還沒有開始的 PRD。</Text>
+      {snap.boardProblem !== undefined && <Text color="warning">⚠ {snap.boardProblem.text}</Text>}
       {PrdPicker({ el, snap, act, id: 'prd-pick', label: 'PRD 檔案' })}
       {Field({ el, id: 'prd-path', label: '或輸入路徑', placeholder: 'docs/PRD.md', submit: '開始', what: 'PRD 路徑', onSubmit: path => act.start(path) })}
       <Box flexDirection="row" gap={1}>
@@ -835,6 +843,20 @@ function Alerts({ el, alerts }: { el: Elements; alerts: Snapshot['alerts'] }) {
   )
 }
 
+/** Why the pane could not be drawn, on one line, masked: an error can carry what a board or a file held. */
+export const paneFailure = (error: unknown): string => `crew 面板畫不出來：${cut(redact(String(error)).replace(/\s+/g, ' ').trim(), 200)}`
+
+/** The pane when crew could not draw it: says why, rather than an empty pane. */
+export function PaneFailed({ el, error }: { el: Elements; error: unknown }) {
+  const { Box, Text } = el
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text color="error">{paneFailure(error)}</Text>
+      <Text dimColor>請回報這個問題。</Text>
+    </Box>
+  )
+}
+
 /** The whole pane: header, tabs and the open tab. */
 export function CrewPane({ el, snap, view, act, isDemo = true }: { el: Elements; snap: Snapshot; view: View; act: Actions; isDemo?: boolean }) {
   const { Box } = el
@@ -862,6 +884,7 @@ export function bandText(snap: Snapshot, label = 'crew（設計稿）'): string 
     .join(' · ')
   const parts = [
     label,
+    ...(snap.boardProblem === undefined ? [] : ['⚠ 看板讀不到']),
     ...(snap.progress !== null ? [`進度 ${percentOf(snap.progress)}%（${snap.progress.done}/${snap.progress.total}）`] : []),
     ...(snap.alignment === undefined ? [] : [alignmentWord(snap.alignment)]),
     `待你決定 ${snap.decisions.length}`,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { applyOps, approvedNow, criteriaOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf, tipOf } from './board'
+import { applyOps, approvedNow, criteriaOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, isTracker, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf, tipOf, trackerProblem } from './board'
 import type { Op, Tracker } from './board'
 
 const CTX = { by: 'pm', today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } } as const
@@ -31,6 +31,60 @@ describe('newTracker', () => {
     for (const key of ['total_prds', 'verified_prds', 'partial_prds', 'blocked_prds', 'not_covered_prds', 'total_test_cases']) {
       expect(t.summary).toHaveProperty(key)
     }
+  })
+})
+
+describe('isTracker', () => {
+  test('takes a board crew writes, new or worked on', () => {
+    expect(isTracker(newTracker('shop'))).toBe(true)
+    const worked = withTwoFeatures()
+    const r = run(worked, [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e' }], 'qa')
+    if (!r.ok) throw new Error(r.errors.join('; '))
+    expect(isTracker(r.tracker)).toBe(true)
+    expect(isTracker(JSON.parse(JSON.stringify({ ...r.tracker, decisions: undefined })))).toBe(true)
+  })
+
+  test('takes no other file named prd-tracker.json: one without features, or with features crew cannot read', () => {
+    // Another tool's tracker: criteria, modules and decisions of its own, and no prd_items.
+    expect(isTracker({ project: 'p', acceptance_criteria: [{ id: 'AC-1', text: 't' }], modules: [], decisions: [{ date: '2026-08-01', topic: 't' }] })).toBe(false)
+    for (const v of [null, [], 'board', 3]) expect(isTracker(v)).toBe(false)
+    const base = newTracker('shop')
+    const item = withTwoFeatures().prd_items[0]
+    expect(isTracker({ ...base, prd_items: {} })).toBe(false)
+    expect(isTracker({ ...base, decisions: {} })).toBe(false)
+    expect(isTracker({ ...base, decisions: [null] })).toBe(false)
+    expect(isTracker({ ...base, prd_items: [null] })).toBe(false)
+    expect(isTracker({ ...base, prd_items: [{ ...item, id: 1 }] })).toBe(false)
+    expect(isTracker({ ...base, prd_items: [{ ...item, title: undefined }] })).toBe(false)
+    expect(isTracker({ ...base, prd_items: [{ ...item, acceptance_criteria: 'AC-001' }] })).toBe(false)
+    expect(isTracker({ ...base, prd_items: [{ ...item, acceptance_criteria: [{ id: 'AC-001' }] }] })).toBe(false)
+    expect(isTracker({ ...base, prd_items: [{ ...item, test_cases: undefined }] })).toBe(false)
+    expect(isTracker({ ...base, prd_items: [{ ...item, test_cases: [{ title: 'no id' }] }] })).toBe(false)
+    expect(isTracker({ ...base, prd_items: [{ ...item, test_cases: [{ id: 'TC-001', acceptance_criteria: 'AC-001' }] }] })).toBe(false)
+  })
+})
+
+describe('trackerProblem', () => {
+  test('tells another tool’s file from a board with a part crew cannot read, and names that part', () => {
+    expect(trackerProblem(newTracker('shop'))).toBeUndefined()
+    expect(trackerProblem({ project: 'p', modules: [] })).toEqual({ isOther: true, why: '沒有 prd_items 清單' })
+    expect(trackerProblem([])).toEqual({ isOther: true, why: '沒有 prd_items 清單' })
+    const board = withTwoFeatures()
+    const [first, second] = board.prd_items
+    if (first === undefined || second === undefined) throw new Error('two features')
+    const { test_cases: _, ...noCases } = second
+    expect(trackerProblem({ ...board, prd_items: [first, noCases] })).toEqual({ isOther: false, why: 'PRD-002 的 test_cases 不是清單' })
+    expect(trackerProblem({ ...board, prd_items: [first, { ...second, acceptance_criteria: [3] }] })).toEqual({ isOther: false, why: 'PRD-002 的 acceptance_criteria 有讀不懂的項目' })
+    expect(trackerProblem({ ...board, prd_items: [first, { ...second, test_cases: [{}] }] })).toEqual({ isOther: false, why: 'PRD-002 的 test_cases 有讀不懂的項目' })
+    expect(trackerProblem({ ...board, prd_items: [first, { ...second, title: 2 }] })).toEqual({ isOther: false, why: 'PRD-002 沒有 title' })
+    expect(trackerProblem({ ...board, prd_items: [first, { ...second, id: 2 }] })).toEqual({ isOther: false, why: 'prd_items 第 2 項沒有 id' })
+    expect(trackerProblem({ ...board, prd_items: [first, 'x'] })).toEqual({ isOther: false, why: 'prd_items 第 2 項不是物件' })
+    expect(trackerProblem({ ...board, decisions: 'x' })).toEqual({ isOther: false, why: 'decisions 不是清單' })
+    expect(trackerProblem({ ...board, decisions: [{ id: 'DEC-001' }, null] })).toEqual({ isOther: false, why: 'decisions 有空的項目' })
+    // A decision written as a line of text has no fields to read, and is no problem.
+    expect(trackerProblem({ ...board, decisions: ['先只做月繳', { id: 'DEC-001' }] })).toBeUndefined()
+    // A long id is cut, so the reason stays one line.
+    expect(trackerProblem({ ...board, prd_items: [{ ...first, id: 'P'.repeat(80), title: 1 }] })?.why).toBe(`${'P'.repeat(40)}… 沒有 title`)
   })
 })
 
@@ -443,6 +497,11 @@ describe('parseOps', () => {
 })
 
 describe('tasks the tech lead breaks the criteria into', () => {
+  test('keep only the commit shas a board holds as text', () => {
+    const item = { ...withTwoFeatures().prd_items[0], tasks: [{ id: 'TASK-001', title: 'a', crew_commits: 'abc1234' }, { id: 'TASK-002', title: 'b', crew_commits: ['abc1234', 5, null] }, { id: 'TASK-003', title: 'c' }] } as unknown as Tracker['prd_items'][number]
+    expect(tasksOf(item).map(t => t.crew_commits)).toEqual([undefined, ['abc1234'], undefined])
+  })
+
   const task = (criteria: string[], title = '方案頁', extra: Record<string, unknown> = {}): Op => ({ op: 'add_task', feature: 'PRD-001', criteria, title, detail: '做方案選擇頁', size: 'M', ...extra }) as Op
 
   test('land under the feature, numbered, with the criteria they serve', () => {
@@ -585,6 +644,15 @@ describe('the review of a task', () => {
     const text = renderBoard(b)
     expect(text).toMatch(/任務 TASK-001 方案頁（S）← AC-001 · commit bbbbbbb · review 通過/)
     expect(text).toMatch(/任務 TASK-002 取消流程（M）← AC-002、AC-003 · commit ccccccc · review 過期（新的 commit 還沒 review）/)
+  })
+})
+
+describe('G6 on a board edited by hand', () => {
+  test('names a test case by its id when its title is not text', () => {
+    const r = run(withTwoFeatures(), [{ op: 'add_test_case', criteria: ['AC-001'], title: '月繳', steps: ['s'], expected: 'e' }] as Op[], 'qa')
+    if (!r.ok) throw new Error(r.errors.join())
+    const odd = { ...r.tracker, prd_items: r.tracker.prd_items.map(i => ({ ...i, test_cases: i.test_cases.map(c => ({ ...c, title: { text: 'x' } }) as unknown as typeof c) })) }
+    expect(gateG6(odd).gaps.map(g => g.title)).toEqual(['TC-001'])
   })
 })
 

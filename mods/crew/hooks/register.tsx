@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { CrewLive, CrewMessage, CrewScenario, CrewTab, CrewTuning, CrewWork } from '../types'
-import { applyOps, criteriaOf, decisionOf, designsOf, gateG1, gateG4, gateG6, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, reviewOf, tasksOf } from './board'
+import { applyOps, criteriaOf, decisionOf, designsOf, gateG1, gateG4, gateG6, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, reviewOf, tasksOf, trackerProblem } from './board'
 import type { Tracker } from './board'
 import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './consolidate'
 import { DEMO } from './demo'
@@ -25,7 +25,7 @@ import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
 import type { CrewRole } from './roles'
 import { floorOf, labelOf, routeFor, tunedRoute } from './router'
 import type { Route, Tuning } from './router'
-import { actOn, bandText, CrewPane } from './views'
+import { actOn, bandText, CrewPane, PaneFailed } from './views'
 import type { Actions } from './views'
 
 const PANE = 'crew'
@@ -96,11 +96,12 @@ const ending = { count: 0 }
 /** How many role wakes are under way: the roles are offered to the engine only then. */
 const waking = { count: 0 }
 
-/** The board and memories as last read, the file versions they were read at, and whether the board could be read. */
-const cache: { board: Tracker | null | undefined; boardAt: string; boardStatus: 'ok' | 'missing' | 'unreadable' | 'outside'; memoriesAt: string } = {
+/** The board and memories as last read, the file versions they were read at, whether the board could be read, and the part crew could not read. */
+const cache: { board: Tracker | null | undefined; boardAt: string; boardStatus: 'ok' | 'missing' | 'unreadable' | 'foreign' | 'outside'; boardWhy: string; memoriesAt: string } = {
   board: undefined,
   boardAt: '',
   boardStatus: 'missing',
+  boardWhy: '',
   memoriesAt: '',
 }
 
@@ -239,21 +240,31 @@ async function readCrew($: any, path: string): Promise<string | undefined> {
 type BoardStatus = typeof cache.boardStatus
 
 /** The board on disk and whether it could be read, read again whenever the file changed, by crew or anyone else. */
-async function boardState($: any): Promise<{ board: Tracker | null; status: BoardStatus }> {
-  if (files.board === '') return { board: null, status: 'missing' }
+async function boardState($: any): Promise<{ board: Tracker | null; status: BoardStatus; why: string }> {
+  if (files.board === '') return { board: null, status: 'missing', why: '' }
   const at = await versionOf($, files.board)
-  if (cache.board !== undefined && at === cache.boardAt) return { board: cache.board, status: cache.boardStatus }
+  if (cache.board !== undefined && at === cache.boardAt) return { board: cache.board, status: cache.boardStatus, why: cache.boardWhy }
   let board: Tracker | null = null
   let status: BoardStatus = 'missing'
+  let why = ''
   if (at !== 'missing') {
     if (!(await staysIn($, files.board))) {
       status = 'outside'
     } else {
       try {
-        board = JSON.parse(await $.fs.read(files.board)) as Tracker
-        status = 'ok'
+        const parsed: unknown = JSON.parse(await $.fs.read(files.board))
+        // Another tool's file of the same name, or a board with a part crew cannot read, is the person's: crew neither reads nor writes it.
+        const problem = trackerProblem(parsed)
+        if (problem === undefined) {
+          board = parsed as Tracker
+          status = 'ok'
+        } else {
+          status = problem.isOther ? 'foreign' : 'unreadable'
+          why = problem.why
+        }
       } catch (err) {
-        $.ui.log(`crew: prd-tracker.json does not parse: ${String(err)}`)
+        // The parse error can quote what the file held.
+        $.ui.log(`crew: prd-tracker.json does not parse: ${redact(String(err))}`)
         status = 'unreadable'
       }
     }
@@ -262,7 +273,8 @@ async function boardState($: any): Promise<{ board: Tracker | null; status: Boar
   cache.board = board
   cache.boardAt = at
   cache.boardStatus = status
-  return { board, status }
+  cache.boardWhy = why
+  return { board, status, why }
 }
 
 async function loadBoard($: any): Promise<Tracker | null> {
@@ -270,15 +282,17 @@ async function loadBoard($: any): Promise<Tracker | null> {
 }
 
 /** Why crew will not change a board in this state, if it will not: a board it cannot read is the person's to fix, never replaced. */
-const problemOf = (status: BoardStatus): string | undefined =>
+const problemOf = (status: BoardStatus, why: string): string | undefined =>
   status === 'unreadable'
-    ? 'prd-tracker.json 讀不懂（可能有 merge 衝突或格式錯誤）。請先修好；crew 沒有改動它。'
-    : status === 'outside'
-      ? 'prd-tracker.json 是連結或指到 repo 外，crew 不讀也不寫它。'
-      : undefined
+    ? `prd-tracker.json 讀不懂${why === '' ? '（可能有 merge 衝突或格式錯誤）' : `：${why}`}。請先修好；crew 沒有改動它。`
+    : status === 'foreign'
+      ? `prd-tracker.json 不是 crew 的看板格式（${why}），應該是這個 repo 自己或別的工具在用。crew 不讀也不改它，所以在這個 repo 還沒辦法開始。`
+      : status === 'outside'
+        ? 'prd-tracker.json 是連結或指到 repo 外，crew 不讀也不寫它。'
+        : undefined
 
 /** The problem with the board as last read, if any. */
-const boardProblem = (): string | undefined => problemOf(cache.boardStatus)
+const boardProblem = (): string | undefined => problemOf(cache.boardStatus, cache.boardWhy)
 
 /**
  * crew's own files (the board, the memory) as crew last wrote them, and those
@@ -332,6 +346,7 @@ async function saveBoard($: any, board: Tracker) {
   cache.board = board
   cache.boardAt = ''
   cache.boardStatus = 'ok'
+  cache.boardWhy = ''
 }
 
 /**
@@ -341,8 +356,8 @@ async function saveBoard($: any, board: Tracker) {
  */
 async function changeBoard<T>($: any, change: (board: Tracker | null) => Promise<{ board?: Tracker; value: T }>): Promise<T> {
   return serial('board', async () => {
-    const { board, status } = await boardState($)
-    const problem = problemOf(status)
+    const { board, status, why } = await boardState($)
+    const problem = problemOf(status, why)
     if (problem !== undefined) throw new BoardRefused(problem)
     const r = await change(board)
     if (r.board !== undefined) await saveBoard($, r.board)
@@ -654,8 +669,9 @@ async function remember($: any, input: MemoryInput, knownBy?: CrewRole): Promise
       if (board === null || boardProblem() !== undefined) return saved
       const entry = saved.entry
       const decisions = (board.decisions ?? []).map(d => {
+        // Only the decision this one replaces changes: one with no id, or a line of text, is left as it is.
         const old = d as { id?: unknown }
-        return old.id === input.supersedes ? { ...(d as object), status: 'superseded', superseded_by: entry.id } : d
+        return input.supersedes !== undefined && old.id === input.supersedes ? { ...(d as object), status: 'superseded', superseded_by: entry.id } : d
       })
       decisions.push({ id: entry.id, date: dayOf(entry.t), status: 'accepted', by: entry.source, decision: entry.text, refs: entry.refs })
       try {
@@ -2509,7 +2525,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
   if (verb === 'status') {
     const board = await loadBoard($)
     const l = await read($, live)
-    const s = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), prd: await prdView($) })
+    const s = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), prd: await prdView($), boardProblem: boardProblem() })
     return bandText(s, `crew（${l.flow.stage}）`)
   }
   await $.ui.open({ id: PANE, title: 'Crew' })
@@ -2823,14 +2839,14 @@ async function liveSnapshot($: any, board: Tracker | null, l: CrewLive): Promise
       return await what()
     } catch (err) {
       try {
-        $.ui.log(`crew: the pane drew without part of its state: ${String(err)}`, { to: 'debug' })
+        $.ui.log(`crew: the pane drew without part of its state: ${redact(String(err))}`, { to: 'debug' })
       } catch {
         // A log that cannot be written changes nothing the pane draws.
       }
       return fallback
     }
   }
-  const snap = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await tried(() => loadMemories($), []), prd: await tried(() => prdView($), undefined) })
+  const snap = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await tried(() => loadMemories($), []), prd: await tried(() => prdView($), undefined), boardProblem: boardProblem() })
   return tried(() => withPaneState($, snap, board, l), snap)
 }
 
@@ -2873,6 +2889,7 @@ export const register: Register = on => {
     cache.board = undefined
     cache.boardAt = ''
     cache.boardStatus = 'missing'
+    cache.boardWhy = ''
     cache.memoriesAt = ''
     roots.real = ''
     warned.clear()
@@ -3289,19 +3306,25 @@ export const register: Register = on => {
     // A phone's table has no text field or picker: the pane says where to type instead.
     const table = $.ui.resolve(e)
     const el = e.surface === 'mobile' ? { Box: table.Box, Text: table.Text, Button: table.Button } : table
-    const demo = await read($, isDemo)
-    const l = await read($, live)
-    const board = demo ? null : await loadBoard($)
-    const view = {
-      tab: await read($, tab),
-      scenario: await read($, scenario),
-      thread: await read($, thread),
-      gate: await read($, gate),
-      asking: await read($, asking),
-      confirming: await read($, confirming),
+    try {
+      const demo = await read($, isDemo)
+      const l = await read($, live)
+      const board = demo ? null : await loadBoard($)
+      const view = {
+        tab: await read($, tab),
+        scenario: await read($, scenario),
+        thread: await read($, thread),
+        gate: await read($, gate),
+        asking: await read($, asking),
+        confirming: await read($, confirming),
+      }
+      const snap = demo ? DEMO[view.scenario] : await liveSnapshot($, board, l)
+      return CrewPane({ el, snap, view, act: demo ? previewActions($, snap) : drawnActions($), isDemo: demo })
+    } catch (err) {
+      // A pane that cannot draw says why: the engine would leave it empty.
+      $.ui.log(`crew: the pane could not draw: ${redact(String(err))}`, { to: 'debug' })
+      return PaneFailed({ el, error: err })
     }
-    const snap = demo ? DEMO[view.scenario] : await liveSnapshot($, board, l)
-    return CrewPane({ el, snap, view, act: demo ? previewActions($, snap) : drawnActions($), isDemo: demo })
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -3316,7 +3339,8 @@ export const register: Register = on => {
     }
     const l = await read($, live)
     if (l.prdPath === null) return next(e)
-    const snap = snapshotOf({ board: await loadBoard($), live: l, now: await $.clock.now(), prd: await prdView($) })
+    const board = await loadBoard($)
+    const snap = snapshotOf({ board, live: l, now: await $.clock.now(), prd: await prdView($), boardProblem: boardProblem() })
     return (
       <Text dimColor wrap="truncate-end">
         {bandText(snap, 'crew')}

@@ -79,6 +79,17 @@ describe('a broken file left behind', () => {
     await done($, 'a-pm-1')
     expect(w.logs.some(l => /prd-tracker\.json does not parse/.test(l))).toBe(true)
   })
+
+  test('a board that does not parse is logged masked: the parse error can quote what the file held', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    const token = `github_pat_${'A'.repeat(30)}`
+    w.disk.set(`${ROOT}/prd-tracker.json`, `{ "token": ${token} }`)
+    await done($, 'a-pm-1')
+    expect(w.logs.some(l => /prd-tracker\.json does not parse/.test(l))).toBe(true)
+    expect(w.logs.join('\n')).not.toContain(token)
+  })
 })
 
 describe('the log', () => {

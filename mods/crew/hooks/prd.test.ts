@@ -428,6 +428,11 @@ describe('earlierFor', () => {
   const [a, b] = requirementsOf('- 甲\n- 乙')
   const board = (crew_prd: unknown): Tracker => ({ ...newTracker('x'), crew_prd }) as unknown as Tracker
 
+  test('reads a crew_prd that is not an object as none', () => {
+    expect(earlierFor(board(null), 'docs/B.md')).toEqual({})
+    expect(earlierFor(board('docs/A.md'), 'docs/B.md')).toEqual({})
+  })
+
   test('moves the PRD crew worked on before to the earlier ones, with its requirement ids', () => {
     expect(earlierFor(board({ path: 'docs/A.md', requirements: [a] }), 'docs/B.md')).toEqual({ earlier: [{ path: 'docs/A.md', ids: [a?.id] }] })
     expect(earlierFor(board({ path: 'docs/A.md', requirements: [a] }), 'docs/A.md')).toEqual({})

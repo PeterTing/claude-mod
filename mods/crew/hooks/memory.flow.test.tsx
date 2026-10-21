@@ -316,3 +316,20 @@ describe('crew compaction', () => {
     expect(seen[1]).toBeUndefined()
   })
 })
+
+describe('a decision crew numbers', () => {
+  test('leaves the board’s other decisions as they are, those without an id too', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await splitAndTest($)
+    // Decisions written by hand or by another tool: a line of text, and one with no id.
+    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as Record<string, unknown>
+    const theirs = ['先只做月繳', { date: '2026-08-01', topic: '方案', decision: '年繳下一版' }]
+    w.disk.set(`${ROOT}/prd-tracker.json`, `${JSON.stringify({ ...board, decisions: theirs }, null, 2)}\n`)
+    const r = await save($, 'a-qa-2', { type: 'DEC', text: 'AC-002 指使用者的時區' })
+    expect(String(r.result)).toMatch(/DEC-001/)
+    const after = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { decisions: unknown[] }
+    expect(after.decisions.slice(0, 2)).toEqual(theirs)
+    expect(after.decisions[2]).toMatchObject({ id: 'DEC-001', decision: 'AC-002 指使用者的時區' })
+  })
+})

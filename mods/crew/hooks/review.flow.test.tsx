@@ -6,7 +6,7 @@ import type { Op } from './board'
 import { parseMemories } from './memory'
 import { requirementsOf } from './prd'
 import { AGENT_SPECS, TOOLS } from './roles'
-import { command, done, ROOT, SPLIT, start, world, write } from './world'
+import { command, done, paneUi, ROOT, SPLIT, start, textOf, world, write } from './world'
 
 /** Regression tests for what the pre-release review found. */
 
@@ -303,6 +303,54 @@ describe('a board crew cannot read', () => {
     await $.command.run(command('reset'))
     expect((await $.command.run(command('start docs/PRD.md'))).text).toMatch(/prd-tracker\.json 讀不懂/)
     expect(w.disk.get(`${ROOT}/prd-tracker.json`)).toBe(broken)
+  })
+
+  test('of another tool is neither read nor changed: the pane says why, and nothing starts', async ($, on) => {
+    const w = world($, on)
+    // Another tool's tracker under the same name: its own criteria, modules and decisions, no features.
+    const theirs = `${JSON.stringify({ project: 'repo', acceptance_criteria: [{ id: 'AC-1', text: 't', status: 'done' }], modules: [{ id: 'M1', name: 'm' }], decisions: [{ date: '2026-08-01', topic: 't' }] }, null, 2)}\n`
+    w.disk.set(`${ROOT}/prd-tracker.json`, theirs)
+    await start($)
+    const ui = await paneUi($)
+    const text = await textOf(ui)
+    expect(text).toMatch(/crew 已載入，還沒有開始的 PRD/)
+    expect(text).toMatch(/⚠ prd-tracker\.json 不是 crew 的看板格式（沒有 prd_items 清單），應該是這個 repo 自己或別的工具在用/)
+    // The file may be what the repo's own tools read: crew does not ask for it to be renamed or moved.
+    expect(text).not.toMatch(/改名|移走/)
+    await ui.press({ key: 'start' })
+    await ui.unmount()
+    expect(w.toasts.at(-1)).toMatch(/沒有開始：prd-tracker\.json 不是 crew 的看板格式/)
+    expect((await $.command.run(command('start docs/PRD.md'))).text).toMatch(/沒有開始：prd-tracker\.json 不是 crew 的看板格式/)
+    expect(w.spawned).toHaveLength(0)
+    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).toBe(theirs)
+  })
+
+  test('that loses a part crew reads mid-flow stops the work, says which part, and is left as it is', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    // Another tool rewrites the board and drops one feature's test cases.
+    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: Record<string, unknown>[] }
+    const { test_cases: _, ...first } = board.prd_items[0] ?? {}
+    const edited = `${JSON.stringify({ ...board, prd_items: [first, ...board.prd_items.slice(1)] }, null, 2)}\n`
+    w.disk.set(`${ROOT}/prd-tracker.json`, edited)
+    const ui = await paneUi($)
+    const text = await textOf(ui)
+    await ui.unmount()
+    expect(text).toMatch(/⚠ crew 停在 docs\/PRD\.md：prd-tracker\.json 讀不懂：PRD-001 的 test_cases 不是清單。請先修好；crew 沒有改動它。/)
+    expect(text).not.toMatch(/還沒有開始的 PRD/)
+    expect((await $.command.run(command('status'))).text).toMatch(/⚠ 看板讀不到/)
+    const band = await $.ui.mount({ plugin: 'crew', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 2, bodyColumns: 140 } } as never)
+    expect(await textOf(band)).toMatch(/^crew │ ⚠ 看板讀不到 │/)
+    await band.unmount()
+    expect(String((await write($, 'a-pm-1', [{ op: 'add_criterion', feature: 'PRD-002', text: '到期當天取消立即生效' }])).result)).toMatch(/PRD-001 的 test_cases 不是清單/)
+    expect(String((await call($, 'board_read', {}, 'a-pm-1')).result)).toMatch(/PRD-001 的 test_cases 不是清單/)
+    // The PM's run ends on the board: the flow stops there, and goes on only once the board is fixed.
+    await done($, 'a-pm-1')
+    expect(w.toasts.some(t => /流程停在這裡。prd-tracker\.json 讀不懂：PRD-001 的 test_cases 不是清單/.test(t))).toBe(true)
+    expect((await $.command.run(command('resume'))).text).toMatch(/沒有接續：prd-tracker\.json 讀不懂：PRD-001 的 test_cases 不是清單/)
+    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).toBe(edited)
   })
 })
 

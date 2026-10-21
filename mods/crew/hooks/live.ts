@@ -350,6 +350,7 @@ export const snapshotOf = ({
   now,
   memories = [],
   prd,
+  boardProblem,
 }: {
   board: Tracker | null
   live: CrewLive
@@ -357,6 +358,8 @@ export const snapshotOf = ({
   memories?: readonly MemoryEntry[]
   /** The PRD as crew can read it now; absent (no PRD started), G0 is not shown. */
   prd?: { requirements?: readonly Requirement[]; problem?: string } | undefined
+  /** Why crew neither reads nor writes the board, when it will not. */
+  boardProblem?: string
 }): Snapshot => {
   const requirements = prd?.requirements
   const g0 = board === null || requirements === undefined ? undefined : gateG0(board, requirements)
@@ -389,7 +392,7 @@ export const snapshotOf = ({
       title: item.title,
       percent: share,
       layers: { design: 'todo', frontend: 'todo', backend: 'todo', test: share === 100 ? 'done' : covered > 0 ? 'doing' : 'todo' },
-      ...(item.crew_dropped !== undefined ? { dropped: item.crew_dropped } : {}),
+      ...(item.crew_dropped !== undefined ? { dropped: typeof item.crew_dropped === 'string' ? item.crew_dropped : '' } : {}),
     }
   })
 
@@ -545,7 +548,7 @@ export const snapshotOf = ({
             },
             {
               ...gate('G6', g6, stage === 'testing', { name: 'test case 全部執行通過、附證據', fill: '全端修', confirm: 'crew 跑你設定的測試指令' }, live.threads),
-              gaps: cases.filter(c => !passedNow(c)).map(c => ({ id: c.id, title: c.title ?? c.id, status: runGap(c), ...(live.threads[c.id] !== undefined ? { thread: c.id } : {}) })),
+              gaps: cases.filter(c => !passedNow(c)).map(c => ({ id: c.id, title: typeof c.title === 'string' ? c.title : c.id, status: runGap(c), ...(live.threads[c.id] !== undefined ? { thread: c.id } : {}) })),
             },
           ],
     decisions: live.questions
@@ -562,6 +565,7 @@ export const snapshotOf = ({
       })),
     ...(live.paused === undefined || live.prdPath === null ? {} : { start: { prds: [], resumable: heldText(live), ...(live.paused === 'offer' ? {} : { paused: true }) } }),
     ...(live.resident === undefined ? {} : { resident: residentOf(live.resident, now) }),
+    ...(boardProblem === undefined ? {} : { boardProblem: { text: boardProblem, ...(live.prdPath === null ? {} : { prd: live.prdPath }) } }),
     items: [...items, ...designItems, ...taskItems],
     threads: Object.entries(live.threads).map(([item, messages]) => ({
       item,

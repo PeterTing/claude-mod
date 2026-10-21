@@ -152,7 +152,9 @@ export const tasksOf = (item: PrdItem): Task[] =>
   (Array.isArray(item.tasks) ? item.tasks : []).flatMap((entry): Task[] => {
     const v = entry as Partial<Task> | null
     if (typeof v !== 'object' || v === null || typeof v.id !== 'string' || typeof v.title !== 'string') return []
-    return [{ ...v, id: v.id, title: v.title, status: typeof v.status === 'string' ? v.status : 'planned', acceptance_criteria: Array.isArray(v.acceptance_criteria) ? v.acceptance_criteria.filter((c): c is string => typeof c === 'string') : [], detail: typeof v.detail === 'string' ? v.detail : '' } as Task]
+    // The commit shas are text, as crew writes them; anything else on a board edited by hand is none.
+    const commits = Array.isArray(v.crew_commits) ? v.crew_commits.filter((c): c is string => typeof c === 'string') : undefined
+    return [{ ...v, id: v.id, title: v.title, status: typeof v.status === 'string' ? v.status : 'planned', acceptance_criteria: Array.isArray(v.acceptance_criteria) ? v.acceptance_criteria.filter((c): c is string => typeof c === 'string') : [], detail: typeof v.detail === 'string' ? v.detail : '', crew_commits: commits } as Task]
   })
 
 /** A feature's designs, read from what the board holds: entries without an id, a title, a kind and a body are not crew's to count. */
@@ -197,6 +199,41 @@ export const approvedNow = (task: Task): boolean => {
   const r = reviewOf(task)
   return tip !== undefined && r?.verdict === 'approve' && r.sha === tip
 }
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/** What part of a feature crew cannot read, if any: crew reads its id and title, its criteria (text, or id and text) and its test cases without checking. */
+const itemProblem = (v: unknown, at: number): string | undefined => {
+  if (!isRecord(v)) return `prd_items 第 ${at + 1} 項不是物件`
+  if (typeof v.id !== 'string') return `prd_items 第 ${at + 1} 項沒有 id`
+  const name = v.id.length > 40 ? `${v.id.slice(0, 40)}…` : v.id
+  if (typeof v.title !== 'string') return `${name} 沒有 title`
+  if (!Array.isArray(v.acceptance_criteria)) return `${name} 的 acceptance_criteria 不是清單`
+  if (!v.acceptance_criteria.every(c => typeof c === 'string' || (isRecord(c) && typeof c.id === 'string' && typeof c.text === 'string'))) return `${name} 的 acceptance_criteria 有讀不懂的項目`
+  if (!Array.isArray(v.test_cases)) return `${name} 的 test_cases 不是清單`
+  if (!v.test_cases.every(c => isRecord(c) && typeof c.id === 'string' && (c.acceptance_criteria === undefined || Array.isArray(c.acceptance_criteria)))) return `${name} 的 test_cases 有讀不懂的項目`
+  return undefined
+}
+
+/**
+ * What keeps crew from reading a board, if anything: `isOther` for another
+ * tool's file of the same name, otherwise the first part of the board crew
+ * cannot read. Either way crew neither reads nor writes it.
+ */
+export const trackerProblem = (v: unknown): { isOther: boolean; why: string } | undefined => {
+  if (!isRecord(v) || !Array.isArray(v.prd_items)) return { isOther: true, why: '沒有 prd_items 清單' }
+  for (const [at, item] of v.prd_items.entries()) {
+    const why = itemProblem(item, at)
+    if (why !== undefined) return { isOther: false, why }
+  }
+  if (v.decisions !== undefined && !Array.isArray(v.decisions)) return { isOther: false, why: 'decisions 不是清單' }
+  // A decision is read by its fields: a line of text has none, and only an empty entry cannot be read at all.
+  if (Array.isArray(v.decisions) && v.decisions.includes(null)) return { isOther: false, why: 'decisions 有空的項目' }
+  return undefined
+}
+
+/** A board crew can read. */
+export const isTracker = (v: unknown): v is Tracker => trackerProblem(v) === undefined
 
 export const DEFAULT_PREFIXES: Prefixes = { feature: 'PRD-', testCase: 'TC-' }
 
@@ -495,7 +532,7 @@ export const passedNow = (tc: TestCase): boolean => {
 export const gateG6 = (t: Tracker): GateResult => {
   const cases = liveCasesOf(t)
   const feature = new Map(t.prd_items.flatMap(i => i.test_cases.map(c => [c.id, i.id] as const)))
-  const gaps = cases.filter(c => !passedNow(c)).map(c => ({ id: c.id, title: c.title ?? c.id, feature: feature.get(c.id) ?? '' }))
+  const gaps = cases.filter(c => !passedNow(c)).map(c => ({ id: c.id, title: typeof c.title === 'string' ? c.title : c.id, feature: feature.get(c.id) ?? '' }))
   return { covered: cases.length - gaps.length, total: cases.length, gaps }
 }
 

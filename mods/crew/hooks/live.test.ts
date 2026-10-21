@@ -6,7 +6,7 @@ import type { Op, Tracker } from './board'
 import { emptyLive, metricsOf, snapshotOf, stopKey, usageSignals } from './live'
 import { barCells, percent } from './model'
 import type { Snapshot } from './model'
-import { bandText, bar } from './views'
+import { bandText, bar, paneFailure } from './views'
 import { withCommits, withResults, withReviews } from './git'
 import { withDecisions } from './designs'
 import { requirementsOf } from './prd'
@@ -153,6 +153,38 @@ describe('snapshotOf', () => {
     expect(s.progress).toBeNull()
     expect(s.gates).toEqual([])
     expect(s.today).toBe(0)
+  })
+})
+
+describe('a board crew cannot read', () => {
+  test('is in the snapshot, with the PRD crew stopped on, and in the band', () => {
+    const why = 'prd-tracker.json 讀不懂：PRD-001 的 test_cases 不是清單。請先修好；crew 沒有改動它。'
+    const stopped = snapshotOf({ board: null, live: LIVE, now: NOW, boardProblem: why })
+    expect(stopped.boardProblem).toEqual({ text: why, prd: 'docs/PRD.md' })
+    expect(bandText(stopped, 'crew')).toMatch(/^crew │ ⚠ 看板讀不到 │/)
+    expect(snapshotOf({ board: null, live: emptyLive(), now: NOW, boardProblem: why }).boardProblem).toEqual({ text: why })
+    expect(snapshotOf({ board: BOARD, live: LIVE, now: NOW }).boardProblem).toBeUndefined()
+    expect(bandText(snapshotOf({ board: BOARD, live: LIVE, now: NOW }), 'crew')).not.toMatch(/看板讀不到/)
+  })
+
+  test('draws a title or a reason that is not text as none: the pane takes text alone', () => {
+    const [first, second] = BOARD.prd_items
+    if (first === undefined || second === undefined) throw new Error('two features')
+    const odd = { ...BOARD, prd_items: [{ ...first, test_cases: first.test_cases.map(c => ({ ...c, title: { text: 'x' } })) }, { ...second, crew_dropped: { why: 'x' } }] } as unknown as Tracker
+    const s = snapshotOf({ board: odd, live: { ...LIVE, flow: { stage: 'testing', round: 1, retries: 0 } }, now: NOW })
+    expect(s.gates.find(g => g.id === 'G6')?.gaps.map(g => g.title)).toContain('TC-001')
+    expect(s.progress?.features.find(f => f.id === 'PRD-002')?.dropped).toBe('')
+  })
+})
+
+describe('a pane crew cannot draw', () => {
+  test('says why on one line, masked and cut short', () => {
+    const key = `sk-ant-api03-${'A'.repeat(40)}`
+    const said = paneFailure(new Error(`board went\nwrong ${key} ${'x'.repeat(400)}`))
+    expect(said).toMatch(/^crew 面板畫不出來：Error: board went wrong /)
+    expect(said).not.toContain(key)
+    expect(said).not.toContain('\n')
+    expect(said.length).toBeLessThan(230)
   })
 })
 

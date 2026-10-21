@@ -322,8 +322,8 @@ type Earlier = { path: string; ids: string[]; features?: string[] }
  * features.
  */
 export const earlierFor = (board: Tracker, path: string, previous?: string): { earlier?: Earlier[] } => {
-  const kept = (board as { crew_prd?: { path?: unknown; earlier?: unknown } }).crew_prd
-  if (kept === undefined) {
+  const kept = (board as { crew_prd?: { path?: unknown; earlier?: unknown } | null }).crew_prd
+  if (typeof kept !== 'object' || kept === null) {
     const unnumbered = board.prd_items.filter(i => i.crew_dropped === undefined && refsOf(i).length === 0).map(i => i.id)
     return previous === undefined || previous === path || unnumbered.length === 0 ? {} : { earlier: [{ path: previous, ids: [], features: unnumbered }] }
   }

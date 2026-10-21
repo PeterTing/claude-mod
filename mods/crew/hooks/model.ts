@@ -220,6 +220,8 @@ export type Snapshot = {
   tuning?: Tuning
   /** What crew offers on load: a PRD to start, or the one to go on with. */
   start?: Start
+  /** Why crew neither reads nor writes the board, and the PRD it stopped on, if one was started. */
+  boardProblem?: { text: string; prd?: string }
   settings?: Settings
   /** A design the person opened to read in the pane. */
   opened?: { id: string; title: string; body: string }
