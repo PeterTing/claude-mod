@@ -11,6 +11,9 @@ import { requirementsOf } from './prd'
  */
 
 export const ROOT = '/repo'
+
+/** The board as crew keeps it: in .crew/, or at the root of a repo where crew made it there before 0.5.2. */
+const boardOn = (disk: Map<string, string> | undefined): string | undefined => disk?.get(`${ROOT}/.crew/prd-tracker.json`) ?? disk?.get(`${ROOT}/prd-tracker.json`)
 export const NOW = Date.UTC(2026, 9, 15, 6, 0, 0)
 
 export const PRD = '# 會員訂閱\n\n使用者可以選月繳方案，可以隨時取消，取消後用到期末。'
@@ -41,7 +44,13 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   const clock = mock.clock(timed, { now: NOW })
   /** crew's own store, which outlives sessions and is not in the repo. */
   const store = new Map<string, unknown>([[`tests:${ROOT}`, { argv: ['npm', 'test'] }]])
-  on('store.get', (_$, e) => ({ value: store.get((e as { key: string }).key) }))
+  on('store.get', async (_$, e) => {
+    const { key } = e as { key: string }
+    if (broken.storeReads !== '' && key.startsWith(broken.storeReads)) return { deny: `EIO: i/o error, store '${key}'` }
+    // Where the board is takes this long to look up, by the test's clock, so work can meet crew still looking.
+    if (slow.store > 0 && key.startsWith('board:')) await clock.sleep(slow.store)
+    return { value: store.get(key) }
+  })
   on('store.set', (_$, e) => {
     const { key, value } = e as { key: string; value: unknown }
     if (broken.store !== '' && key.startsWith(broken.store)) return { deny: `${broken.reason}, store '${key}'` }
@@ -107,8 +116,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   }
   /** The person's test command as crew runs it: what it prints and how it exits, and each run's words and folder. */
   const tests = { exitCode: 0, stdout: '', stderr: '', runs: [] as { argv: string[]; cwd?: string; env?: Record<string, string> }[], fails: '', ms: 0 }
-  /** Writes under this path fail, as on a full disk; so do writes of store keys that start with `store`. */
-  const broken = { writes: '', reason: 'ENOSPC: no space left on device', reads: '', store: '' }
+  /** Writes under this path fail, as on a full disk; so do writes of store keys that start with `store`, and reads of those that start with `storeReads`. */
+  const broken = { writes: '', reason: 'ENOSPC: no space left on device', reads: '', store: '', storeReads: '' }
   let shas = 0
   /**
    * Each branch's reflog, oldest first: the commits git moved it to. A branch a
@@ -163,7 +172,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
       // A run that takes this long, by the test's clock, so requests can meet one under way.
       if (tests.ms > 0) await clock.sleep(tests.ms)
       // Unless a test says what the run prints, every test case on the board passes, named by its id.
-      const board = JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? '{"prd_items":[]}') as { prd_items: { test_cases?: { id: string }[] }[] }
+      const board = JSON.parse(boardOn(disk) ?? '{"prd_items":[]}') as { prd_items: { test_cases?: { id: string }[] }[] }
       const all = board.prd_items.flatMap(i => i.test_cases ?? []).map(c => `✓ ${c.id} passes`).join('\n')
       return { value: { exitCode: tests.exitCode, stdout: tests.stdout === '' ? all : tests.stdout, stderr: tests.stderr, isStdoutTruncated: false, isStderrTruncated: false } }
     }
@@ -252,8 +261,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     }
     return fail(`unknown: ${args.join(' ')}`)
   })
-  /** A read of a Markdown file takes this long, by the test's clock, so two looks at the PRD can meet. */
-  const slow = { ms: 0 }
+  /** A read of a Markdown file takes this long, by the test's clock, so two looks at the PRD can meet; `store`, the look-up of where the board is; `stat` and `write`, a look at and a write of one file. */
+  const slow = { ms: 0, store: 0, stat: { path: '', ms: 0 }, write: { path: '', ms: 0 } }
   /** How many times each file was read. */
   const reads = new Map<string, number>()
   on('fs.read', async (_$, e) => {
@@ -262,13 +271,15 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     if (slow.ms > 0 && e.path.endsWith('.md')) await clock.sleep(slow.ms)
     return disk.has(resolve(e.path)) ? { value: disk.get(resolve(e.path)) ?? '' } : { deny: `ENOENT ${e.path}` }
   })
-  on('fs.write', (_$, e) => {
+  on('fs.write', async (_$, e) => {
     if (broken.writes !== '' && e.path.startsWith(broken.writes)) return { deny: `${broken.reason}, write '${e.path}'` }
+    if (slow.write.ms > 0 && e.path === slow.write.path) await clock.sleep(slow.write.ms)
     // Writes follow links, as a real file system's do.
     disk.set(resolve(e.path), e.text)
     return { value: undefined }
   })
-  on('fs.stat', (_$, e) => {
+  on('fs.stat', async (_$, e) => {
+    if (slow.stat.ms > 0 && e.path === slow.stat.path) await clock.sleep(slow.stat.ms)
     const real = resolve(e.path)
     // A link to nothing is still there: a link, with nowhere it leads.
     if (links.has(e.path) && !disk.has(real) && !isDir(real)) return { value: { kind: 'other' as const, size: 0, mtimeMs: 0, isLink: true } }
@@ -364,7 +375,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     return { text: e.text }
   })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
-  const board = () => JSON.parse(disk.get(`${ROOT}/prd-tracker.json`) ?? 'null') as Tracker | null
+  const board = () => JSON.parse(boardOn(disk) ?? 'null') as Tracker | null
   current.commit = commit
   current.clock = clock
   current.spawned = spawned
@@ -444,7 +455,7 @@ export const paneText = async ($: Engine, tab?: string) => {
 /** The full-stack builds each task in turn: a commit that does it on crew's branch, then the end of its run. */
 type BoardFile = { prd_items: { id: string; title: string; crew_dropped?: string; crew_designs?: { id: string; crew_dropped?: string; crew_decision?: { verdict: string } }[] }[] }
 
-const boardFile = (): BoardFile => JSON.parse(current.disk?.get(`${ROOT}/prd-tracker.json`) ?? '{"prd_items":[]}') as BoardFile
+const boardFile = (): BoardFile => JSON.parse(boardOn(current.disk) ?? '{"prd_items":[]}') as BoardFile
 
 /** The latest agent crew started for a role, by the test world's numbering. */
 export const agentOf = (role: string): string => `a-${role}-${(current.spawned ?? []).map(s => s.subagentType).lastIndexOf(`crew:${role}`) + 1}`

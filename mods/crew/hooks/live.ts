@@ -351,6 +351,7 @@ export const snapshotOf = ({
   memories = [],
   prd,
   boardProblem,
+  boardFile,
 }: {
   board: Tracker | null
   live: CrewLive
@@ -360,6 +361,8 @@ export const snapshotOf = ({
   prd?: { requirements?: readonly Requirement[]; problem?: string } | undefined
   /** Why crew neither reads nor writes the board, when it will not. */
   boardProblem?: string
+  /** Where crew keeps the board, and why when it is not in .crew/. */
+  boardFile?: { path: string; why?: string }
 }): Snapshot => {
   const requirements = prd?.requirements
   const g0 = board === null || requirements === undefined ? undefined : gateG0(board, requirements)
@@ -526,7 +529,7 @@ export const snapshotOf = ({
     .map(t => ({ tier: t, tokens: live.tiers[t] ?? 0 }))
 
   return {
-    prd: board === null ? null : { id: board.project, title: live.prdPath ?? 'prd-tracker.json', progress: progress === null ? 0 : percent(progress.done, progress.total) },
+    prd: board === null ? null : { id: board.project, title: live.prdPath ?? boardFile?.path ?? '.crew/prd-tracker.json', progress: progress === null ? 0 : percent(progress.done, progress.total) },
     progress,
     today,
     roles: (['pm', 'uiux', 'fullstack', 'qa', 'techlead'] as const).map(roleRow),
@@ -566,6 +569,7 @@ export const snapshotOf = ({
     ...(live.paused === undefined || live.prdPath === null ? {} : { start: { prds: [], resumable: heldText(live), ...(live.paused === 'offer' ? {} : { paused: true }) } }),
     ...(live.resident === undefined ? {} : { resident: residentOf(live.resident, now) }),
     ...(boardProblem === undefined ? {} : { boardProblem: { text: boardProblem, ...(live.prdPath === null ? {} : { prd: live.prdPath }) } }),
+    ...(boardFile === undefined ? {} : { boardFile }),
     items: [...items, ...designItems, ...taskItems],
     threads: Object.entries(live.threads).map(([item, messages]) => ({
       item,

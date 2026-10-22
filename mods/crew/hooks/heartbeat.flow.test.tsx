@@ -227,7 +227,7 @@ describe('the heartbeat', () => {
       if (!r.ok) throw new Error(r.errors.join())
       t = r.tracker
     }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(t))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(t))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, questions: [], lead: 'person' })
     await start($)
     expect(w.panes).not.toContain('open:crew')
@@ -249,7 +249,7 @@ describe('the heartbeat', () => {
       if (!r.ok) throw new Error(r.errors.join())
       t = r.tracker
     }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(t))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(t))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, questions: [], lead: 'person' })
     await start($)
     await w.clock.advance(3 * BEAT)
@@ -311,7 +311,7 @@ describe('the heartbeat', () => {
 
   test('takes no PRD change on a held flow until the person goes on', async ($, on) => {
     const w = world($, on)
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(leftBoard()))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(leftBoard()))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, questions: [], lead: 'person' })
     await start($)
     w.disk.set(`${ROOT}/docs/PRD.md`, `${PRD}\n\n使用者可以改成年繳方案。`)

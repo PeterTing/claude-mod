@@ -119,7 +119,7 @@ describe('the full-stack', () => {
       if (!r.ok) throw new Error(r.errors.join())
       t = r.tracker
     }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(t))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(t))
     // crew made its branch and worktree in the last session, and keeps that in its own store.
     w.git.branches.set('crew/prd', [...(w.git.branches.get('HEAD') ?? [])])
     w.disk.set(`${ROOT}/.crew/work/prd/.git`, 'gitdir: x')
@@ -207,7 +207,7 @@ describe('the full-stack', () => {
       if (!r.ok) throw new Error(r.errors.join())
       t = r.tracker
     }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(t))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(t))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'done', round: 0, retries: 0 }, questions: [], lead: 'person' })
     await start($)
     await $.command.run(command('ask pm 月繳價格多少？'))
@@ -287,10 +287,10 @@ describe('the full-stack', () => {
       { op: 'add_task', feature: 'PRD-001', criteria: ['AC-001'], title: '登入頁', detail: '', size: 'S' },
       { op: 'add_task', feature: 'PRD-002', criteria: ['AC-002'], title: '登出', detail: '', size: 'S' },
     ])
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(again))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(again))
     // crew's next look at git and the board marks nothing on the new tasks.
     await w.clock.advance(31_000)
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[] }[] }[] }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[] }[] }[] }
     expect(board.prd_items.flatMap(i => i.tasks ?? []).map(t => [t.id, t.crew_commits])).toEqual([
       ['TASK-001', undefined],
       ['TASK-002', undefined],
@@ -321,12 +321,13 @@ describe('the full-stack', () => {
     const w = world($, on)
     await start($)
     await planned($)
-    w.git.checkout = ' M src/mine.ts\n M prd-tracker.json.bak\n M prd-tracker.json\n?? .crew/threads/x.jsonl\n'
+    w.git.checkout = ' M src/mine.ts\n M prd-tracker.json.bak\n M prd-tracker.json\n?? .crew/threads/x.jsonl\n?? ".crew/threads/my notes.jsonl"\n'
     w.commit('TASK-001: 方案頁', 'HEAD')
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-5')
     const said = w.toasts.find(t => t.includes('全端這一輪期間')) ?? ''
-    expect(said).toMatch(/多了 2 個變更（src\/mine\.ts、prd-tracker\.json\.bak）/)
+    // The board is in crew's folder: a prd-tracker.json at the root is the person's own.
+    expect(said).toMatch(/多了 3 個變更（src\/mine\.ts、prd-tracker\.json\.bak、prd-tracker\.json）/)
     expect(said).toMatch(/checkout 從 main c0ffee0 變成 main abc000/)
     expect(said).toMatch(/如果不是你自己改的/)
   })
@@ -397,7 +398,7 @@ describe('the full-stack', () => {
     await tested()
     // A branch merged and deleted is gone, not taken by someone else.
     expect(w.toasts.some(t => /不是 crew 自己的分支/.test(t))).toBe(false)
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[] }[] }[] }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[] }[] }[] }
     expect(board.prd_items.flatMap(i => i.tasks ?? []).map(t => [t.id, (t.crew_commits ?? []).length])).toEqual([
       ['TASK-001', 1],
       ['TASK-002', 1],
@@ -456,10 +457,10 @@ describe('the full-stack', () => {
     expect(w.toasts.some(t => /crew 以外/.test(t))).toBe(false)
     await approve($, 'TASK-001')
     // Now the board is edited behind crew's back while the full-stack works on TASK-002.
-    w.disk.set(`${ROOT}/prd-tracker.json`, (w.disk.get(`${ROOT}/prd-tracker.json`) ?? '').replace('"取消流程"', '"取消流程（改）"'))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, (w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '').replace('"取消流程"', '"取消流程（改）"'))
     w.commit('TASK-002: 取消流程')
     await done($, 'a-fullstack-5')
-    expect(w.toasts.some(t => /全端這一輪期間，crew 的檔案 prd-tracker\.json 被 crew 以外的人改了/.test(t))).toBe(true)
+    expect(w.toasts.some(t => /全端這一輪期間，crew 的檔案 \.crew\/prd-tracker\.json 被 crew 以外的人改了/.test(t))).toBe(true)
   })
 
   test('says a change to crew’s memory during the full-stack’s run, and blames no run for a change made before it began', async ($, on) => {
@@ -473,7 +474,7 @@ describe('the full-stack', () => {
     // Changed between the full-stack's runs, before TASK-002 is handed over: not the next run's doing,
     // though crew writes the board over the change meanwhile. The memory is deleted then, too.
     w.disk.delete(memory)
-    w.disk.set(`${ROOT}/prd-tracker.json`, (w.disk.get(`${ROOT}/prd-tracker.json`) ?? '').replace('"取消流程"', '"取消流程（改）"'))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, (w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '').replace('"取消流程"', '"取消流程（改）"'))
     await approve($, 'TASK-001')
     w.commit('TASK-002: 取消流程')
     await done($, 'a-fullstack-5')
@@ -494,7 +495,7 @@ describe('the full-stack', () => {
     const w = world($, on)
     await start($)
     await planned($)
-    const board = `${ROOT}/prd-tracker.json`
+    const board = `${ROOT}/.crew/prd-tracker.json`
     // During the full-stack's run, the board becomes a link out of the repo.
     w.disk.set('/home/someone/secret.txt', 'secret')
     w.links.set(board, '/home/someone/secret.txt')
@@ -502,7 +503,7 @@ describe('the full-stack', () => {
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-5')
     expect(w.reads.get(board) ?? 0).toBe(before)
-    expect(w.toasts.some(t => /crew 的檔案 prd-tracker\.json 被 crew 以外的人改了/.test(t))).toBe(true)
+    expect(w.toasts.some(t => /crew 的檔案 \.crew\/prd-tracker\.json 被 crew 以外的人改了/.test(t))).toBe(true)
   })
 
   test('still ends the full-stack’s run when one of its own files cannot be read', async ($, on) => {
@@ -510,12 +511,12 @@ describe('the full-stack', () => {
     await start($)
     await planned($)
     // The board is now a folder: reading it fails.
-    const text = w.disk.get(`${ROOT}/prd-tracker.json`) ?? ''
-    w.disk.delete(`${ROOT}/prd-tracker.json`)
-    w.disk.set(`${ROOT}/prd-tracker.json/x`, '')
+    const text = w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? ''
+    w.disk.delete(`${ROOT}/.crew/prd-tracker.json`)
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json/x`, '')
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-5')
-    expect(w.toasts.some(t => /crew 的檔案 prd-tracker\.json 被 crew 以外的人改了/.test(t))).toBe(true)
+    expect(w.toasts.some(t => /crew 的檔案 \.crew\/prd-tracker\.json 被 crew 以外的人改了/.test(t))).toBe(true)
     expect(text).not.toBe('')
   })
 
@@ -572,10 +573,10 @@ describe('the full-stack', () => {
     const w = world($, on)
     await start($)
     await planned($)
-    w.commit('TASK-001: 方案頁', 'crew/prd', ['src/plan.ts', 'prd-tracker.json', '.crew/memory/memories.jsonl', '.crew/threads/my notes.jsonl'])
+    w.commit('TASK-001: 方案頁', 'crew/prd', ['src/plan.ts', '.crew/prd-tracker.json', '.crew/memory/memories.jsonl', '.crew/threads/my notes.jsonl'])
     await done($, 'a-fullstack-5')
     expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
-    expect(w.sent.at(-1)?.text).toMatch(/改到了 crew 的檔案（prd-tracker\.json、\.crew\/memory\/memories\.jsonl、\.crew\/threads\/my notes\.jsonl）[\s\S]*changes/)
+    expect(w.sent.at(-1)?.text).toMatch(/改到了 crew 的檔案（\.crew\/prd-tracker\.json、\.crew\/memory\/memories\.jsonl、\.crew\/threads\/my notes\.jsonl）[\s\S]*changes/)
     expect(w.toasts.filter(t => /TASK-001 的 commit 改到了 crew 的檔案/.test(t))).toHaveLength(1)
     // The tech lead's run ends with no verdict and it is asked again: the person was told already.
     await done($, 'a-techlead-4')
@@ -617,7 +618,7 @@ describe('the full-stack', () => {
     // The person resets crew's branch to where it started: TASK-001's commit is on it no more.
     w.reset(base)
     await w.clock.advance(40_000)
-    const task = (JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[]; crew_review?: unknown }[] }[] }).prd_items.flatMap(i => i.tasks ?? []).find(t => t.id === 'TASK-001')
+    const task = (JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[]; crew_review?: unknown }[] }[] }).prd_items.flatMap(i => i.tasks ?? []).find(t => t.id === 'TASK-001')
     expect(task?.crew_commits).toBeUndefined()
     expect(task?.crew_review).toBeUndefined()
     expect(await paneText($, 'progress')).toMatch(/→ 實作 0\/2/)
@@ -635,16 +636,29 @@ describe('the full-stack', () => {
     // The person merges crew's branch into main, and keeps crew's branch.
     w.git.branches.set('main', [...(w.git.branches.get('crew/prd') ?? [])])
     await w.clock.advance(40_000)
-    const task = (JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[]; crew_review?: { verdict: string } }[] }[] }).prd_items.flatMap(i => i.tasks ?? []).find(t => t.id === 'TASK-001')
+    const task = (JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { tasks?: { id: string; crew_commits?: string[]; crew_review?: { verdict: string } }[] }[] }).prd_items.flatMap(i => i.tasks ?? []).find(t => t.id === 'TASK-001')
     expect(task?.crew_commits).toHaveLength(1)
     expect(task?.crew_review?.verdict).toBe('approve')
+  })
+
+  test('takes the root prd-tracker.json for crew’s own where crew keeps its board there from before 0.5.2', async ($, on) => {
+    const w = world($, on)
+    w.disk.set(`${ROOT}/prd-tracker.json`, `${JSON.stringify({ ...newTracker('repo'), crew_prd: { path: 'docs/PRD.md', requirements: [], synced_at: '2026-10-01' } })}\n`)
+    await start($)
+    await planned($)
+    w.git.checkout = ' M src/mine.ts\n M prd-tracker.json\n'
+    w.commit('TASK-001: 方案頁', 'crew/prd', ['src/plan.ts', 'prd-tracker.json'])
+    await done($, 'a-fullstack-5')
+    expect(w.sent.at(-1)?.text).toMatch(/改到了 crew 的檔案（prd-tracker\.json）/)
+    expect(w.toasts.find(t => t.includes('全端這一輪期間')) ?? '').toMatch(/多了 1 個變更（src\/mine\.ts）/)
   })
 
   test('does not take a file merely named like crew’s own for one', async ($, on) => {
     const w = world($, on)
     await start($)
     await planned($)
-    w.commit('TASK-001: 方案頁', 'crew/prd', ['prd-tracker.json.bak', '.crewx/a.ts', 'src/.crew/b.ts'])
+    // The board is in crew's folder: a prd-tracker.json at the root is the person's own.
+    w.commit('TASK-001: 方案頁', 'crew/prd', ['prd-tracker.json.bak', '.crewx/a.ts', 'src/.crew/b.ts', 'prd-tracker.json'])
     await done($, 'a-fullstack-5')
     expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
     expect(w.sent.at(-1)?.text).not.toMatch(/改到了 crew 的檔案/)

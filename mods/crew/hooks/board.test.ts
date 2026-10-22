@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { applyOps, approvedNow, criteriaOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, isTracker, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf, tipOf, trackerProblem } from './board'
+import { applyOps, approvedNow, criteriaOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, isTracker, liveCasesOf, liveTasksOf, madeByCrew, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf, tipOf, trackerProblem, withEmptyLists } from './board'
 import type { Op, Tracker } from './board'
 
 const CTX = { by: 'pm', today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } } as const
@@ -85,6 +85,30 @@ describe('trackerProblem', () => {
     expect(trackerProblem({ ...board, decisions: ['先只做月繳', { id: 'DEC-001' }] })).toBeUndefined()
     // A long id is cut, so the reason stays one line.
     expect(trackerProblem({ ...board, prd_items: [{ ...first, id: 'P'.repeat(80), title: 1 }] })?.why).toBe(`${'P'.repeat(40)}… 沒有 title`)
+  })
+})
+
+describe('withEmptyLists', () => {
+  test('reads a feature missing its criteria or test case list as having none', () => {
+    const board = withTwoFeatures()
+    const [first, second] = board.prd_items
+    if (first === undefined || second === undefined) throw new Error('two features')
+    const { test_cases: _, ...noCases } = second
+    const { acceptance_criteria: __, ...noCriteria } = first
+    const read = withEmptyLists({ ...board, prd_items: [noCriteria, noCases] }) as Tracker
+    expect(read.prd_items.map(i => [i.acceptance_criteria, i.test_cases.length])).toEqual([[[], 0], [second.acceptance_criteria, 0]])
+    expect(trackerProblem(read)).toBeUndefined()
+  })
+
+  test('leaves a list of the wrong type, a whole board and another tool’s file as they are', () => {
+    const board = withTwoFeatures()
+    expect(withEmptyLists(board)).toBe(board)
+    const wrong = { ...board, prd_items: board.prd_items.map(i => ({ ...i, test_cases: 'TC-001' })) }
+    expect(withEmptyLists(wrong)).toEqual(wrong)
+    expect(trackerProblem(withEmptyLists(wrong))?.why).toBe('PRD-001 的 test_cases 不是清單')
+    const other = { project: 'p', modules: [] }
+    expect(withEmptyLists(other)).toBe(other)
+    expect(withEmptyLists({ ...board, prd_items: [null] })).toEqual({ ...board, prd_items: [null] })
   })
 })
 
@@ -764,5 +788,18 @@ describe('designs the UI/UX designer makes', () => {
     expect(ok.ok).toBe(true)
     const bad = parseOps([{ op: 'add_design', feature: 'PRD-001', title: 't' }])
     expect(bad).toMatchObject({ ok: false, error: expect.stringMatching(/第 1 筆 add_design 缺少 kind、body/) })
+  })
+})
+
+describe('madeByCrew', () => {
+  test('tells a root board crew started a PRD on, merge conflict and all, from the repo’s own tracker', () => {
+    expect(madeByCrew('{"crew_prd":{"path":"docs/PRD.md"}}')).toBe(true)
+    expect(madeByCrew('<<<<<<< HEAD\n{"crew_prd": {"path":"docs/PRD.md"}}\n=======\n')).toBe(true)
+    expect(madeByCrew('{"prd_items":[]}')).toBe(false)
+    expect(madeByCrew('{"crew_prd":null}')).toBe(false)
+    expect(madeByCrew('{"crew_prd":"docs/PRD.md"}')).toBe(false)
+    expect(madeByCrew('[{"crew_prd":{}}]')).toBe(false)
+    expect(madeByCrew('{"notes":"see crew_prd"}')).toBe(false)
+    expect(madeByCrew('<<<<<<< HEAD\n{"notes":"crew_prd"}\n')).toBe(false)
   })
 })

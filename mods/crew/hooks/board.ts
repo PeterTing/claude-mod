@@ -1,7 +1,8 @@
 /**
- * The board is the repo's prd-tracker.json, in the shape the progress-dashboard
- * skill and its schema use. crew only touches what it owns and keeps every
- * field it does not know.
+ * The board is .crew/prd-tracker.json (the repo's root prd-tracker.json where
+ * crew made it there before 0.5.2), in the shape the progress-dashboard skill
+ * and its schema use. crew only touches what it owns and keeps every field it
+ * does not know.
  */
 
 import { droppedRequirements, refsOf, REQUIREMENT_ID } from './prd'
@@ -232,8 +233,36 @@ export const trackerProblem = (v: unknown): { isOther: boolean; why: string } | 
   return undefined
 }
 
+/**
+ * A board as crew reads it: a feature missing its criteria or test case list
+ * has none, as the strict schema writes it, and crew adds the empty list when it
+ * next writes the board. A list of the wrong type is left for trackerProblem.
+ */
+export const withEmptyLists = (v: unknown): unknown => {
+  if (!isRecord(v) || !Array.isArray(v.prd_items)) return v
+  if (v.prd_items.every(i => !isRecord(i) || (i.acceptance_criteria !== undefined && i.test_cases !== undefined))) return v
+  const items = v.prd_items.map(i =>
+    !isRecord(i) ? i : { ...i, ...(i.acceptance_criteria === undefined ? { acceptance_criteria: [] } : {}), ...(i.test_cases === undefined ? { test_cases: [] } : {}) },
+  )
+  return { ...v, prd_items: items }
+}
+
 /** A board crew can read. */
 export const isTracker = (v: unknown): v is Tracker => trackerProblem(v) === undefined
+
+/**
+ * Whether a root prd-tracker.json is a board crew made there before 0.5.2:
+ * starting a PRD wrote crew_prd into it. One that does not parse, as with a
+ * merge conflict, is crew's when it holds crew_prd as an object.
+ */
+export const madeByCrew = (text: string): boolean => {
+  try {
+    const v: unknown = JSON.parse(text)
+    return isRecord(v) && isRecord(v.crew_prd)
+  } catch {
+    return /"crew_prd"\s*:\s*\{/.test(text)
+  }
+}
 
 export const DEFAULT_PREFIXES: Prefixes = { feature: 'PRD-', testCase: 'TC-' }
 

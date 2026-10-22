@@ -17,7 +17,7 @@ export const CREW_ROLES: readonly CrewRole[] = ['pm', 'qa', 'uiux', 'techlead', 
 
 const SHARED = [
   '你是 crew 產品團隊的一員，跟其他角色透過看板和討論串合作，不直接對話。',
-  '- 看板是 repo 裡的 prd-tracker.json。只用 board_read 讀、board_write 寫，不要直接編輯檔案。',
+  '- 看板由 crew 保管。只用 board_read 讀、board_write 寫，不要直接編輯看板檔案。',
   '- 每個項目都有編號（PRD-、AC-、TC-、TASK-）。提到項目一律寫編號。',
   '- 給其他角色的話用 thread_post 寫在該項目的討論串，短而具體。',
   '- 需要產品決定、PRD 沒寫清楚的地方，用 ask_person 問使用者，不要自己猜。先看 board_read 最後列出的「等使用者回答的問題」，已經問過的不要重複問。',

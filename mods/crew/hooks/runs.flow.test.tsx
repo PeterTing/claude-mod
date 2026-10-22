@@ -36,7 +36,7 @@ describe('crew’s test runs', () => {
     expect(w.toasts.some(t => /測試跑完（npm test，commit abc0002，exit 0）：test case 通過 1\/1。證據在 \.crew\/runs\//.test(t))).toBe(true)
     expect(await paneText($, 'progress')).toMatch(/→ 測試結果 ✓/)
     // The board says it too, for the progress dashboard.
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { test_cases: { automated_status: string; crew_result?: { result: string } }[] }[] }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { test_cases: { automated_status: string; crew_result?: { result: string } }[] }[] }
     expect(board.prd_items[0]?.test_cases[0]).toMatchObject({ automated_status: 'passed', crew_result: { result: 'passed', sha: 'abc0002' } })
   })
 
@@ -234,9 +234,9 @@ describe('crew’s test runs', () => {
     const w = world($, on)
     await start($)
     await planned($)
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { test_cases: Record<string, unknown>[] }[] }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { test_cases: Record<string, unknown>[] }[] }
     for (const c of board.prd_items.flatMap(i => i.test_cases)) c.crew_result = { result: 'passed', sha: 'abc0001', run: '20261020-120000' }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     w.commit('TASK-001: 方案頁')
     await done($, 'a-fullstack-5')
     expect(await paneText($, 'progress')).toMatch(/→ 測試結果 0\/1/)
@@ -268,7 +268,7 @@ describe('crew’s test runs', () => {
     if (!split.ok) throw new Error(split.errors.join())
     const cases = applyOps(split.tracker, [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }], { by: 'qa', today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
     if (!cases.ok) throw new Error(cases.errors.join())
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(cases.tracker))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(cases.tracker))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'testing', round: 0, retries: 0 }, questions: [], lead: 'person' })
     await start($)
     // Nothing goes on before the person says so in the pane: the brain cannot run the tests on a held flow either.

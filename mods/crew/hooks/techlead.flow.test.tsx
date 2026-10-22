@@ -97,7 +97,7 @@ describe('the tech lead', () => {
     if (!withTests.ok) throw new Error(withTests.errors.join())
     const half = applyOps(withTests.tracker, PLAN.slice(0, 1) as unknown as Op[], { by: 'techlead', today: '2026-10-15', prefixes: DEFAULT_PREFIXES })
     if (!half.ok) throw new Error(half.errors.join())
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(half.tracker))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(half.tracker))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'planning', round: 0, retries: 0 }, questions: [], lead: 'person' })
     await start($)
     // Nothing goes on before the person says so in the pane.
@@ -117,7 +117,7 @@ describe('the tech lead', () => {
     if (!plannedBoard.ok) throw new Error(plannedBoard.errors.join())
     w.commit('TASK-001: 方案頁', 'HEAD')
     w.commit('TASK-002: 取消流程', 'HEAD')
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(plannedBoard.tracker))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(plannedBoard.tracker))
     w.disk.set(`${ROOT}/.crew/threads/AC-001.jsonl`, `${JSON.stringify({ t: 1, n: 1, item: 'AC-001', from: 'pm', to: 'techlead', text: '用台灣時間' })}\n`)
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'done', round: 0, retries: 0 }, questions: [], lead: 'person' })
     await start($)
@@ -265,9 +265,9 @@ describe('the tech lead’s review', () => {
     await start($)
     await planned($)
     const sha = w.commit('TASK-001: 方案頁')
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { tasks: Record<string, unknown>[] }[] }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { tasks: Record<string, unknown>[] }[] }
     for (const t of board.prd_items.flatMap(i => i.tasks)) t.crew_review = { sha, verdict: 'approve' }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     await done($, 'a-fullstack-5')
     expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
     expect(await paneText($, 'progress')).toMatch(/→ Review 0\/2/)
@@ -281,7 +281,7 @@ describe('the tech lead’s review', () => {
     await done($, 'a-fullstack-5')
     const r = await approve($, 'TASK-001', 'a-techlead-4', 'changes', '第 12 行寫死了 sk-ant-api03-abcdefghijklmnopqrstuvwx，改用環境變數')
     expect(String(r.result)).toMatch(/已記下/)
-    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).not.toMatch(/sk-ant-api03-abc/)
-    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).toMatch(/改用環境變數/)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`)).not.toMatch(/sk-ant-api03-abc/)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`)).toMatch(/改用環境變數/)
   })
 })

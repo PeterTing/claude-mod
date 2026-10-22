@@ -126,6 +126,9 @@ const TABS: readonly [CrewTab, string][] = [
   ['settings', '設定'],
 ]
 
+/** Where crew keeps its board, unless an earlier version's board is already at the repo's root. */
+export const BOARD_FILE = '.crew/prd-tracker.json'
+
 const SCENARIOS: readonly [CrewScenario, string][] = [
   ['normal', '一般'],
   ['empty', '剛開始'],
@@ -286,7 +289,7 @@ function ProgressTab({ el, snap }: { el: Elements; snap: Snapshot }) {
 }
 
 /** What a gate checks, who fills and confirms it, how much is covered, and each gap. */
-function GateDetail({ el, g, act }: { el: Elements; g: Gate; act: Actions }) {
+function GateDetail({ el, g, act, board }: { el: Elements; g: Gate; act: Actions; board: string }) {
   const { Box, Text, Button } = el
   const pct = percent(g.covered, g.total)
   return (
@@ -326,7 +329,7 @@ function GateDetail({ el, g, act }: { el: Elements; g: Gate; act: Actions }) {
         </Box>
       )}
       {g.note !== undefined && <Text dimColor>{g.note}</Text>}
-      <Text dimColor>上次檢查：{g.checked} · 程式計算，比對 prd-tracker.json，不花 token</Text>
+      <Text dimColor>上次檢查：{g.checked} · 程式計算，比對 {board}，不花 token</Text>
     </Box>
   )
 }
@@ -481,7 +484,7 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
               />
             ))}
           </Box>
-          {openGate !== undefined && GateDetail({ el, g: openGate, act })}
+          {openGate !== undefined && GateDetail({ el, g: openGate, act, board: snap.boardFile?.path ?? BOARD_FILE })}
         </Box>
       )}
       {snap.alerts.length > 0 && Alerts({ el, alerts: snap.alerts })}
@@ -588,6 +591,11 @@ function Settings({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapsho
           </Box>
         </Box>
       )}
+      <Box flexDirection="column">
+        <Text bold>看板</Text>
+        <Text>檔案：{snap.boardFile?.path ?? BOARD_FILE}</Text>
+        {snap.boardFile?.why !== undefined && <Text dimColor>{snap.boardFile.why}</Text>}
+      </Box>
       <Box flexDirection="column">
         <Text bold>測試指令</Text>
         {Field({ el, id: 'test-command', label: '指令', placeholder: '例如 npm test', value: snap.settings?.testCommand, submit: '儲存', what: '測試指令', onSubmit: text => act.testCommand(text) })}

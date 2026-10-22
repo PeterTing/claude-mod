@@ -54,7 +54,7 @@ const boardWith = (tests: readonly Op[]) => {
 }
 
 const restartAt = (w: ReturnType<typeof world>, stage: string, extra: Record<string, unknown> = {}, tests: readonly Op[] = []) => {
-  w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(boardWith(tests)))
+  w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(boardWith(tests)))
   w.store.set(STATE_KEY, { prdPath: 'docs/PRD.md', flow: { stage, round: 1, retries: 0, ...extra }, questions: [], lead: 'person' })
 }
 
@@ -75,9 +75,9 @@ describe('a broken file left behind', () => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
-    w.disk.set(`${ROOT}/prd-tracker.json`, '{ broken')
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, '{ broken')
     await done($, 'a-pm-1')
-    expect(w.logs.some(l => /prd-tracker\.json does not parse/.test(l))).toBe(true)
+    expect(w.logs.some(l => /\.crew\/prd-tracker\.json does not parse/.test(l))).toBe(true)
   })
 
   test('a board that does not parse is logged masked: the parse error can quote what the file held', async ($, on) => {
@@ -85,9 +85,9 @@ describe('a broken file left behind', () => {
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     const token = `github_pat_${'A'.repeat(30)}`
-    w.disk.set(`${ROOT}/prd-tracker.json`, `{ "token": ${token} }`)
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, `{ "token": ${token} }`)
     await done($, 'a-pm-1')
-    expect(w.logs.some(l => /prd-tracker\.json does not parse/.test(l))).toBe(true)
+    expect(w.logs.some(l => /\.crew\/prd-tracker\.json does not parse/.test(l))).toBe(true)
     expect(w.logs.join('\n')).not.toContain(token)
   })
 })

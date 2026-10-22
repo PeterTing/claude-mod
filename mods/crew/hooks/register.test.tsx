@@ -295,6 +295,16 @@ describe('/crew demo', () => {
     expect((await $.command.run(command('demo calm'))).text).toMatch(/用法：\/crew demo \[normal\|empty\|attention\|restart\] \[overview\|progress\|board\|threads\|memory\|tokens\|settings\]/)
   })
 
+  test('says in 設定 which file holds the board', async ($, on) => {
+    stage(on)
+    await $.command.run(command('demo normal settings'))
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount(pane(surface))
+      expect(await shown(ui)).toMatch(/看板\n檔案：\.crew\/prd-tracker\.json\n測試指令/)
+      await ui.unmount()
+    }
+  })
+
   test('switches to the empty and attention situations', async ($, on) => {
     stage(on)
     await demoOn($)

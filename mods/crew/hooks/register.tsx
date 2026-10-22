@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { CrewLive, CrewMessage, CrewScenario, CrewTab, CrewTuning, CrewWork } from '../types'
-import { applyOps, criteriaOf, decisionOf, designsOf, gateG1, gateG4, gateG6, liveCasesOf, liveTasksOf, newTracker, parseOps, prefixesFrom, renderBoard, reviewOf, tasksOf, trackerProblem } from './board'
+import { applyOps, criteriaOf, decisionOf, designsOf, gateG1, gateG4, gateG6, liveCasesOf, liveTasksOf, madeByCrew, newTracker, parseOps, prefixesFrom, renderBoard, reviewOf, tasksOf, trackerProblem, withEmptyLists } from './board'
 import type { Tracker } from './board'
 import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './consolidate'
 import { DEMO } from './demo'
@@ -97,7 +97,7 @@ const ending = { count: 0 }
 const waking = { count: 0 }
 
 /** The board and memories as last read, the file versions they were read at, whether the board could be read, and the part crew could not read. */
-const cache: { board: Tracker | null | undefined; boardAt: string; boardStatus: 'ok' | 'missing' | 'unreadable' | 'foreign' | 'outside'; boardWhy: string; memoriesAt: string } = {
+const cache: { board: Tracker | null | undefined; boardAt: string; boardStatus: 'ok' | 'missing' | 'moved' | 'unreadable' | 'foreign' | 'outside'; boardWhy: string; memoriesAt: string } = {
   board: undefined,
   boardAt: '',
   boardStatus: 'missing',
@@ -239,42 +239,152 @@ async function readCrew($: any, path: string): Promise<string | undefined> {
 
 type BoardStatus = typeof cache.boardStatus
 
-/** The board on disk and whether it could be read, read again whenever the file changed, by crew or anyone else. */
-async function boardState($: any): Promise<{ board: Tracker | null; status: BoardStatus; why: string }> {
-  if (files.board === '') return { board: null, status: 'missing', why: '' }
-  const at = await versionOf($, files.board)
-  if (cache.board !== undefined && at === cache.boardAt) return { board: cache.board, status: cache.boardStatus, why: cache.boardWhy }
+/** Where crew keeps a repo's board: in its own folder, or at the root of a repo where crew made it there before 0.5.2. */
+type BoardPlace = 'crew' | 'root'
+
+const BOARD_PATHS: Record<BoardPlace, string> = { crew: '.crew/prd-tracker.json', root: 'prd-tracker.json' }
+
+/**
+ * Where this session's repo keeps its board, found as the session starts.
+ * Every read and write of the board waits for `found`, so none lands while
+ * crew is still looking (a reload runs the session's start again).
+ */
+const placed: { board: BoardPlace; kept?: BoardPlace; found: Promise<void> } = { board: 'crew', found: Promise.resolve() }
+
+/** The board's file as the repo names it, in what crew says about it. */
+const boardName = (): string => BOARD_PATHS[placed.board]
+
+/** A root board moved into .crew/ while crew runs. */
+const MOVED = `看板已經搬到 ${BOARD_PATHS.crew}，重新啟動 Claude Code 後 crew 就會改用它。`
+
+/** Why a repo's board is at its root, said in 設定. */
+const AT_ROOT_WHY = '這個 repo 的看板是 crew 0.5.2 以前建在根目錄的，繼續沿用，不搬家。'
+
+/** Where the board is, as the pane says it. */
+const boardFileOf = (): { path: string; why?: string } => ({
+  path: boardName(),
+  ...(placed.board === 'root' ? { why: cache.boardStatus === 'moved' ? MOVED : AT_ROOT_WHY } : {}),
+})
+
+const placeKey = (): string => `board:${files.root}`
+
+/**
+ * Where this repo's board is: a .crew/prd-tracker.json first, then a root
+ * prd-tracker.json crew made before 0.5.2, else .crew/. The repo's own
+ * prd-tracker.json at the root is not crew's: crew reads it only to tell.
+ * Where crew keeps its board is kept for the repo, so it never moves under
+ * the work on another branch: .crew/ once crew wrote its board there, the root
+ * once crew took a board up there, until that board is moved into .crew/.
+ */
+async function findBoard($: any): Promise<{ place: BoardPlace; kept?: BoardPlace }> {
+  let kept: unknown
+  try {
+    kept = await $.store.get(placeKey())
+  } catch (err) {
+    $.ui.log(`crew: could not read where the board is kept: ${String(err)}`, { to: 'debug' })
+  }
+  if (kept === 'crew') return { place: 'crew', kept }
+  try {
+    const inCrew = await $.fs.exists(`${files.root}/${BOARD_PATHS.crew}`)
+    const root = await rootBoard($)
+    if (kept === 'root' && (!inCrew || root === 'crew' || root === 'unknown')) return { place: 'root', kept }
+    // Moved, or there from the start: crew's board is in .crew/, and the root file is not crew's.
+    if (inCrew) return { place: 'crew', kept: await keepPlace($, 'crew') }
+    if (root === 'crew') return { place: 'root', kept: await keepPlace($, 'root') }
+    return { place: 'crew' }
+  } catch (err) {
+    $.ui.log(`crew: could not tell where the board is: ${String(err)}`, { to: 'debug' })
+    return { place: kept === 'root' ? 'root' : 'crew' }
+  }
+}
+
+/** Keeps where the board is for the repo, and says it was kept; a store that cannot keep it leaves the next session to look again. */
+async function keepPlace($: any, place: BoardPlace): Promise<BoardPlace | undefined> {
+  try {
+    await $.store.set(placeKey(), place)
+    return place
+  } catch (err) {
+    $.ui.log(`crew: could not keep where the board is: ${String(err)}`, { to: 'debug' })
+    return undefined
+  }
+}
+
+/** What the root prd-tracker.json is: none, a board crew made there, the repo's own, or a file crew cannot read. */
+async function rootBoard($: any): Promise<'gone' | 'crew' | 'theirs' | 'unknown'> {
+  const root = `${files.root}/${BOARD_PATHS.root}`
+  if (!(await $.fs.exists(root))) return 'gone'
+  // A link out of the repo is not followed: it is not crew's.
+  if (!(await staysIn($, root))) return 'theirs'
+  try {
+    return madeByCrew(await $.fs.read(root)) ? 'crew' : 'theirs'
+  } catch (err) {
+    $.ui.log(`crew: could not read ${BOARD_PATHS.root} to tell whose it is: ${String(err)}`, { to: 'debug' })
+    return 'unknown'
+  }
+}
+
+/** One of crew's files as git names it, quoted or not: anything in crew's folder, and the board. */
+const isCrewFile = (path: string): boolean => {
+  const p = path.replace(/^"(.*)"$/, '$1')
+  return p.startsWith('.crew/') || p === boardName()
+}
+
+/**
+ * The board on disk and whether it could be read, read again whenever the
+ * file changed, by crew or anyone else, with the file it was read from. A
+ * restart of crew meanwhile does not change which file this read is about,
+ * and leaves the cache to the board it finds.
+ */
+async function boardState($: any): Promise<{ board: Tracker | null; status: BoardStatus; why: string; path: string }> {
+  // crew may start again just as one look ends: the read waits for the board that start finds.
+  let found = placed.found
+  await found
+  while (files.board === '' && placed.found !== found) {
+    found = placed.found
+    await found
+  }
+  const path = files.board
+  const place = placed.board
+  if (path === '') return { board: null, status: 'missing', why: '', path }
+  const at = await versionOf($, path)
+  // A board that is not there is looked for each time: it may have been moved into .crew/.
+  if (cache.board !== undefined && at !== 'missing' && at === cache.boardAt) return { board: cache.board, status: cache.boardStatus, why: cache.boardWhy, path }
   let board: Tracker | null = null
   let status: BoardStatus = 'missing'
   let why = ''
-  if (at !== 'missing') {
-    if (!(await staysIn($, files.board))) {
-      status = 'outside'
-    } else {
-      try {
-        const parsed: unknown = JSON.parse(await $.fs.read(files.board))
-        // Another tool's file of the same name, or a board with a part crew cannot read, is the person's: crew neither reads nor writes it.
-        const problem = trackerProblem(parsed)
-        if (problem === undefined) {
-          board = parsed as Tracker
-          status = 'ok'
-        } else {
-          status = problem.isOther ? 'foreign' : 'unreadable'
-          why = problem.why
-        }
-      } catch (err) {
-        // The parse error can quote what the file held.
-        $.ui.log(`crew: prd-tracker.json does not parse: ${redact(String(err))}`)
-        status = 'unreadable'
+  if (at === 'missing') {
+    // A root board moved into .crew/ while crew runs: crew takes it up when Claude Code starts again.
+    if (place === 'root' && (await $.fs.exists(`${files.root}/${BOARD_PATHS.crew}`))) status = 'moved'
+  } else if (!(await staysIn($, path))) {
+    status = 'outside'
+  } else {
+    try {
+      // A feature missing a list reads as having none; crew writes the empty list only with its own next change.
+      const parsed = withEmptyLists(JSON.parse(await $.fs.read(path)))
+      // Another tool's file of the same name, or a board with a part crew cannot read, is the person's: crew neither reads nor writes it.
+      const problem = trackerProblem(parsed)
+      if (problem === undefined) {
+        board = parsed as Tracker
+        status = 'ok'
+      } else {
+        status = problem.isOther ? 'foreign' : 'unreadable'
+        why = problem.why
       }
+    } catch (err) {
+      // The parse error can quote what the file held.
+      $.ui.log(`crew: ${BOARD_PATHS[place]} does not parse: ${redact(String(err))}`)
+      status = 'unreadable'
     }
   }
   // Set together, after every await: a reader never sees one read's board with another's status.
-  cache.board = board
-  cache.boardAt = at
-  cache.boardStatus = status
-  cache.boardWhy = why
-  return { board, status, why }
+  // The cache holds the board crew follows now: a read of a file crew no longer follows is not kept.
+  if (files.board === path) {
+    cache.board = board
+    cache.boardAt = at
+    cache.boardStatus = status
+    cache.boardWhy = why
+  }
+  return { board, status, why, path }
 }
 
 async function loadBoard($: any): Promise<Tracker | null> {
@@ -284,12 +394,14 @@ async function loadBoard($: any): Promise<Tracker | null> {
 /** Why crew will not change a board in this state, if it will not: a board it cannot read is the person's to fix, never replaced. */
 const problemOf = (status: BoardStatus, why: string): string | undefined =>
   status === 'unreadable'
-    ? `prd-tracker.json 讀不懂${why === '' ? '（可能有 merge 衝突或格式錯誤）' : `：${why}`}。請先修好；crew 沒有改動它。`
+    ? `${boardName()} 讀不懂${why === '' ? '（可能有 merge 衝突或格式錯誤）' : `：${why}`}。請先修好；crew 沒有改動它。`
     : status === 'foreign'
-      ? `prd-tracker.json 不是 crew 的看板格式（${why}），應該是這個 repo 自己或別的工具在用。crew 不讀也不改它，所以在這個 repo 還沒辦法開始。`
+      ? `${boardName()} 不是 crew 的看板格式（${why}）。crew 不讀也不改它，${placed.board === 'crew' ? '請修好或移走這個檔案，crew 才能開始。' : '所以在這個 repo 還沒辦法開始。'}`
       : status === 'outside'
-        ? 'prd-tracker.json 是連結或指到 repo 外，crew 不讀也不寫它。'
-        : undefined
+        ? `${boardName()} 是連結或指到 repo 外，crew 不讀也不寫它。`
+        : status === 'moved'
+          ? MOVED
+          : undefined
 
 /** The problem with the board as last read, if any. */
 const boardProblem = (): string | undefined => problemOf(cache.boardStatus, cache.boardWhy)
@@ -336,17 +448,31 @@ async function foreignWrites($: any): Promise<string[]> {
   return [...ownFiles.foreign].map(path => (path.startsWith(`${files.root}/`) ? path.slice(files.root.length + 1) : path))
 }
 
-async function saveBoard($: any, board: Tracker) {
-  if (!(await staysIn($, files.board))) throw new BoardRefused(outside(files.board))
-  await noteForeign($, files.board)
+/** A write that met crew starting again: the file it read may no longer be the board. */
+const RESTARTING = 'crew 正在重新載入，看板這次沒有寫入；請再做一次。'
+
+/** Writes the board to the file it was read from, while that is still the board. */
+async function saveBoard($: any, board: Tracker, path: string) {
+  if (path === '' || path !== files.board) throw new BoardRefused(RESTARTING)
+  if (!(await staysIn($, path))) throw new BoardRefused(outside(path))
+  await noteForeign($, path)
   const text = `${JSON.stringify(board, null, 2)}\n`
-  await $.fs.write(files.board, text)
-  ownFiles.written.set(files.board, fingerprint(text))
+  // Checked again as it is written: crew may have started again while it looked.
+  if (path !== files.board) throw new BoardRefused(RESTARTING)
+  await $.fs.write(path, text)
+  ownFiles.written.set(path, fingerprint(text))
+  // What follows is about the board crew follows now, which a restart meanwhile may have changed.
+  if (path !== files.board) return
   // Read again next time: the file system says what version this write made.
   cache.board = board
   cache.boardAt = ''
   cache.boardStatus = 'ok'
   cache.boardWhy = ''
+  // crew's own board in .crew/ is the repo's from now on, on any branch: told by the file written.
+  if (path === `${files.root}/${BOARD_PATHS.crew}` && placed.kept !== 'crew') {
+    placed.kept = 'crew'
+    await keepPlace($, 'crew')
+  }
 }
 
 /**
@@ -356,11 +482,12 @@ async function saveBoard($: any, board: Tracker) {
  */
 async function changeBoard<T>($: any, change: (board: Tracker | null) => Promise<{ board?: Tracker; value: T }>): Promise<T> {
   return serial('board', async () => {
-    const { board, status, why } = await boardState($)
+    // The file read is the one written: a restart meanwhile refuses the write rather than send it elsewhere.
+    const { board, status, why, path } = await boardState($)
     const problem = problemOf(status, why)
     if (problem !== undefined) throw new BoardRefused(problem)
     const r = await change(board)
-    if (r.board !== undefined) await saveBoard($, r.board)
+    if (r.board !== undefined) await saveBoard($, r.board, path)
     return r.value
   })
 }
@@ -665,8 +792,9 @@ async function remember($: any, input: MemoryInput, knownBy?: CrewRole): Promise
     r = await serial('board', async () => {
       const saved = await save()
       if (!saved.ok || saved.isNew !== true) return saved
-      const board = await loadBoard($)
-      if (board === null || boardProblem() !== undefined) return saved
+      // A board crew can read, and the file it was read from.
+      const { board, path } = await boardState($)
+      if (board === null) return saved
       const entry = saved.entry
       const decisions = (board.decisions ?? []).map(d => {
         // Only the decision this one replaces changes: one with no id, or a line of text, is left as it is.
@@ -675,7 +803,7 @@ async function remember($: any, input: MemoryInput, knownBy?: CrewRole): Promise
       })
       decisions.push({ id: entry.id, date: dayOf(entry.t), status: 'accepted', by: entry.source, decision: entry.text, refs: entry.refs })
       try {
-        await saveBoard($, { ...board, decisions })
+        await saveBoard($, { ...board, decisions }, path)
       } catch (err) {
         $.ui.log(`crew: ${entry.id} is in memory but not on the board: ${String(err)}`)
       }
@@ -1178,7 +1306,7 @@ async function reviewMaterial($: any, task: string, sha: string): Promise<string
     // The board, the threads and the memory are crew's: a commit that changes them is to be undone.
     // Each path as `diff --git` names it: quoted when git quotes it, spaces and all.
     const paths = shown === undefined || shown.exitCode !== 0 ? [] : [...shown.stdout.matchAll(/^diff --git "?a\/(.*?)"? "?b\/(.*?)"?$/gm)].flatMap(m => [m[1] ?? '', m[2] ?? ''])
-    const crewOwn = [...new Set(paths.filter(p => p === 'prd-tracker.json' || p.startsWith('.crew/')))]
+    const crewOwn = [...new Set(paths.filter(isCrewFile))]
     const warning = crewOwn.length === 0 ? [] : [`注意：這些 commit 改到了 crew 的檔案（${crewOwn.join('、')}）。全端不該改看板、討論串和記憶：請用 review_submit 的 changes 要求還原。`]
     // The person hears it once for these commits, however often the tech lead is asked to read them.
     const told = `${task}:${fresh.join(',')}`
@@ -1753,7 +1881,7 @@ async function resumeFlow($: any, fresh = true, timed = false): Promise<string> 
   const prd = await prdFile($, l.prdPath)
   await syncCommits($)
   const board = await loadBoard($)
-  if (board === null) return `沒有接續：${boardProblem() ?? '找不到看板 prd-tracker.json。'}`
+  if (board === null) return `沒有接續：${boardProblem() ?? `找不到看板 ${boardName()}。`}`
   const from = `${clockOf(await $.clock.now())} 從 ${STAGE_OF[l.flow.stage] ?? l.flow.stage} 接續`
   await update($, live, s => {
     const { paused: _, ...going } = s
@@ -2012,7 +2140,7 @@ async function checkoutState($: any): Promise<Checkout | undefined> {
       branches: refs.exitCode === 0 ? refs.stdout.split('\n').filter((line: string) => line.trim() !== '' && !line.startsWith('refs/heads/crew/')) : [],
       ref: ref.exitCode === 0 ? ref.stdout.trim() : '',
       head: head.exitCode === 0 ? head.stdout.trim() : '',
-      changes: status.stdout.split('\n').filter(line => line.trim() !== '' && !line.slice(3).split(' -> ').every(path => /^"?(?:\.crew\/|prd-tracker\.json"?$)/.test(path))),
+      changes: status.stdout.split('\n').filter(line => line.trim() !== '' && !line.slice(3).split(' -> ').every(isCrewFile)),
     }
   } catch {
     return undefined
@@ -2361,7 +2489,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
       injected: l.injected,
     }))
     await saveState($)
-    return '已清掉這個 session 的 crew 狀態。看板（prd-tracker.json）、討論串和記憶（.crew/memory）都保留。'
+    return `已清掉這個 session 的 crew 狀態。看板（${boardName()}）、討論串和記憶（.crew/memory）都保留。`
   }
   if (verb === 'resume') {
     // A flow held for the person goes on by their own word: the pane's 接續, or a command they typed.
@@ -2846,7 +2974,7 @@ async function liveSnapshot($: any, board: Tracker | null, l: CrewLive): Promise
       return fallback
     }
   }
-  const snap = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await tried(() => loadMemories($), []), prd: await tried(() => prdView($), undefined), boardProblem: boardProblem() })
+  const snap = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await tried(() => loadMemories($), []), prd: await tried(() => prdView($), undefined), boardProblem: boardProblem(), boardFile: boardFileOf() })
   return tried(() => withPaneState($, snap, board, l), snap)
 }
 
@@ -2882,7 +3010,14 @@ export const register: Register = on => {
       booted = resolve
     })
     files.root = e.cwd
-    files.board = `${e.cwd}/prd-tracker.json`
+    // Found below, before the gate opens: until then the board's readers and writers wait.
+    files.board = ''
+    placed.board = 'crew'
+    placed.kept = undefined
+    let found = () => {}
+    placed.found = new Promise<void>(resolve => {
+      found = resolve
+    })
     files.schema = `${e.cwd}/schemas/prd-tracker.schema.json`
     files.crew = `${e.cwd}/.crew`
     files.memories = `${e.cwd}/.crew/memory/memories.jsonl`
@@ -2899,6 +3034,14 @@ export const register: Register = on => {
     ignored.checked = false
     // State kept from before a reload may predate fields added since: fill them in.
     try {
+      try {
+        const spot = await findBoard($)
+        placed.board = spot.place
+        placed.kept = spot.kept
+        files.board = `${e.cwd}/${boardName()}`
+      } finally {
+        found()
+      }
       // A live state an earlier version kept (a hot reload) gains the roles added since.
       await update($, live, l => ({ ...emptyLive(), ...l, roles: { ...emptyLive().roles, ...l.roles } }))
       try {

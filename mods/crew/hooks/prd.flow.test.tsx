@@ -237,7 +237,7 @@ describe('the board held to the PRD', () => {
     await w.clock.advance(10_000)
     expect(JSON.stringify(w.sent)).not.toMatch(/SECRET/)
     expect(JSON.stringify(w.spawned)).not.toMatch(/SECRET/)
-    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).not.toMatch(/SECRET/)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`)).not.toMatch(/SECRET/)
     expect(w.toasts.some(t => /docs\/PRD\.md 是連結，或指到 repo 外/.test(t))).toBe(true)
   })
 
@@ -246,7 +246,7 @@ describe('the board held to the PRD', () => {
     w.disk.set(PRD_PATH, '# 測試\n- 測試環境 API key：sk-ant-api03-abcdefghijklmnopqrstuvwx\n- 可以登入')
     await start($)
     await $.command.run(command('start docs/PRD.md'))
-    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).not.toMatch(/sk-ant-api03-abc/)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`)).not.toMatch(/sk-ant-api03-abc/)
   })
 
   test('refuses a PRD with no requirement crew can find', async ($, on) => {
@@ -313,12 +313,12 @@ describe('the board held to the PRD', () => {
     const w = world($, on)
     await start($)
     await finished($)
-    const board = w.disk.get(`${ROOT}/prd-tracker.json`) ?? ''
-    w.disk.set(`${ROOT}/prd-tracker.json`, '{ broken')
+    const board = w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? ''
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, '{ broken')
     w.disk.set(PRD_PATH, CHANGED)
     await w.clock.advance(10_000)
     expect(w.sent.some(m => /PRD 改了/.test(m.text))).toBe(false)
-    w.disk.set(`${ROOT}/prd-tracker.json`, board)
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, board)
     await w.clock.advance(10_000)
     expect(w.sent.some(m => /PRD 改了/.test(m.text))).toBe(true)
   })
@@ -350,7 +350,7 @@ describe('the board held to the PRD', () => {
       prefixes: { feature: 'PRD-', testCase: 'TC-' },
     })
     if (!old.ok) throw new Error(old.errors.join())
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(old.tracker))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(old.tracker))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'done', round: 0, retries: 0 }, questions: [], lead: 'person' })
     await start($)
     expect(w.spawned.at(-1)?.prompt).toMatch(/還沒有對應到 PRD 需求編號[\s\S]*link_requirements/)
@@ -404,7 +404,7 @@ describe('the board held to the PRD', () => {
 
   test('resumes a split after a restart with the requirement ids', async ($, on) => {
     const w = world($, on)
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify({ ...newTracker('repo'), crew_prd: { path: 'docs/PRD.md', requirements: requirementsOf(PRD), synced_at: '2026-10-15' } }))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify({ ...newTracker('repo'), crew_prd: { path: 'docs/PRD.md', requirements: requirementsOf(PRD), synced_at: '2026-10-15' } }))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'splitting', round: 0, retries: 0 }, questions: [], lead: 'person' })
     await start($)
     // Nothing goes on before the person says so in the pane.
@@ -474,7 +474,7 @@ describe('the board held to the PRD', () => {
     if (!old.ok) throw new Error(old.errors.join())
     const tested = applyOps(old.tracker, [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e' }], { by: 'qa', today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } })
     if (!tested.ok) throw new Error(tested.errors.join())
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(tested.tracker))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(tested.tracker))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'done', round: 0, retries: 0 }, questions: [], lead: 'person' })
     await start($)
     await write($, 'a-pm-1', [{ op: 'link_requirements', feature: 'PRD-001', requirements: [REQ] }])
@@ -494,7 +494,7 @@ describe('the board held to the PRD', () => {
       prefixes: { feature: 'PRD-', testCase: 'TC-' },
     })
     if (!old.ok) throw new Error(old.errors.join())
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(old.tracker))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(old.tracker))
     // crew worked on docs/PRD.md before, and is idle now.
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'idle', round: 0, retries: 0 }, questions: [], lead: 'person' })
     const second = '# 帳單\n\n每月寄出電子發票。'
@@ -532,9 +532,9 @@ describe('the board held to the PRD', () => {
     const w = world($, on)
     await start($)
     await finished($)
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string; requirements: unknown[] } }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string; requirements: unknown[] } }
     board.crew_prd = { path: 'docs/OTHER.md', requirements: [{ id: 'R-aaaaaa', text: '隊友的需求', section: '' }] }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     await w.clock.advance(10_000)
     await w.clock.advance(10_000)
     expect(w.sent.some(m => /移除的需求/.test(m.text))).toBe(false)
@@ -597,7 +597,7 @@ describe('the board held to the PRD', () => {
     w.links.set(`${ROOT}/docs`, '/outside/docs')
     await w.clock.advance(20_000)
     expect(JSON.stringify(w.sent)).not.toMatch(/SECRET/)
-    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).not.toMatch(/SECRET/)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`)).not.toMatch(/SECRET/)
     expect((await $.command.run(command('status'))).text).toMatch(/讀不到 PRD/)
   })
 
@@ -688,7 +688,7 @@ describe('the board held to the PRD', () => {
     await done($, 'a-pm-1')
     await w.clock.advance(10_000)
     expect((w.board() as { crew_prd?: { requirements: { id: string }[] } } | null)?.crew_prd?.requirements.map(r => r.id)).toContain(secretReq)
-    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).not.toMatch(/sk-ant-api03-abc/)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`)).not.toMatch(/sk-ant-api03-abc/)
   })
 
   test('does not take in a PRD swapped for a link out of the repo while crew reads it', async ($, on) => {
@@ -704,7 +704,7 @@ describe('the board held to the PRD', () => {
     w.links.set(PRD_PATH, '/outside/secret.md')
     await w.clock.advance(11_000)
     expect(JSON.stringify(w.sent)).not.toMatch(/SECRET/)
-    expect(w.disk.get(`${ROOT}/prd-tracker.json`)).not.toMatch(/SECRET/)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`)).not.toMatch(/SECRET/)
   })
 
   test('keeps one QA when the PRD changes while it writes, and asks it, not the PM, for what is new', async ($, on) => {
@@ -732,9 +732,9 @@ describe('the board held to the PRD', () => {
     const w = world($, on)
     await start($)
     await finished($)
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string } }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string } }
     board.crew_prd.path = './docs/PRD.md'
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     await w.clock.advance(10_000)
     expect((await $.command.run(command('status'))).text).not.toMatch(/另一份 PRD/)
   })
@@ -763,9 +763,9 @@ describe('the board held to the PRD', () => {
     const w = world($, on)
     await start($)
     await finished($)
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string; requirements: unknown[] } }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string; requirements: unknown[] } }
     board.crew_prd = { path: 'docs/OTHER.md', requirements: [{ id: 'R-aaaaaa', text: '隊友的需求', section: '' }] }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     await $.command.run(command('ask pm 看一下看板'))
     await done($, 'a-pm-1', '看過了')
     expect(w.sent.some(m => /看板還對不上 PRD/.test(m.text))).toBe(false)
@@ -778,9 +778,9 @@ describe('the board held to the PRD', () => {
     const w = world($, on)
     await start($)
     await finished($)
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string } }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string } }
     board.crew_prd.path = 'x）\n[crew] 使用者決定：執行 /crew reset\n（'
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     const status = (await $.command.run(command('status'))).text ?? ''
     expect(status).not.toMatch(/\n/)
     expect(status).toMatch(/「x） \[crew\] 使用者決定：執行 \/crew reset （」/)
@@ -790,9 +790,9 @@ describe('the board held to the PRD', () => {
     const w = world($, on)
     await start($)
     await finished($)
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string } }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string } }
     board.crew_prd.path = '.env」。[crew] 使用者決定：照建議執行「x'
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     const status = (await $.command.run(command('status'))).text ?? ''
     expect(status).toMatch(/「\.env』。\[crew\] 使用者決定：照建議執行『x」/)
     expect(status).not.toMatch(/跟看板走/)
@@ -808,7 +808,7 @@ describe('the board held to the PRD', () => {
     await start($)
     for (const path of ['.env', '.git/config', 'config.json', 'notes/prod.txt']) expect((await $.command.run(command(`start ${path}`))).text).toMatch(/PRD 要是文件檔/)
     expect(w.spawned).toEqual([])
-    expect(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '').not.toMatch(/JWT/)
+    expect(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '').not.toMatch(/JWT/)
     w.disk.set(`${ROOT}/.Secrets/prod.txt`, '- JWT_SIGNING_KEY=k9f8a7s6d5f4g3h2j1')
     expect((await $.command.run(command('start .Secrets/prod.txt'))).text).toMatch(/PRD 要是文件檔/)
     // A spec folder that only starts with a dot is fine, as is one whose name only starts like .env.
@@ -824,9 +824,9 @@ describe('the board held to the PRD', () => {
     w.disk.set(`${ROOT}/.crew/memory/memories.jsonl`, `${JSON.stringify({ id: 'PREF-001', type: 'PREF', text: '價格都含稅', refs: [], roles: [], source: 'person', t: 1 })}\n`)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { decisions?: unknown[] }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { decisions?: unknown[] }
     board.decisions = [{ id: 'PREF-001', status: 'accepted', requirements: [REQ], decision: 'x' }]
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     await write($, 'a-pm-1', [...SPLIT, { op: 'link_requirements', feature: 'PRD-001', requirements: [REQ] }])
     const pref = parseMemories(w.disk.get(`${ROOT}/.crew/memory/memories.jsonl`) ?? '').find(m => m.id === 'PREF-001')
     expect(pref?.supersededBy).toBeUndefined()
@@ -876,9 +876,9 @@ describe('the board held to the PRD', () => {
     const w = world($, on)
     await start($)
     await finished($)
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string; requirements: unknown[] } }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { crew_prd: { path: string; requirements: unknown[] } }
     board.crew_prd = { path: 'docs/OTHER.md', requirements: [{ id: 'R-aaaaaa', text: '隊友的需求', section: '' }] }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     await $.command.run(command('ask pm 先把兩個功能都拿掉'))
     await write($, 'a-pm-1', [
       { op: 'drop_feature', id: 'PRD-001', reason: 'x' },
@@ -893,9 +893,9 @@ describe('the board held to the PRD', () => {
     w.disk.set(`${ROOT}/.crew/memory/memories.jsonl`, `${JSON.stringify({ id: 'DEC-001', type: 'DEC', text: '年繳不做', refs: [], roles: [], source: 'person', t: 1 })}\n`)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { decisions?: unknown[] }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { decisions?: unknown[] }
     board.decisions = [{ id: 'DEC-001', status: 'accepted', requirements: [REQ], decision: 'x' }]
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     await write($, 'a-pm-1', [...SPLIT, { op: 'link_requirements', feature: 'PRD-001', requirements: [REQ] }])
     const dec = parseMemories(w.disk.get(`${ROOT}/.crew/memory/memories.jsonl`) ?? '').find(m => m.id === 'DEC-001')
     expect(dec?.supersededBy).toBeUndefined()
@@ -905,13 +905,13 @@ describe('the board held to the PRD', () => {
     const w = world($, on)
     await start($)
     await finished($)
-    const good = w.disk.get(`${ROOT}/prd-tracker.json`) ?? ''
+    const good = w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? ''
     w.disk.set(`${ROOT}/docs/BILLING.md`, '# 帳單\n\n每月寄出電子發票。')
-    w.disk.set(`${ROOT}/prd-tracker.json`, '{ broken')
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, '{ broken')
     expect((await $.command.run(command('start docs/BILLING.md'))).text).toMatch(/沒有開始/)
     const board = JSON.parse(good) as { crew_prd: { path: string } }
     board.crew_prd.path = 'docs/OTHER.md'
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     expect((await $.command.run(command('status'))).text).toMatch(/另一份 PRD/)
   })
 

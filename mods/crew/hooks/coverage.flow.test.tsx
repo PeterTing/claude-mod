@@ -165,9 +165,9 @@ describe('third test review', () => {
   test('a board that links to another file in the repo is refused too', async ($, on) => {
     const w = world($, on)
     w.disk.set(`${ROOT}/other.json`, '{}')
-    w.links.set(`${ROOT}/prd-tracker.json`, `${ROOT}/other.json`)
+    w.links.set(`${ROOT}/.crew/prd-tracker.json`, `${ROOT}/other.json`)
     await start($)
-    expect((await $.command.run(command('start docs/PRD.md'))).text).toMatch(/是連結/)
+    expect((await $.command.run(command('start docs/PRD.md'))).text).toMatch(/\.crew\/prd-tracker\.json 是連結或指到 repo 外/)
   })
 
   test('cuts long questions and answers', async ($, on) => {
@@ -193,16 +193,24 @@ describe('third test review', () => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
-    w.disk.set(`${ROOT}/prd-tracker.json`, '{ broken')
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, '{ broken')
     await done($, 'a-pm-1')
-    expect(w.toasts.some(t => /流程停在這裡。prd-tracker\.json 讀不懂/.test(t))).toBe(true)
+    expect(w.toasts.some(t => /流程停在這裡。\.crew\/prd-tracker\.json 讀不懂/.test(t))).toBe(true)
+  })
+
+  test('resume names the board it cannot find', async ($, on) => {
+    const w = world($, on, { stopped: ['a-pm-1'] })
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    w.disk.delete(`${ROOT}/.crew/prd-tracker.json`)
+    expect((await $.command.run(command('resume'))).text).toMatch(/沒有接續：找不到看板 \.crew\/prd-tracker\.json。/)
   })
 
   test('resume says why it cannot go on with a board it cannot read', async ($, on) => {
     const w = world($, on, { stopped: ['a-pm-1'] })
     await start($)
     await $.command.run(command('start docs/PRD.md'))
-    w.disk.set(`${ROOT}/prd-tracker.json`, '{ broken')
-    expect((await $.command.run(command('resume'))).text).toMatch(/沒有接續：prd-tracker\.json 讀不懂/)
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, '{ broken')
+    expect((await $.command.run(command('resume'))).text).toMatch(/沒有接續：\.crew\/prd-tracker\.json 讀不懂/)
   })
 })

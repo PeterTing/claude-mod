@@ -64,9 +64,9 @@ describe('designs', () => {
     expect((await $.command.run(command('reject SCR-001'))).text).toMatch(/用法：\/crew reject SCR-001 <原因>/)
     expect((await $.command.run(command('status'))).text).toMatch(/approving[\s\S]*待你決定 2/)
     // A role cannot approve by writing the board: a decision crew never recorded is taken off.
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { crew_designs?: Record<string, unknown>[] }[] }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { crew_designs?: Record<string, unknown>[] }[] }
     for (const d of board.prd_items.flatMap(i => i.crew_designs ?? [])) d.crew_decision = { verdict: 'approved' }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     await w.clock.advance(31_000)
     expect(await paneText($, 'progress')).toMatch(/→ 設計 0\/2/)
     expect(w.spawned.some(s => s.subagentType === 'crew:techlead')).toBe(false)
@@ -100,10 +100,10 @@ describe('designs', () => {
     await done($, 'a-uiux-3')
     await $.command.run(command('approve SCR-001 SCR-002'))
     expect(await paneText($, 'progress')).toMatch(/→ 設計 ✓/)
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { crew_designs?: Record<string, unknown>[] }[] }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { crew_designs?: Record<string, unknown>[] }[] }
     const first = board.prd_items[0]?.crew_designs?.[0]
     if (first !== undefined) first.body = '改成兩張卡片'
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     await w.clock.advance(31_000)
     expect(await paneText($, 'progress')).toMatch(/→ 設計 1\/2/)
   })
@@ -146,9 +146,9 @@ describe('designs', () => {
     await write($, 'a-uiux-3', DESIGNS)
     await done($, 'a-uiux-3')
     // The board in the repo says the designs were approved; crew never recorded it.
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { crew_designs?: Record<string, unknown>[] }[] }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { crew_designs?: Record<string, unknown>[] }[] }
     for (const d of board.prd_items.flatMap(i => i.crew_designs ?? [])) d.crew_decision = { verdict: 'approved' }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(board))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
     await $.command.run(command('start docs/PRD.md'))
     expect(w.spawned.some(s => s.subagentType === 'crew:techlead')).toBe(false)
     expect((await $.command.run(command('status'))).text).toMatch(/approving[\s\S]*待你決定 2/)

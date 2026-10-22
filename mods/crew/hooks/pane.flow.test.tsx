@@ -95,7 +95,7 @@ describe('crew from its pane', () => {
       if (!r.ok) throw new Error(r.errors.join())
       t = r.tracker
     }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(t))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(t))
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, questions: [], lead: 'person' })
     await start($)
     // Nothing starts, and nothing is spent, before the person says so.
@@ -131,7 +131,7 @@ describe('crew from its pane', () => {
       if (!r.ok) throw new Error(r.errors.join())
       t = r.tracker
     }
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(t))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(t))
     const question = { id: 'Q-01', question: '金額上限多少？', from: 'fullstack', status: 'open', t: 0 }
     w.store.set(`state:${ROOT}`, { prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, questions: [question], lead: 'person' })
     await start($)
@@ -177,7 +177,7 @@ describe('crew from its pane', () => {
     await ui.press({ key: `approve-${asks[0]?.[0]}` })
     await ui.input({ key: `reject-${asks[1]?.[0]}`, text: '要有確認步驟' })
     await ui.unmount()
-    const board = JSON.parse(w.disk.get(`${ROOT}/prd-tracker.json`) ?? '{}') as { prd_items: { crew_designs?: { id: string; crew_decision?: { verdict: string; reason?: string } }[] }[] }
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { crew_designs?: { id: string; crew_decision?: { verdict: string; reason?: string } }[] }[] }
     expect(board.prd_items.flatMap(i => i.crew_designs ?? []).map(d => [d.id, d.crew_decision?.verdict, d.crew_decision?.reason])).toEqual([
       ['SCR-001', 'approved', undefined],
       ['SCR-002', 'rejected', '要有確認步驟'],

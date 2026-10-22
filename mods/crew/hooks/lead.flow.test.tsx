@@ -148,7 +148,7 @@ describe('crew across restarts', () => {
   test('picks up an unfinished PRD when Claude Code starts again', async ($, on) => {
     const w = world($, on)
     const tracker = boardWith(SPLIT as unknown as Op[], [{ op: 'add_test_case', criteria: ['AC-001'], title: 't', steps: ['s'], expected: 'e' }])
-    w.disk.set(`${ROOT}/prd-tracker.json`, JSON.stringify(tracker))
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(tracker))
     w.store.set(STATE_KEY, {
       prdPath: 'docs/PRD.md',
       flow: { stage: 'writing_tests', round: 0, retries: 0 },

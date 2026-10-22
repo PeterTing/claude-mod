@@ -222,6 +222,8 @@ export type Snapshot = {
   start?: Start
   /** Why crew neither reads nor writes the board, and the PRD it stopped on, if one was started. */
   boardProblem?: { text: string; prd?: string }
+  /** Where crew keeps its board, from the repo's root, and why when it is not in .crew/. */
+  boardFile?: { path: string; why?: string }
   settings?: Settings
   /** A design the person opened to read in the pane. */
   opened?: { id: string; title: string; body: string }
