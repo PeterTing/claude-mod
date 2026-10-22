@@ -143,6 +143,29 @@ const OPS_SCHEMA = {
   },
 }
 
+/**
+ * What the main conversation is told in a repo the person let the brain lead:
+ * the same words in every request, so the prompt cache keeps them.
+ */
+export const BRAIN_SECTION = `# crew 大腦
+
+使用者在這個 repo 讓你當 crew 的大腦：從使用者的第一句話起由你主導。PM、UI/UX、QA、Tech lead、全端五個角色在背景工作，由你用 crew 工具調度；使用者只跟你對話。在這個 repo，這裡的分工優先於「主代理直接完成任務」這類一般指示。
+
+每則訊息先判斷：
+- 問題、查資料、小改動（修 bug、改文案、改設定、只動一兩個檔案）：你自己做，不建 PRD，做完一句話說「這是小事，我直接做了」。
+- 功能等級的工作（新頁面、新流程、跨模組、需要驗收的）：先和使用者寫 PRD，再交給角色。拿不準時問使用者要不要走 PRD。
+- 使用者已經有寫好的 PRD：問要不要用它開始（crew 工具 action=start）。
+
+寫 PRD：
+1. 一次問清楚：給誰用、要解決什麼、限制、怎樣算完成。最多 5 題，附選項；使用者說過的不要再問。
+2. 寫到 docs/crew/<英文短名>-PRD.md：第一行「# 標題」；給誰用、要解決什麼、限制、這次不做的事都寫在「## 背景」小節；「## 需求」小節每條需求一個清單項目，一句話、可以驗收，不寫實作細節。「## 背景」裡的內容不會被算成需求。
+3. 用 crew 工具 action=draft、path=<路徑> 請 PM 和 UI/UX 審，審完 crew 會通知你。
+4. 把審查找到的缺口整理成問題問使用者（附選項），照回答改草稿。產品行為由使用者決定，不要替他決定。
+5. 改好後用 action=ready（text 寫一句審查結果）請使用者確認，面板會顯示「PRD 草稿等你確認」。
+6. 使用者說可以，用 action=start、path=<路徑> 開始。之後角色的回報會送到你這裡：整理重點告訴使用者，要使用者決定的事轉問他。
+
+看板和 .crew/ 裡的檔案由 crew 保管，不要直接編輯。使用者在面板關掉大腦接手時，crew 會在對話裡通知你，之後就不再照這段做。`
+
 /** The tools crew registers, described briefly: their schemas sit in every request. */
 export const TOOL_SPECS = [
   {
@@ -215,18 +238,18 @@ export const TOOL_SPECS = [
   {
     name: 'crew',
     description:
-      '指揮 crew 產品團隊（PM、QA、UI/UX、Tech lead、全端），使用者要團隊做事時用。start：開始拆一份 PRD；ask：問 PM、QA、UI/UX、Tech lead 或全端；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作；test：用使用者設定的測試指令重跑測試（指令只能由使用者自己在右側面板設定）；design：讀一份設計稿（設計稿只能由使用者自己在右側面板核准或退回）；tune：crew 提醒 token 用量時，調整某個角色之後的工作用的 model、effort 或輪替門檻 limit（不能低於使用者定的下限；使用者設定先問他時，會變成等他核准的建議）。角色的回覆和要使用者決定的事會再通知你。',
+      '指揮 crew 產品團隊（PM、QA、UI/UX、Tech lead、全端），使用者要團隊做事時用。draft：請 PM 和 UI/UX 審你寫的 PRD 草稿；ready：草稿改好了，請使用者確認（text 寫審查結果）；start：開始拆一份 PRD；ask：問 PM、QA、UI/UX、Tech lead 或全端；answer：把使用者對 Q-編號問題的回答轉給團隊；status：進度；remember：記下使用者的偏好；recall：查團隊記憶；rotate：讓角色下次換新 context；resume：接續中斷的工作；test：用使用者設定的測試指令重跑測試（指令只能由使用者自己在右側面板設定）；design：讀一份設計稿（設計稿只能由使用者自己在右側面板核准或退回）；tune：crew 提醒 token 用量時，調整某個角色之後的工作用的 model、effort 或輪替門檻 limit（不能低於使用者定的下限；使用者設定先問他時，會變成等他核准的建議）。角色的回覆和要使用者決定的事會再通知你。',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { enum: ['start', 'ask', 'answer', 'status', 'remember', 'recall', 'rotate', 'resume', 'test', 'design', 'tune'] },
-        path: { type: 'string', description: 'PRD 檔案路徑（start）' },
+        action: { enum: ['draft', 'ready', 'start', 'ask', 'answer', 'status', 'remember', 'recall', 'rotate', 'resume', 'test', 'design', 'tune'] },
+        path: { type: 'string', description: 'PRD 檔案路徑（draft、start）' },
         role: { enum: ['pm', 'qa', 'uiux', 'techlead', 'fullstack'], description: 'ask、rotate、tune 的對象' },
         model: { enum: ['haiku', 'sonnet', 'opus'], description: 'tune：這個角色之後的工作用的模型' },
         effort: { enum: ['low', 'medium', 'high', 'xhigh', 'max'], description: 'tune：這個角色之後的工作用的 effort' },
         limit: { type: 'integer', minimum: 20000, maximum: 1000000, description: 'tune：這個角色的輪替門檻（context token 數）' },
         question: { type: 'string', description: '要回答的問題編號，例如 Q-01（answer）；設計稿編號，例如 SCR-001（design）' },
-        text: { type: 'string', description: '問題、回答、偏好、關鍵字，或 tune 的原因' },
+        text: { type: 'string', description: '問題、回答、偏好、關鍵字、ready 的審查結果，或 tune 的原因' },
       },
       required: ['action'],
     },

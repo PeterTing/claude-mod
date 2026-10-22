@@ -122,6 +122,91 @@ describe('the brain runs crew', () => {
     expect(String((await crew($, { action: 'ask', role: 'pm' })).result)).toMatch(/用法/)
     expect(String((await crew($, { action: 'dance' })).result)).toMatch(/action/)
   })
+
+  test('carries a role’s own reply on its notice when the notice comes before the run ends', async ($, on) => {
+    // Claude Code 2.1.308 hands the main conversation a role's notice before it raises the role's turn.complete.
+    const w = world($, on)
+    await start($)
+    await crew($, { action: 'ask', role: 'pm', text: '年繳要不要做？' })
+    const early = notice($, 'a-pm-1')
+    await done($, 'a-pm-1', '這一版先不做年繳')
+    const relayed = await early
+    expect(relayed.drop).toBeUndefined()
+    expect(relayed.text).toMatch(/^\[crew\] PM 回覆了 ASK-01。[\s\S]*「這一版先不做年繳」/)
+    await w.clock.advance(61_000)
+    expect(w.prompts).toEqual([])
+  })
+
+  test('lets a notice whose run never ends go after a while, as before', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await crew($, { action: 'ask', role: 'pm', text: '年繳要不要做？' })
+    const early = notice($, 'a-pm-1')
+    let gone = false
+    void early.then(() => {
+      gone = true
+    })
+    await w.clock.advance(4_999)
+    expect(gone).toBe(false)
+    await w.clock.advance(1)
+    expect((await early).drop).toBeDefined()
+    expect(w.logs).toEqual([])
+  })
+
+  test('holds an early notice until the run is noted, however long that takes within the wait', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await crew($, { action: 'ask', role: 'pm', text: '年繳要不要做？' })
+    const early = notice($, 'a-pm-1')
+    let gone = false
+    void early.then(() => {
+      gone = true
+    })
+    await w.clock.advance(4_999)
+    expect(gone).toBe(false)
+    await done($, 'a-pm-1', '先不做')
+    expect((await early).text).toMatch(/PM 回覆了 ASK-01/)
+  })
+
+  test('after a notice that waited for nothing, lets the next one that comes last go at once', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await crew($, { action: 'ask', role: 'pm', text: '第一題' })
+    // A notice of no run noted (a message mid-run): it waits out its time.
+    const stray = notice($, 'a-pm-1')
+    await w.clock.advance(5_000)
+    await stray
+    await done($, 'a-pm-1', '第一題的答案')
+    // The run's own notice, in the order Claude Code kept before 2.1.308, goes without waiting.
+    let gone = false
+    const late = notice($, 'a-pm-1').then(r => {
+      gone = true
+      return r
+    })
+    await w.clock.advance(0)
+    await Promise.resolve()
+    expect(gone).toBe(true)
+    expect((await late).text).toMatch(/PM 回覆了 ASK-01/)
+  })
+
+  test('does not wait on an agent crew has replaced', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await crew($, { action: 'ask', role: 'pm', text: '第一題' })
+    await done($, 'a-pm-1', '答')
+    await $.command.run(command('rotate pm'))
+    await crew($, { action: 'ask', role: 'pm', text: '第二題' })
+    // The old PM's notice, late: crew notes no run of an agent it replaced.
+    let gone = false
+    const late = notice($, 'a-pm-1').then(r => {
+      gone = true
+      return r
+    })
+    await w.clock.advance(0)
+    await Promise.resolve()
+    expect(gone).toBe(true)
+    await late
+  })
 })
 
 const ctx = (by: string) => ({ by, today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } })

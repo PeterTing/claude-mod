@@ -211,6 +211,7 @@ const NORMAL: Snapshot = {
   actions: [{ id: 'DEC-15', text: '全端輪替，門檻 100K → 80K', before: '命中率 52% · context 96K', after: '命中率 81% · context 8K' }],
   tuning: 'ask',
   settings: { testCommand: 'python3 -m pytest -v', openOnLoad: true },
+  takeover: { on: true, idle: false },
   start: { prds: [{ path: 'docs/PRD.md', title: '會員訂閱 v1' }, { path: 'docs/specs/checkout.md', title: '結帳流程' }] },
   resident: { checked: '2 分鐘前', next: '3 分鐘後', digest: { sent: '12:30', queued: 2, next: '13:00' } },
   requirements: REQUIREMENTS,
@@ -299,6 +300,59 @@ const EMPTY: Snapshot = {
     ],
   },
   settings: { openOnLoad: true },
+  takeover: { on: false, idle: true },
+}
+
+/** The brain took this repo over and has heard nothing yet. */
+const LEADING: Snapshot = { ...EMPTY, takeover: { on: true, idle: true } }
+
+/** The brain wrote a PRD with the person and asked PM and UI/UX to review it. */
+const DRAFTING: Snapshot = {
+  ...EMPTY,
+  today: 21_000,
+  roles: EMPTY.roles.map(r =>
+    r.id === 'uiux'
+      ? { ...r, state: 'working', doing: '審草稿 docs/crew/billing-PRD.md（ASK-02）', route: S, context: 9_000, today: 9_000 }
+      : r.id === 'pm'
+        ? { ...r, context: 12_000, today: 12_000 }
+        : r,
+  ),
+  takeover: {
+    on: true,
+    idle: true,
+    draft: {
+      path: 'docs/crew/billing-PRD.md',
+      title: '會員訂閱 v1',
+      requirements: 12,
+      stage: 'reviewing',
+      reviews: [
+        { role: 'pm', done: true, found: '2 個缺口' },
+        { role: 'uiux', done: false },
+      ],
+    },
+  },
+}
+
+/** The brain filled the gaps the reviews found, with the person, and waits for their yes. */
+const CONFIRM: Snapshot = {
+  ...DRAFTING,
+  today: 34_000,
+  roles: EMPTY.roles.map(r => (r.id === 'pm' ? { ...r, context: 12_000, today: 12_000 } : r.id === 'uiux' ? { ...r, context: 22_000, today: 22_000 } : r)),
+  takeover: {
+    on: true,
+    idle: true,
+    draft: {
+      path: 'docs/crew/billing-PRD.md',
+      title: '會員訂閱 v1',
+      requirements: 14,
+      stage: 'confirm',
+      reviews: [
+        { role: 'pm', done: true, found: '2 個缺口' },
+        { role: 'uiux', done: true, found: '1 個缺口' },
+      ],
+      note: '兩邊共 3 個缺口，已照你的回答補進草稿',
+    },
+  },
 }
 
 /** Claude Code started again on an unfinished PRD: crew offers to go on. */
@@ -308,4 +362,4 @@ const RESTART: Snapshot = {
   resident: { checked: '剛剛', next: '5 分鐘後' },
 }
 
-export const DEMO = { normal: NORMAL, empty: EMPTY, attention: ATTENTION, restart: RESTART } as const
+export const DEMO = { normal: NORMAL, empty: EMPTY, attention: ATTENTION, restart: RESTART, leading: LEADING, drafting: DRAFTING, confirm: CONFIRM } as const

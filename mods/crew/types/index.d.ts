@@ -2,7 +2,7 @@
 export type CrewTab = 'overview' | 'progress' | 'board' | 'threads' | 'memory' | 'tokens' | 'settings'
 
 /** The sample situation the design preview shows. */
-export type CrewScenario = 'normal' | 'empty' | 'attention' | 'restart'
+export type CrewScenario = 'normal' | 'empty' | 'attention' | 'restart' | 'leading' | 'drafting' | 'confirm'
 
 export type CrewTier = 'S' | 'M' | 'L' | 'XL'
 
@@ -117,8 +117,8 @@ export type CrewLive = {
   seen: Record<string, number>
   questions: CrewQuestion[]
   activity: CrewActivity[]
-  /** Role → the ASK thread of the question it is answering, and who asked: the person, or the brain for them. */
-  asks: Record<string, { id: string; by: 'person' | 'brain' }>
+  /** Role → the ASK thread of the question it is answering, and who asked: the person, or the brain for them; with `draft`, a review of that draft PRD. */
+  asks: Record<string, { id: string; by: 'person' | 'brain'; draft?: string }>
   /** Who started the PRD under way: work the brain started reports back to it. */
   lead: 'person' | 'brain'
   /** How many questions the person has asked the roles directly. */
@@ -166,6 +166,25 @@ export type CrewLive = {
   declined?: boolean
   /** Questions the heartbeat already brought up to the person. */
   reminded?: string[]
+  /** A PRD the brain wrote with the person and has not started: who reviews it, and whether it waits for the person's yes. */
+  draft?: CrewDraft
+}
+
+export type CrewDraft = {
+  path: string
+  title: string
+  requirements: number
+  stage: 'reviewing' | 'confirm'
+  /**
+   * Each reviewer: done with what it found, or failed (not sent, a run that did
+   * not finish, a restart); `unsure`: it replied, but not in the asked form, so
+   * whether it reviewed is the reply's to say; `ask` is its ASK thread.
+   */
+  reviews: { role: 'pm' | 'uiux'; done: boolean; failed?: boolean; unsure?: boolean; found?: string; ask?: string }[]
+  /** The brain's word on the reviews when it asks the person to confirm. */
+  note?: string
+  /** How many times this draft went to review. */
+  sends?: number
 }
 
 export type CrewTuning = { model?: 'haiku' | 'sonnet' | 'opus'; effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; limit?: number }
@@ -197,6 +216,8 @@ declare module 'claude-code' {
       tab: CrewTab
       /** The sample situation the preview shows. */
       scenario: CrewScenario
+      /** The session whose system prompt the engine composed, which that conversation keeps. */
+      composedFor: string
       /** The item whose thread the Threads tab has open, if any. */
       thread: string | null
       /** The role whose question field the overview has open, if any. */

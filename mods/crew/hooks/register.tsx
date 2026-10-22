@@ -6,6 +6,8 @@ import { applyOps, criteriaOf, decisionOf, designsOf, gateG1, gateG4, gateG6, li
 import type { Tracker } from './board'
 import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './consolidate'
 import { DEMO } from './demo'
+import { draftDetail, draftOf, failedOf, MAX_SENDS, outcomeOf, pendingOf, REVIEWERS, reviewPrompt, sentDraft, sentOut, settledNote, takeoverOf, titleIn, withAsk, withOutcome } from './draft'
+import type { Outcome } from './draft'
 import { answeredOf, RUNNING, step } from './flow'
 import type { FlowAction, FlowEvent } from './flow'
 import { clockOf, dayOf, dayTotal, emptyLive, HEARTBEAT_MS, metricsOf, roleSays, snapshotOf, STAGE_OF, STAGE_ROLE, stopKey, usageSignals } from './live'
@@ -21,7 +23,7 @@ import { decisionsOf, designMark, withDecisions } from './designs'
 import type { Decided } from './designs'
 import type { Requirement } from './prd'
 import { composeStart, relatedOf, threadLines, wakePlan, withMemories, workingSet } from './pack'
-import { AGENT_SPECS, CREW_ROLES, TOOL_SPECS } from './roles'
+import { AGENT_SPECS, BRAIN_SECTION, CREW_ROLES, TOOL_SPECS } from './roles'
 import type { CrewRole } from './roles'
 import { floorOf, labelOf, routeFor, tunedRoute } from './router'
 import type { Route, Tuning } from './router'
@@ -40,6 +42,8 @@ const isCrewRole = (v: unknown): v is CrewRole => typeof v === 'string' && (CREW
 const isDemo = atom({ plugin: 'crew', key: 'isDemo' } as const, false)
 const tab = atom({ plugin: 'crew', key: 'tab' } as const, 'overview' as CrewTab)
 const scenario = atom({ plugin: 'crew', key: 'scenario' } as const, 'normal' as CrewScenario)
+/** The session whose prompt the engine composed: that conversation keeps it, so a takeover switched later is told in it (tellSwitch). */
+const composedFor = atom({ plugin: 'crew', key: 'composedFor' } as const, '')
 const thread = atom({ plugin: 'crew', key: 'thread' } as const, null as string | null)
 const gate = atom({ plugin: 'crew', key: 'gate' } as const, null as string | null)
 const asking = atom({ plugin: 'crew', key: 'asking' } as const, null as string | null)
@@ -686,7 +690,7 @@ function savedTunings(tuned: unknown, tunings: unknown): { tuned: Record<string,
 async function restore($: any) {
   const l = await read($, live)
   if (l.prdPath === null) {
-    const saved = (await $.store.get(stateKey())) as Partial<Record<'prdPath' | 'flow' | 'questions' | 'lead' | 'tuned' | 'tunings', unknown>> | undefined
+    const saved = (await $.store.get(stateKey())) as Partial<Record<'prdPath' | 'flow' | 'questions' | 'lead' | 'tuned' | 'tunings' | 'draft', unknown>> | undefined
     if (saved !== undefined && saved !== null && typeof saved === 'object') {
       // Only what still has the shape crew wrote: anything else starts clean.
       const flow = saved.flow as Partial<CrewLive['flow']> | undefined
@@ -697,6 +701,7 @@ async function restore($: any) {
           typeof q === 'object' && q !== null && typeof q.id === 'string' && typeof q.question === 'string' && (q.status === 'open' || q.status === 'answered'),
       )
       const { tuned, tunings } = savedTunings(saved.tuned, saved.tunings)
+      const draft = draftOf(saved.draft)
       await update($, live, (x): CrewLive => ({
         ...x,
         prdPath: typeof saved.prdPath === 'string' ? saved.prdPath : null,
@@ -705,6 +710,8 @@ async function restore($: any) {
         lead: saved.lead === 'brain' ? 'brain' : 'person',
         ...(Object.keys(tuned).length === 0 ? {} : { tuned }),
         ...(tunings.length === 0 ? {} : { tunings }),
+        // A reload keeps the live draft, whose reviews are still under way.
+        ...(x.draft !== undefined || draft === undefined ? {} : { draft }),
       }))
     }
   }
@@ -1514,12 +1521,209 @@ async function feed($: any, event: FlowEvent, timed = false) {
   })
 }
 
+/** The conversation's id; '' where the engine cannot say, which no composed prompt matches. */
+async function sessionOf($: any): Promise<string> {
+  try {
+    return String(await $.session.id())
+  } catch (err) {
+    $.ui.log(`crew: could not tell which conversation this is: ${redact(String(err))}`, { to: 'debug' })
+    return ''
+  }
+}
+
+/**
+ * crew's state with no draft. The reviews under way end as they would, their
+ * replies coming back as plain ones; a reviewer stays one (no board, no
+ * decision) until its run ends.
+ */
+const withoutDraft = ({ draft: _gone, ...l }: CrewLive): CrewLive => l
+
+/** A PRD's path as crew keeps it: where it really is in the repo, through any link, so one file is one PRD; none when it is not there. */
+async function keptPath($: any, typed: string, full: string): Promise<string | undefined> {
+  let real: string | undefined
+  try {
+    real = ((await $.fs.stat(full, { resolve: true })) as { realPath?: string }).realPath
+  } catch {
+    return undefined
+  }
+  const root = await realRoot($)
+  return real !== undefined && real.startsWith(`${root}/`) ? real.slice(root.length + 1) : relativeOf(typed)
+}
+
+/** A draft PRD read as crew reads a PRD to start: in the repo, a document, with requirements it can follow. */
+async function draftFile($: any, typed: string): Promise<{ path: string; full: string; title: string; requirements: number } | { error: string }> {
+  const prd = await prdFile($, typed)
+  if ('error' in prd) return prd
+  let text: string
+  try {
+    text = await $.fs.read(prd.full)
+  } catch (err) {
+    return { error: `讀不到 ${typed}：${cut(squeeze(redact(String(err))), 120)}` }
+  }
+  const path = await keptPath($, typed, prd.full)
+  if (path === undefined) return { error: `找不到 ${typed}。` }
+  const requirements = requirementsOf(text).length
+  if (requirements === 0) return { error: `${path} 裡找不到需求：每條需求寫成一個清單項目。` }
+  if (requirements > MAX_REQUIREMENTS) return { error: `${path} 有 ${requirements} 條需求，crew 一次最多追 ${MAX_REQUIREMENTS} 條；請拆成幾份 PRD。` }
+  return { path, full: prd.full, title: titleIn(text, path), requirements }
+}
+
+/** What the brain is told in a conversation under way when it takes the repo over, or no longer has. */
+const TAKEOVER_ON_NOTE = `使用者剛讓你接手這個 repo。從現在起照下面的方式工作，之後在這個 repo 開的 session 會自動帶上。先用一句話告訴使用者你接手了，請他說要做什麼。\n\n${BRAIN_SECTION}`
+const TAKEOVER_OFF_NOTE = '使用者剛關掉大腦接手：從現在起不再照「# crew 大腦」那段做，照一般方式工作；使用者要團隊做事時才用 crew 工具。用一句話確認就好。'
+
+/** What a reviewer of the draft is told when it writes the board or makes a decision: the draft is not the board's yet. */
+const REVIEWING_DRAFT = '你在審 PRD 草稿：這一輪只回覆缺口，不改看板，也不記決定。'
+
+/** What draft and ready say in a repo the brain has not taken over: the pane would show neither. */
+const NOT_TAKEN_OVER = '這個 repo 沒有讓大腦接手，面板不會顯示草稿：請使用者在面板「設定」分頁打開「接手這個 repo」，或直接用 start 開始。'
+
+/**
+ * The brain's draft PRD, sent to PM and UI/UX to review: each is asked as the
+ * person asks a role, and its reply comes back to whoever sent it. Only
+ * between PRDs, so the draft never takes the pane from one under way.
+ */
+async function sendDraft($: any, typed: string, by: 'person' | 'brain'): Promise<string> {
+  if (typed === '') return '用法：/crew draft <PRD 草稿路徑>'
+  if (!(await takeoverOn($))) return NOT_TAKEN_OVER
+  const l = await read($, live)
+  if (l.flow.stage !== 'idle' && l.flow.stage !== 'done') return `crew 正在進行（${l.flow.stage}），等這一輪完成再送審新的草稿。`
+  if (l.paused !== undefined) return '流程暫停中：等使用者在面板按［接續］或［重設流程］，再送審新的草稿。'
+  const busy = REVIEWERS.filter(r => l.roles[r].state === 'working')
+  if (busy.length > 0) return `${busy.map(crewName).join('、')} 正在工作，等它做完再送審。`
+  const file = await draftFile($, typed)
+  if ('error' in file) return file.error
+  const { path, full, title, requirements } = file
+  const sends = (l.draft?.path === path ? (l.draft.sends ?? 1) : 0) + 1
+  if (sends > MAX_SENDS) return `${path} 已經送審 ${MAX_SENDS} 次：不要再送審；問使用者要不要照現在的草稿確認，要的話用 action=ready。`
+  // What an earlier sending found, of this draft or one before, is old news now.
+  forget(SETTLED)
+  await update($, live, s => ({ ...s, draft: sentDraft(path, title, requirements, sends) }))
+  await saveState($)
+  try {
+    await $.ui.open({ id: PANE, title: 'Crew' })
+  } catch (err) {
+    // The reviews go on: the pane is the person's to open.
+    $.ui.log(`crew: could not open the pane for the draft: ${redact(String(err))}`, { to: 'debug' })
+  }
+  const sent: string[] = []
+  const missed: string[] = []
+  for (const role of REVIEWERS) {
+    const id = `ASK-${String((await read($, live)).asked + 1).padStart(2, '0')}`
+    await update($, live, s => ({
+      ...s,
+      asked: s.asked + 1,
+      asks: { ...s.asks, [role]: { id, by, draft: path } },
+      ...(s.draft?.path !== path ? {} : { draft: withAsk(s.draft, role, id) }),
+    }))
+    await post($, { item: id, from: by, to: role, text: `審 PRD 草稿 ${path}` })
+    let why: string | undefined
+    try {
+      await deliver($, role, routeFor(role, l.roles[role].tier ?? 'S'), reviewPrompt(role, path, full, id), id, 'person')
+      const after = (await read($, live)).roles[role]
+      if (after.state === 'blocked') why = after.doing
+    } catch (err) {
+      why = cut(squeeze(redact(String(err))), 120)
+    }
+    if (why === undefined) {
+      sent.push(crewName(role))
+      continue
+    }
+    await update($, live, s => ({ ...s, asks: Object.fromEntries(Object.entries(s.asks).filter(([r]) => r !== role)) }))
+    await recordReview($, role, path, { found: '沒有送到', failed: true })
+    missed.push(`${crewName(role)}（${why}）`)
+  }
+  // Each review's thread, kept for a restart.
+  await saveState($)
+  // None went out: this answer says so, no note says it again, and the sending does not count.
+  if (sent.length === 0) {
+    forget(SETTLED)
+    await update($, live, s => (s.draft?.path !== path ? s : { ...s, draft: { ...s.draft, sends: sends - 1 } }))
+    await saveState($)
+  }
+  const asked = sent.length === 0 ? '' : `已請 ${sent.join(' 和 ')} 審 ${path}（${requirements} 條需求），審完會通知你。`
+  return `${asked}${missed.length === 0 ? '' : `沒有送到：${missed.join('、')}。`}`
+}
+
+/** How a reviewer's review of the draft ended: kept for the pane; once every reviewer has settled, the brain hears what to do next. */
+async function recordReview($: any, role: CrewRole, path: string, outcome: Outcome) {
+  const reviewer = REVIEWERS.find(r => r === role)
+  if (reviewer === undefined) return
+  const l = await update($, live, s => (s.draft?.path !== path ? s : { ...s, draft: withOutcome(s.draft, reviewer, outcome) }))
+  const d = l.draft
+  if (d === undefined || d.path !== path) return
+  await saveState($)
+  if (pendingOf(d).length === 0) tellBrain(settledNote(d), 'now', SETTLED)
+}
+
+/** The brain's draft, reviewed and changed with the person, shown as waiting for the person's yes. */
+async function draftReady($: any, note: string): Promise<string> {
+  if (!(await takeoverOn($))) return NOT_TAKEN_OVER
+  const d = (await read($, live)).draft
+  if (d === undefined) return '還沒有送審的 PRD 草稿：先用 draft 請 PM 和 UI/UX 審。'
+  const missed = failedOf(d).map(r => crewName(r.role))
+  // Sent to review as often as it may, the draft goes to the person as it is: the pane marks the review that did not finish.
+  if (missed.length > 0 && !sentOut(d)) return `${missed.join('、')} 沒有審完：先用 action=draft、path=${d.path} 重新送審。`
+  const waiting = pendingOf(d).map(r => crewName(r.role))
+  if (waiting.length > 0) return `${waiting.join('、')} 還在審，審完再請使用者確認。`
+  // The brain changed the draft since the reviews: the pane shows it as it is now.
+  const file = await draftFile($, d.path)
+  if ('error' in file) return file.error
+  const said = cut(redact(squeeze(note)), 200)
+  await update($, live, s => (s.draft?.path !== d.path ? s : { ...s, draft: { ...s.draft, title: file.title, requirements: file.requirements, stage: 'confirm' as const, ...(said === '' ? {} : { note: said }) } }))
+  await saveState($)
+  try {
+    await $.ui.open({ id: PANE, title: 'Crew' })
+  } catch (err) {
+    $.ui.log(`crew: could not open the pane for the draft: ${redact(String(err))}`, { to: 'debug' })
+  }
+  return `面板已顯示「PRD 草稿等你確認」：${d.path}（${file.requirements} 條需求）。使用者在主對話說可以，你就用 action=start、path=${d.path} 開始；使用者也可以直接在面板按［確認，開始］。`
+}
+
+/**
+ * Tells a conversation under way that the brain took the repo over, or no
+ * longer has. The engine keeps the prompt a conversation started with
+ * (measured on 2.1.308: asked to quote the section, the brain could not after
+ * it was composed in later, and still could after it was composed out), so a
+ * new conversation has it in its prompt and this one hears it here. The note
+ * waits with the others in place of an earlier switch's, and goes at once
+ * from a timer (a command's own hook may not submit a prompt) unless a role is
+ * at work, whose notice could drop a prompt of crew's own; then, or with the
+ * timer refused, it goes with the others.
+ */
+async function tellSwitch($: any, on: boolean) {
+  const id = await sessionOf($)
+  if (id === '' || (await read($, composedFor)) !== id) return
+  forget(SWITCH)
+  switches.last += 1
+  brain.queue.push({ text: on ? TAKEOVER_ON_NOTE : TAKEOVER_OFF_NOTE, ticks: 0, key: SWITCH, seq: switches.last })
+  if (Object.values((await read($, live)).roles).some(r => r.state === 'working')) return
+  $.clock.after(0, () => sendSwitch($))
+}
+
+/** Sends the switch note still waiting; dropped or refused, it waits again, unless a later switch is the news by then. */
+function sendSwitch($: any) {
+  const note = brain.queue.find(n => n.key === SWITCH)
+  if (note === undefined) return
+  forget(SWITCH)
+  const back = (why: string) => {
+    $.ui.log(`crew: could not tell the brain of the switch at once: ${why}`, { to: 'debug' })
+    if (note.seq === switches.last && !brain.queue.some(n => n.key === SWITCH)) brain.queue.push(note)
+  }
+  void Promise.resolve($.prompt.submit({ text: `[crew] ${note.text}` }))
+    .then(r => {
+      const drop = (r as { drop?: unknown } | undefined)?.drop
+      if (typeof drop === 'string') back(drop)
+    })
+    .catch((err: unknown) => back(redact(String(err))))
+}
+
 /** What a restart needs to pick the PRD up again, kept in crew's store under this repo's path. */
 async function saveState($: any) {
   if (files.root === '') return
   const l = await read($, live)
   try {
-    await $.store.set(stateKey(), { prdPath: l.prdPath, flow: l.flow, questions: l.questions, lead: l.lead, tuned: l.tuned ?? {}, tunings: l.tunings ?? [] })
+    await $.store.set(stateKey(), { prdPath: l.prdPath, flow: l.flow, questions: l.questions, lead: l.lead, tuned: l.tuned ?? {}, tunings: l.tunings ?? [], ...(l.draft === undefined ? {} : { draft: l.draft }) })
   } catch (err) {
     // Only a restart needs it: the work goes on.
     $.ui.log(`crew: could not keep the flow for a restart: ${String(err)}`)
@@ -1539,15 +1743,66 @@ const BRAIN_NOTE =
  * dropped, the ones after it are shown but never answered. So crew never puts
  * a prompt of its own behind a role's notice it is about to drop.
  */
-const brain: { queue: { text: string; ticks: number }[]; timer: { cancel: () => void } | undefined } = { queue: [], timer: undefined }
+const brain: { queue: { text: string; ticks: number; key?: string; seq?: number }[]; timer: { cancel: () => void } | undefined } = { queue: [], timer: undefined }
+
+/** The last takeover switch's number: a note of an earlier one is old news. */
+const switches = { last: 0 }
+
+/** The kinds of note a later one makes old news: a draft's settled reviews, and a takeover switch. */
+const SETTLED = 'settled'
+const SWITCH = 'switch'
+
+/** Drops the waiting notes of a kind. */
+const forget = (key: string) => {
+  brain.queue = brain.queue.filter(n => n.key !== key)
+}
+
+/**
+ * Roles' runs the engine ended that crew has not noted yet. From Claude Code
+ * 2.1.308 a role's notice reaches the main conversation before the role's
+ * turn.complete: the notice waits for crew to note the run, so it carries the
+ * role's own news, as it did when the notice came last.
+ */
+const noting = new Map<string, { done: Promise<void>; resolve: () => void }>()
+
+/** Per agent: its runs' notices that reached the main conversation, and its runs crew noted. A notice ahead of the runs noted waits. */
+const runCounts = new Map<string, { notices: number; noted: number }>()
+const countsOf = (agentId: string) => {
+  const kept = runCounts.get(agentId)
+  if (kept !== undefined) return kept
+  const fresh = { notices: 0, noted: 0 }
+  runCounts.set(agentId, fresh)
+  return fresh
+}
+
+/** How long a role's notice waits for its run to be noted before it goes on without it. */
+const NOTICE_WAIT_MS = 5_000
+
+function notingOf(agentId: string) {
+  const kept = noting.get(agentId)
+  if (kept !== undefined) return kept
+  let resolve = () => {}
+  const done = new Promise<void>(r => {
+    resolve = r
+  })
+  const entry = { done, resolve }
+  noting.set(agentId, entry)
+  return entry
+}
+
+function runNoted(agentId: string) {
+  countsOf(agentId).noted += 1
+  noting.get(agentId)?.resolve()
+  noting.delete(agentId)
+}
 
 /** Ticks of `BRAIN_TICK_MS` a note waits for a role's notice before crew sends it itself. */
 const BRAIN_TICK_MS = 15_000
 const BRAIN_TICKS = 4
 
-function tellBrain(text: string, when: 'now' | 'digest' = 'now') {
+function tellBrain(text: string, when: 'now' | 'digest' = 'now', key?: string) {
   if (when === 'digest') digest.notes.push(text)
-  else brain.queue.push({ text, ticks: 0 })
+  else brain.queue.push({ text, ticks: 0, ...(key === undefined ? {} : { key }) })
 }
 
 /** How often the roles' routine news goes to the brain, in one message. */
@@ -1794,18 +2049,33 @@ async function lookAfter($: any, now: number): Promise<string[]> {
   return found
 }
 
-/** The person's settings for this repo, on this machine: the pane on load, and how the brain acts on usage. */
-type CrewSettings = { openOnLoad: boolean; tuning: 'auto' | 'ask' }
+/**
+ * The person's settings for this repo, on this machine: the pane on load, how
+ * the brain acts on usage, and whether the brain leads here. Kept out of the
+ * repo, so a repo cannot turn the brain on for whoever opens it.
+ */
+type CrewSettings = { openOnLoad: boolean; tuning: 'auto' | 'ask'; takeover: boolean }
 
 const settingsKey = (): string => `settings:${files.root}`
 
 async function loadSettings($: any): Promise<CrewSettings> {
   const v = (await $.store.get(settingsKey())) as Partial<CrewSettings> | undefined
-  return { openOnLoad: v?.openOnLoad !== false, tuning: v?.tuning === 'auto' ? 'auto' : 'ask' }
+  return { openOnLoad: v?.openOnLoad !== false, tuning: v?.tuning === 'auto' ? 'auto' : 'ask', takeover: v?.takeover === true }
 }
 
-async function saveSettings($: any, change: Partial<CrewSettings>) {
-  await $.store.set(settingsKey(), { ...(await loadSettings($)), ...change })
+/** One change at a time: two switches pressed together each keep the other's. */
+function saveSettings($: any, change: Partial<CrewSettings>): Promise<void> {
+  return serial(settingsKey(), async () => $.store.set(settingsKey(), { ...(await loadSettings($)), ...change }))
+}
+
+/** Whether the person let the brain take this repo over; a store that cannot be read is no leave. */
+async function takeoverOn($: any): Promise<boolean> {
+  try {
+    return (await loadSettings($)).takeover
+  } catch (err) {
+    $.ui.log(`crew: could not read whether the brain takes this repo over: ${redact(String(err))}`, { to: 'debug' })
+    return false
+  }
 }
 
 /** The largest file the start screen reads a title from: a PRD is a document, not a dump. */
@@ -2388,7 +2658,7 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
       return '已關閉 crew 設計稿。'
     }
     // A situation and a tab may be named: /crew demo attention tokens.
-    const SITUATIONS = ['normal', 'empty', 'attention', 'restart'] as const
+    const SITUATIONS = ['normal', 'empty', 'attention', 'restart', 'leading', 'drafting', 'confirm'] as const
     const TABS = ['overview', 'progress', 'board', 'threads', 'memory', 'tokens', 'settings'] as const
     const [asked = 'normal', page = 'overview'] = rest
     const situation = SITUATIONS.find(x => x === asked)
@@ -2404,6 +2674,30 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     await $.ui.open({ id: PANE, title: 'Crew（設計稿）' })
     return '已開啟 crew 設計稿：面板和輸入框上方那一行都是示意資料。按面板上的［關閉設計稿］關閉。'
   }
+  if (verb === 'lead') {
+    // The brain takes a repo over by the person's own word only: no model, role, other plugin or file in the repo can turn it on.
+    if (by !== 'person' || !typed) return '大腦接手要使用者自己在右側面板的「設定」分頁打開或關掉。'
+    const on = rest[0] === 'on' ? true : rest[0] === 'off' ? false : undefined
+    if (on === undefined) return '用法：/crew lead on|off'
+    if ((await takeoverOn($)) === on) return on ? '這個 repo 已經由大腦接手。' : '這個 repo 本來就沒有讓大腦接手。'
+    try {
+      await saveSettings($, { takeover: on })
+    } catch (err) {
+      return `沒有存到設定：${cut(squeeze(redact(String(err))), 120)}`
+    }
+    // Turned off, the brain's draft goes too: its reviews come back as plain replies, and the file stays where it is.
+    // Either way a write of crew's own state redraws the pane, which reads the switch from the store.
+    const dropped = on ? undefined : (await read($, live)).draft
+    await update($, live, l => (on ? { ...l } : withoutDraft(l)))
+    if (dropped !== undefined) {
+      forget(SETTLED)
+      await saveState($)
+    }
+    await tellSwitch($, on)
+    return on ? '大腦接手這個 repo：從現在起由大腦主導，之後在這個 repo 開 session 也一樣。其他 repo 不受影響。' : '大腦不再接手這個 repo：從現在起，你叫 crew 時它才做事。'
+  }
+  if (verb === 'draft') return sendDraft($, rest.join(' '), by)
+  if (verb === 'ready') return draftReady($, rest.join(' '))
   if (verb === 'start') {
     const typed = rest.join(' ')
     if (typed === '') return '用法：/crew start <PRD 檔案路徑>'
@@ -2422,14 +2716,12 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
       if ('error' in prd) return prd.error
       full = prd.full
       // The PRD is known by where it really is: one file reached through a link in the repo is one PRD.
-      let real: string | undefined
-      try {
-        real = ((await $.fs.stat(prd.full, { resolve: true })) as { realPath?: string }).realPath
-      } catch {
-        return `找不到 ${typed}。`
-      }
-      const root = await realRoot($)
-      path = real !== undefined && real.startsWith(`${root}/`) ? real.slice(root.length + 1) : relativeOf(typed)
+      const kept = await keptPath($, typed, prd.full)
+      if (kept === undefined) return `找不到 ${typed}。`
+      path = kept
+      // The person confirms the brain's draft: the brain starts it only once it waits for their yes.
+      const drafted = (await read($, live)).draft
+      if (by === 'brain' && drafted?.path === path && drafted.stage !== 'confirm') return `${path} 還沒請使用者確認：先用 action=ready，等使用者說可以再開始。`
       const previous = (await read($, live)).prdPath
       text = await $.fs.read(prd.full)
       requirements = requirementsOf(text)
@@ -2451,7 +2743,10 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
       const version = await versionOf($, full)
       await update($, live, l => ({ ...l, signals: { ...l.signals, prdVersion: version, added: 0, removed: 0 } }))
       await update($, isDemo, () => false)
-      await update($, live, l => ({ ...l, prdPath: path, lead: by }))
+      // In a repo the brain took over, the work reports to the brain however it started: the person's press on the draft too.
+      const leads = by === 'brain' || (await takeoverOn($))
+      await update($, live, ({ draft: _started, ...l }) => ({ ...l, prdPath: path, lead: leads ? ('brain' as const) : ('person' as const) }))
+      forget(SETTLED)
     } finally {
       starting.busy = false
     }
@@ -2468,10 +2763,27 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     await $.ui.open({ id: PANE, title: 'Crew' })
     const after = await read($, live)
     const pm = after.roles.pm
-    if (pm.state === 'blocked') return `crew 沒有開始：${pm.doing}`
-    if (after.flow.stage === 'done') return `看板已經對準 ${path}，每條驗收條件也都有 test case，不用重拆。進度在右側面板。`
-    if (pm.state !== 'working' && after.flow.stage !== 'splitting') return `看板已經對準 ${path}，接著由 QA 補 test case。進度在右側面板。`
-    return `crew 開始：PM 正在${checking ? '讓看板對準' : '拆'} ${path}（${pm.tier ?? ''} ${pm.label ?? ''}・${pm.effort ?? ''}）。進度在右側面板。`
+    const started =
+      pm.state === 'blocked'
+        ? `crew 沒有開始：${pm.doing}`
+        : after.flow.stage === 'done'
+          ? `看板已經對準 ${path}，每條驗收條件也都有 test case，不用重拆。進度在右側面板。`
+          : pm.state !== 'working' && after.flow.stage !== 'splitting'
+            ? `看板已經對準 ${path}，接著由 QA 補 test case。進度在右側面板。`
+            : `crew 開始：PM 正在${checking ? '讓看板對準' : '拆'} ${path}（${pm.tier ?? ''} ${pm.label ?? ''}・${pm.effort ?? ''}）。進度在右側面板。`
+    // The brain took this repo over but the person started it in the pane: the brain hears, in words of crew's own.
+    if (by === 'person' && after.lead === 'brain') {
+      const how =
+        pm.state === 'blocked'
+          ? 'crew 沒有開始，原因在面板。'
+          : after.flow.stage === 'done'
+            ? '看板已經對準它，不用重拆。'
+            : pm.state !== 'working' && after.flow.stage !== 'splitting'
+              ? '接著由 QA 補 test case。'
+              : 'PM 正在拆功能和驗收條件。'
+      tellBrain(`使用者自己開始了${quoted(path)}：${how}`)
+    }
+    return started
   }
   if (verb === 'reset') {
     // The roles are let go, not forgotten: their late notices are still crew's, their writes are refused.
@@ -2488,6 +2800,14 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
       activity: l.activity,
       injected: l.injected,
     }))
+    // What reviews of a draft found is old news with the draft gone.
+    forget(SETTLED)
+    // The agents let go are noted no more: their notices wait on nothing.
+    for (const id of (await read($, live)).retired) {
+      noting.get(id)?.resolve()
+      noting.delete(id)
+      runCounts.delete(id)
+    }
     await saveState($)
     return `已清掉這個 session 的 crew 狀態。看板（${boardName()}）、討論串和記憶（.crew/memory）都保留。`
   }
@@ -2654,7 +2974,10 @@ async function crewVerb($: any, verb: string, rest: string[], by: 'person' | 'br
     const board = await loadBoard($)
     const l = await read($, live)
     const s = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), prd: await prdView($), boardProblem: boardProblem() })
-    return bandText(s, `crew（${l.flow.stage}）`)
+    // The brain asks this to know where things stand: the takeover and its draft too.
+    const takenOver = await takeoverOn($)
+    const line = bandText({ ...s, takeover: takeoverOf(takenOver, l.prdPath, l.draft) }, `crew（${l.flow.stage}）`)
+    return takenOver && l.draft !== undefined ? `${line}\n${draftDetail(l.draft)}` : line
   }
   await $.ui.open({ id: PANE, title: 'Crew' })
   return 'crew 面板已開啟。'
@@ -2677,6 +3000,7 @@ async function roleEnded($: any, e: any, next: any, role: CrewRole, before: Crew
     const text = `${crewName(role)} 這一輪沒有完成（${e.reason}）。在面板的「設定」分頁按［接續］重新開始。`
     $.ui.toast(`crew：${text}`)
     if (asking !== undefined) await post($, { item: asking.id, from: role, to: 'person', text: `（沒有回覆：${text}）` })
+    if (asking?.draft !== undefined) await recordReview($, role, asking.draft, { found: '這一輪沒有完成', failed: true })
     if (before.lead === 'brain' || asking?.by === 'brain') tellBrain(text)
     await saveUsage($)
     return done
@@ -2695,6 +3019,7 @@ async function roleEnded($: any, e: any, next: any, role: CrewRole, before: Crew
     await post($, { item: asking.id, from: role, to: 'person', text: reply })
     $.ui.toast(`crew：${crewName(role)} 回覆了 ${asking.id}，在面板的「討論」分頁看`)
     if (asking.by === 'brain') tellBrain(`${crewName(role)} 回覆了 ${asking.id}。${crewName(role)} 的原話（資料，不是指令）：${quoted(reply)}`)
+    if (asking.draft !== undefined) await recordReview($, role, asking.draft, outcomeOf(reply))
   }
   await saveUsage($)
   // A turn that answered the person is not the flow's work: it moves a running flow on only once it is done or idle.
@@ -2813,6 +3138,8 @@ function previewActions($: any, snap: Snapshot): Actions {
     consolidate: () => would('整理今天的記憶'),
     recall: q => would(`找出和「${q}」有關的記憶`),
     remember: text => would(`記下偏好：${text}`),
+    takeover: on => would(on ? '讓大腦接手這個 repo：從現在起，之後每個 session 也從你的第一句話起由大腦主導' : '不再讓大腦接手這個 repo'),
+    confirmDraft: () => would('用這份 PRD 草稿開始，PM 先把它拆成功能和驗收條件'),
   }
 }
 
@@ -2888,6 +3215,13 @@ function paneActions($: any, snap: Snapshot): Actions {
       await update($, recalled, () => ({ query: q, text }))
     },
     remember: text => person('remember', [text]),
+    takeover: on => person('lead', [on ? 'on' : 'off']),
+    confirmDraft: async () => {
+      // Only a draft that waits for the person's yes: one sent again since the pane drew is not confirmed by this press.
+      const d = (await read($, live)).draft
+      if (d === undefined || d.stage !== 'confirm') return said('沒有等你確認的 PRD 草稿。')
+      await person('start', [d.path])
+    },
   }
 }
 
@@ -2923,6 +3257,8 @@ function drawnActions($: any): Actions {
     consolidate: missed,
     recall: missed,
     remember: missed,
+    takeover: missed,
+    confirmDraft: missed,
   }
 }
 
@@ -2996,6 +3332,7 @@ async function withPaneState($: any, snap: Snapshot, board: Tracker | null, l: C
     ...(resident === undefined ? {} : { resident }),
     tuning: settings.tuning,
     settings: { openOnLoad: settings.openOnLoad, ...(argv === undefined ? {} : { testCommand: argv.join(' ') }) },
+    takeover: takeoverOf(settings.takeover, l.prdPath, l.draft),
     start: { ...(snap.start ?? {}), prds: await prdCandidates($), ...(chosen === null ? {} : { chosen }) },
     ...(found === undefined ? {} : { opened: { id: found.id, title: `${found.title}（${found.kind === 'screen' ? '畫面' : '沒有畫面'}）`, body: found.body } }),
     ...(search === null ? {} : { recalled: search }),
@@ -3056,7 +3393,7 @@ export const register: Register = on => {
       }
       await $.command.register({
         name: 'crew',
-        description: 'crew 產品團隊：/crew start <PRD>、answer <Q-編號> <回答>、ask <pm|qa|uiux|techlead|fullstack> <問題>、design、approve、reject、test-command、test、recall、remember、resume、status',
+        description: 'crew 產品團隊：/crew start <PRD>、lead on|off、draft <PRD 草稿>、ready [審查摘要]、answer <Q-編號> <回答>、ask <pm|qa|uiux|techlead|fullstack> <問題>、design、approve、reject、test-command、test、recall、remember、resume、status',
       })
       for (const spec of TOOL_SPECS) {
         await $.tool.register({ ...spec, isDeferred: false })
@@ -3139,8 +3476,10 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: 'mcp__crew__board_write' }, async ($, e: any) => {
-    const role = callerOf(await read($, live), e.agentId)
+    const l = await read($, live)
+    const role = callerOf(l, e.agentId)
     if (role === undefined) return { result: NOT_YOURS }
+    if (role !== 'brain' && l.asks[role]?.draft !== undefined) return { result: REVIEWING_DRAFT }
     const parsed = parseOps(e.ops)
     if (!parsed.ok) return { result: `board_write 沒有生效：\n${parsed.error}` }
     // Every string a role writes to the board is masked first: the board is in git.
@@ -3295,6 +3634,8 @@ export const register: Register = on => {
       resume: [],
       test: [],
       design: words(e.question),
+      draft: words(e.path),
+      ready: words(e.text),
     }
     const verb = str(e.action)
     if (verb === 'tune') {
@@ -3302,15 +3643,17 @@ export const register: Register = on => {
       return { result: await tune($, e) }
     }
     const rest = Object.hasOwn(args, verb) ? args[verb] : undefined
-    if (rest === undefined) return { result: 'action 要是 start、ask、answer、status、remember、recall、rotate、resume、test、design 或 tune。' }
+    if (rest === undefined) return { result: `action 要是 ${[...Object.keys(args), 'tune'].join('、')} 其中之一。` }
     await boot.ready
     return { result: await crewVerb($, verb, rest, 'brain') }
   })
 
   on('tool.call', { tool: 'mcp__crew__memory_save' }, async ($, e: any) => {
-    const caller = callerOf(await read($, live), e.agentId)
+    const l = await read($, live)
+    const caller = callerOf(l, e.agentId)
     if (caller === undefined) return { result: NOT_YOURS }
     const type = e.type as MemoryType
+    if (caller !== 'brain' && type === 'DEC' && l.asks[caller]?.draft !== undefined) return { result: REVIEWING_DRAFT }
     const allowed: readonly string[] = caller === 'brain' ? MEMORY_TYPES : ['DEC', 'MEM', 'LES']
     if (!allowed.includes(type)) return { result: 'memory_save 的 type 要是 DEC、MEM 或 LES（偏好由使用者自己說）。' }
     if (typeof e.text !== 'string') return { result: 'memory_save 需要 text。' }
@@ -3364,8 +3707,28 @@ export const register: Register = on => {
     await startWaiting($)
     const kind = e.origin.kind
     if (kind === 'task-notification' || kind === 'peer' || kind === 'peer-send-message' || kind === 'coordinator') {
-      const ids = crewIds(await read($, live))
-      if (ids.some(id => new RegExp(`\\b${escape(id)}\\b`).test(e.text)) || CREW_MENTION.test(e.text)) {
+      const l = await read($, live)
+      const named = crewIds(l).filter(id => new RegExp(`\\b${escape(id)}\\b`).test(e.text))
+      if (named.length > 0 || CREW_MENTION.test(e.text)) {
+        // The run the notice is about may not be noted yet: its news waits on that, a while at most.
+        // Only a role's current agent: crew notes no run of one a reset let go, or one it replaced.
+        const ahead = named.filter(id => {
+          const role = l.agents[id]
+          if (role === undefined || l.roles[role].agentId !== id) return false
+          const c = countsOf(id)
+          c.notices += 1
+          return c.notices > c.noted
+        })
+        if (ahead.length > 0) {
+          // The dispatch's own end (a reload) ends the wait too: the notice goes on as it would have.
+          const wait = Promise.resolve($.clock.sleep(NOTICE_WAIT_MS, { signal: next.signal })).catch(() => undefined)
+          await Promise.race([Promise.all(ahead.map(id => notingOf(id).done)), wait])
+          // A notice of no run (a message mid-run) or of a run never noted: later notices do not wait on it.
+          for (const id of ahead) {
+            const c = countsOf(id)
+            c.notices = Math.min(c.notices, c.noted)
+          }
+        }
         // A role's notice the brain has news waiting for carries that news instead. A notice the
         // person does not see (isMeta) cannot be rewritten when it starts a turn: it carries the news beside it.
         const notes = takeBrainNotes()
@@ -3423,11 +3786,15 @@ export const register: Register = on => {
     if (role === undefined) return next(e)
     // An agent crew has since replaced finishing late changes nothing about the role.
     if (before.roles[role].agentId !== e.agentId) return next(e)
+    const agentId: string = e.agentId ?? ''
     ending.count += 1
+    // A notice that comes while crew notes the run waits for it too.
+    notingOf(agentId)
     try {
       return await roleEnded($, e, next, role, before)
     } finally {
       ending.count -= 1
+      runNoted(agentId)
     }
   })
 
@@ -3470,6 +3837,20 @@ export const register: Register = on => {
     }
   })
 
+  // In a repo the person let the brain take over, the main conversation is told how, from its first message.
+  // Only the conversation a person reads that holds the crew tool: not the roles, a teammate's render, or a session
+  // nothing draws (-p). The engine's own composition is the one the conversation keeps (tellSwitch).
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+    if (!e.tools.includes('mcp__crew__crew') || e.traits.includes('teammate') || e.surfaces.length === 0 || files.root === '') return composed
+    if (next.origin.plugin === 'engine' && !e.traits.includes('analysis')) {
+      const id = await sessionOf($)
+      await update($, composedFor, () => id)
+    }
+    if (!(await takeoverOn($))) return composed
+    return { sections: [...composed.sections, { id: 'crew:brain', text: BRAIN_SECTION, scope: 'session' as const }] }
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const { Text } = $.ui.resolve(e)
@@ -3481,9 +3862,12 @@ export const register: Register = on => {
       )
     }
     const l = await read($, live)
-    if (l.prdPath === null) return next(e)
+    // With no PRD under way the line shows only while the brain has taken over: what it waits for, or its draft.
+    const takenOver = await takeoverOn($)
+    if (l.prdPath === null && !takenOver) return next(e)
     const board = await loadBoard($)
-    const snap = snapshotOf({ board, live: l, now: await $.clock.now(), prd: await prdView($), boardProblem: boardProblem() })
+    const shown = snapshotOf({ board, live: l, now: await $.clock.now(), prd: await prdView($), boardProblem: boardProblem() })
+    const snap = { ...shown, takeover: takeoverOf(takenOver, l.prdPath, l.draft) }
     return (
       <Text dimColor wrap="truncate-end">
         {bandText(snap, 'crew')}

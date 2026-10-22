@@ -35,6 +35,15 @@ The team also handles:
 
 The plan, with what each phase checked, is in [`docs/plans/crew-plan.zh-TW.html`](../../docs/plans/crew-plan.zh-TW.html).
 
+## Let the brain take a repo over
+
+You do not need a PRD to start. Press 讓大腦接手這個 repo on the pane's start screen (or 接手這個 repo in its 設定 tab, or type `/crew lead on`), and in that repo your main conversation leads the team from your first message:
+
+- For feature-sized work, the brain asks you what it needs, writes a PRD to `docs/crew/<name>-PRD.md`, and sends it to the PM and the designer to review (`draft`, three times at most; after that you decide whether to go on with the draft as it is). It asks you about the gaps they find, changes the draft, and asks you to confirm it (`ready`). Once you say yes in the conversation, or press 確認，開始 in the pane, the flow starts and the roles report back to the brain.
+- Small things, such as a bug fix or a change of copy, the brain does itself, with no PRD.
+
+The switch is yours alone: the brain, the roles, another plugin and a repo's own files cannot turn it on. It is kept on this machine, per repo, not in git, so other repos are not affected. Turned on in a conversation already under way, the brain hears it there: at once, or with the next role's report while a role is at work. A new session has it from its first message. Turned off, the brain goes back to working as usual and its draft is dropped (the file stays). crew never commits the draft.
+
 ## Run it from its pane
 
 When Claude Code starts, crew's pane opens on the right (in a terminal 144 columns wide or more; 110 once you have opened it). Everything crew does on your word is a button, a picker or a field there; no command is needed.
@@ -48,7 +57,7 @@ When Claude Code starts, crew's pane opens on the right (in a terminal 144 colum
 
 A press or a field in the pane is yours alone: no plugin or model can raise one, so it counts as typed by you. On a phone (Remote Control) the pane has buttons but no fields; type the commands below there.
 
-**Or ask Claude.** Say something like 「請 crew 開始處理 docs/PRD.md」 or 「問 crew 的 PM 為什麼這樣拆」. Claude uses crew's `crew` tool. For work Claude started, crew tells Claude at once what needs it: a question for you, a design to approve, a usage reminder, a flow that stopped, the end of the work. Routine news (a step along the way, a PRD change the PM syncs on its own) goes to Claude in one message every 30 minutes. Each message starts a turn of the main conversation, so it uses tokens. Work started from the pane reports only in the pane, the line above the prompt and toasts.
+**Or ask Claude.** Say something like 「請 crew 開始處理 docs/PRD.md」 or 「問 crew 的 PM 為什麼這樣拆」. Claude uses crew's `crew` tool. For work Claude started, crew tells Claude at once what needs it: a question for you, a design to approve, a usage reminder, a flow that stopped, the end of the work. Routine news (a step along the way, a PRD change the PM syncs on its own) goes to Claude in one message every 30 minutes. Each message starts a turn of the main conversation, so it uses tokens. Work started from the pane reports only in the pane, the line above the prompt and toasts, except in a repo the brain has taken over, where it reports to Claude too.
 
 ## crew looks after its work
 
@@ -68,6 +77,9 @@ For a phone, or if you prefer typing. Each does what its pane control does.
 | Command | What it does |
 | --- | --- |
 | `/crew start <PRD file>` | The PM splits the PRD, QA writes test cases, the designer designs each feature for you to approve, the tech lead plans tasks, the full-stack builds them, the tech lead reviews them, and crew runs your tests. The PRD must be a file inside the repo. |
+| `/crew lead on\|off` | Lets the brain take this repo over, or no longer. Only you can: it must be typed, or pressed in the pane. |
+| `/crew draft <PRD file>` | Sends a draft PRD to the PM and the designer to review, in a repo the brain has taken over. The brain does this itself; up to three times per draft. |
+| `/crew ready [summary]` | Shows the reviewed draft as waiting for your yes, with the summary. |
 | `/crew design <SCR-nnn>` | Shows a design: its feature, whether it has a screen, where it stands, and what it says. |
 | `/crew approve <SCR-nnn> […]` | Approves designs. Only you can: Claude cannot approve for you, and an answer to the question is not an approval. |
 | `/crew reject <SCR-nnn> <reason>` | Sends a design back; the designer gets your reason. |
@@ -84,7 +96,7 @@ For a phone, or if you prefer typing. Each does what its pane control does.
 | `/crew consolidate [YYYY-MM-DD]` | Haiku reads a day's log and saves facts and lessons nobody saved. This also runs by itself once a day for the previous day. |
 | `/crew status` | One-line summary. |
 | `/crew reset` | Forgets this session's flow and roles. The board, threads and memory are kept. |
-| `/crew demo [normal\|empty\|attention\|restart] [overview\|progress\|board\|threads\|memory\|tokens\|settings]` | The design preview with sample data, opened on a situation and tab if you name them. Close it with the pane's 關閉設計稿, or `/crew demo off`. |
+| `/crew demo [normal\|empty\|attention\|restart\|leading\|drafting\|confirm] [overview\|progress\|board\|threads\|memory\|tokens\|settings]` | The design preview with sample data, opened on a situation and tab if you name them. Close it with the pane's 關閉設計稿, or `/crew demo off`. |
 
 **After upgrading from 0.1.0.** A board crew finished then has no tasks, so its progress counts the plan as not done. Start the PRD again once, from the pane: crew checks the board without a new split, and the tech lead plans the tasks.
 

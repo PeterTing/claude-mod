@@ -174,7 +174,10 @@ describe('crew, PM and QA', () => {
     world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
-    const r = await $.prompt.submit({ text: '<task-notification><task-id>a-pm-1</task-id></task-notification>', wait: false, origin: { kind: 'task-notification' } as PromptOrigin, isMeta: true })
+    // As Claude Code 2.1.308 does: the notice first, then the run's end.
+    const early = $.prompt.submit({ text: '<task-notification><task-id>a-pm-1</task-id></task-notification>', wait: false, origin: { kind: 'task-notification' } as PromptOrigin, isMeta: true })
+    await done($, 'a-pm-1')
+    const r = await early
     expect(typeof (r as { drop?: string }).drop).toBe('string')
     const other = await $.prompt.submit({ text: '<task-notification><task-id>a-other</task-id></task-notification>', wait: false, origin: { kind: 'task-notification' } as PromptOrigin, isMeta: true })
     expect(other.drop).toBeUndefined()

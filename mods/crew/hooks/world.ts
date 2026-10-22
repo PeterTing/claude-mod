@@ -357,6 +357,11 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   /** The next so many messages to an agent are not delivered, as when it cannot take one just then. */
   const failSends = { n: 0 }
   // Resuming a finished agent asks whether its type is offered, as the engine does.
+  /** Prompts another plugin drops: the next `times` that match. */
+  const drops = { match: /$^/, times: 0 }
+  /** The conversation's id, as the engine answers it: a /clear starts another. */
+  const session = { id: 'session-1' }
+  on('session.id', () => ({ value: session.id }) as never)
   on('session.send', async (_$, e) => {
     sent.push({ to: String(e.to), text: e.text })
     if (failSends.n > 0) {
@@ -370,6 +375,11 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   on('agent.offer', () => ({ isOffered: true }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('prompt.submit', (_$, e) => {
+    // Another plugin dropping the next prompts that match, as a hook may.
+    if (drops.times > 0 && drops.match.test(e.text)) {
+      drops.times -= 1
+      return { drop: 'dropped by another plugin' }
+    }
     submitted.push({ text: e.text, kind: e.origin.kind, ...(e.context === undefined ? {} : { context: e.context }) })
     if (e.origin.kind === 'plugin') prompts.push(e.text)
     return { text: e.text }
@@ -380,7 +390,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   current.clock = clock
   current.spawned = spawned
   current.disk = disk
-  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, amend, reset, tests, broken, refuse, panes, failSends }
+  return { disk, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, amend, reset, tests, broken, refuse, panes, failSends, session, drops }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)

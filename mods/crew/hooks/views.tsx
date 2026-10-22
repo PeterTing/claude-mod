@@ -9,7 +9,8 @@ import {
   ROLE_STATE_NAMES,
   tokens,
 } from './model'
-import type { Decision, Feature, Gate, Item, ItemStatus, LayerState, Progress, RequirementRow, RoleId, RoleRow, Route, Snapshot, StageCell, Tuning } from './model'
+import type { Decision, Feature, Gate, Item, ItemStatus, LayerState, Progress, RequirementRow, RoleId, RoleRow, Route, Snapshot, StageCell, Takeover, Tuning } from './model'
+import { failedOf, MAX_SENDS, pendingOf, reviewMark, reviewWord, sentOut } from './draft'
 import { redact } from './memory'
 import { cut } from './prd'
 
@@ -50,6 +51,10 @@ export type Actions = {
   demoOff: () => void | Promise<void>
   recall: (query: string) => void | Promise<void>
   remember: (text: string) => void | Promise<void>
+  /** The brain takes this repo over from the first message, or no longer does. */
+  takeover: (on: boolean) => void | Promise<void>
+  /** The person's yes to the brain's draft PRD: the flow starts on it. */
+  confirmDraft: () => void | Promise<void>
 }
 
 export type View = { tab: CrewTab; scenario: CrewScenario; thread: string | null; gate: string | null; asking: string | null; confirming: boolean }
@@ -97,6 +102,9 @@ export async function actOn(act: Actions, view: View, snap: Snapshot, key: strin
     'reset-confirm': () => act.reset(true),
     consolidate: () => act.consolidate(),
     'close-design': () => act.viewDesign(null),
+    'takeover-on': () => act.takeover(true),
+    'takeover-off': () => act.takeover(false),
+    'confirm-draft': () => act.confirmDraft(),
   }
   const run = simple[key]
   if (run !== undefined) return did(run())
@@ -134,6 +142,9 @@ const SCENARIOS: readonly [CrewScenario, string][] = [
   ['empty', '剛開始'],
   ['attention', '需要注意'],
   ['restart', '剛重開'],
+  ['leading', '大腦接手'],
+  ['drafting', 'PRD 草稿審查中'],
+  ['confirm', 'PRD 草稿待確認'],
 ]
 
 /** A text field where the surface has one; where it has none (a phone), where to type instead. */
@@ -355,10 +366,16 @@ function Row({ el, cells, tail }: { el: Elements; cells: readonly [string, strin
 
 function Header({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapshot; view: View; act: Actions; isDemo: boolean }) {
   const { Box, Text, Button } = el
+  // While the brain has taken over, its draft or its wait comes first: a board from an earlier PRD is history.
+  const draft = snap.takeover?.on === true ? snap.takeover.draft : undefined
   const prd =
-    snap.prd === null
-      ? '還沒有 PRD'
-      : `${snap.prd.id} ${snap.prd.title} · 進度 ${snap.prd.progress}% · 今日 ${tokens(snap.today)} tok`
+    draft !== undefined
+      ? `大腦接手中 · PRD 草稿 ${draft.title}`
+      : waitsForWord(snap)
+        ? '大腦接手中 · 還沒有 PRD'
+        : snap.prd !== null
+          ? `${snap.prd.id} ${snap.prd.title} · 進度 ${snap.prd.progress}% · 今日 ${tokens(snap.today)} tok`
+          : '還沒有 PRD'
   return (
     <Box flexDirection="column">
       {isDemo && (
@@ -442,7 +459,8 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
           {snap.start.paused !== true && <Button key="not-now" label="先不要" onPress={() => act.notNow()} />}
         </Box>
       )}
-      {snap.progress !== null && ProgressSummary({ el, p: snap.progress })}
+      {snap.takeover?.on === true && (snap.takeover.draft !== undefined || snap.takeover.idle === true) && TakeoverScreen({ el, snap, act })}
+      {snap.progress !== null && !waitsForWord(snap) && ProgressSummary({ el, p: snap.progress })}
       {snap.boardProblem?.prd !== undefined && (
         <Text color="warning">
           ⚠ crew 停在 {snap.boardProblem.prd}：{snap.boardProblem.text}
@@ -555,20 +573,78 @@ function PrdPicker({ el, snap, act, id, label }: { el: Elements; snap: Snapshot;
   )
 }
 
-/** What crew offers when it loads with no PRD: one picked from the repo or typed, or not now. */
+/** The brain has taken over and no PRD is under way: it waits for the person's word. */
+const waitsForWord = (snap: Snapshot): boolean => snap.takeover?.on === true && snap.takeover.idle === true
+
+/** The brain's word on a draft: whether each role it asked has reviewed it, and what it found. */
+const reviewsLine = (d: NonNullable<Takeover['draft']>): string => d.reviews.map(r => `${ROLE_NAMES[r.role]} ${reviewMark(r)}${reviewWord(r)}`).join(' · ')
+
+/** The brain that took this repo over: what to say to it, or the PRD it drafted with the person and where that stands. */
+function TakeoverScreen({ el, snap, act }: { el: Elements; snap: Snapshot; act: Actions }) {
+  const { Box, Text, Button } = el
+  const draft = snap.takeover?.draft
+  if (draft === undefined) {
+    return (
+      <Box flexDirection="column">
+        <Text bold>大腦接手中：在主對話說你要做什麼。</Text>
+        <Text dimColor>功能等級的工作，大腦會先和你寫 PRD，請 PM、UI/UX 審過，你確認後才分派。修 bug、改文案這類小事，大腦直接處理，不建 PRD。</Text>
+      </Box>
+    )
+  }
+  const settled = pendingOf(draft).length === 0
+  return (
+    <Box flexDirection="column">
+      <Text bold color={draft.stage === 'confirm' ? 'suggestion' : undefined}>
+        {draft.stage === 'confirm' ? 'PRD 草稿等你確認' : 'PRD 草稿'}：{draft.path}　{draft.title}（{draft.requirements} 條需求）
+      </Text>
+      <Text>審查：{reviewsLine(draft)}</Text>
+      {draft.stage === 'confirm' && draft.note !== undefined && <Text>大腦：{draft.note}</Text>}
+      {draft.stage === 'confirm' ? (
+        <Box flexDirection="row" gap={1}>
+          <Button key="confirm-draft" label="確認，開始" variant="primary" onPress={() => act.confirmDraft()} />
+          <Text dimColor>在主對話回覆大腦也可以。開始後 PM 先把它拆成功能和驗收條件。</Text>
+        </Box>
+      ) : settled && failedOf(draft).length > 0 ? (
+        <Text color="warning">{sentOut(draft) ? `有審查沒有完成，已經送審 ${MAX_SENDS} 次：在主對話告訴大腦要不要照現在的草稿確認。` : '有審查沒有完成：在主對話請大腦重新送審。'}</Text>
+      ) : settled ? (
+        <Text dimColor>審完了，大腦會整理缺口，在主對話問你；重開過 Claude Code 的話，在主對話請大腦接著做。</Text>
+      ) : (
+        <Text dimColor>審完後，大腦會整理缺口，在主對話問你。</Text>
+      )}
+    </Box>
+  )
+}
+
+/** What crew offers when it loads with no PRD: the brain to take over, one picked from the repo or typed, or not now. */
 function StartScreen({ el, snap, act }: { el: Elements; snap: Snapshot; act: Actions }) {
   const { Box, Text, Button } = el
+  const takenOver = snap.takeover?.on === true
+  const drafting = takenOver && snap.takeover?.draft !== undefined
   return (
     <Box flexDirection="column" gap={1}>
-      <Text bold>crew 已載入，還沒有開始的 PRD。</Text>
+      {!takenOver && <Text bold>crew 已載入，還沒有開始的 PRD。</Text>}
       {snap.boardProblem !== undefined && <Text color="warning">⚠ {snap.boardProblem.text}</Text>}
-      {PrdPicker({ el, snap, act, id: 'prd-pick', label: 'PRD 檔案' })}
-      {Field({ el, id: 'prd-path', label: '或輸入路徑', placeholder: 'docs/PRD.md', submit: '開始', what: 'PRD 路徑', onSubmit: path => act.start(path) })}
-      <Box flexDirection="row" gap={1}>
-        <Button key="start" label="開始" variant="primary" onPress={() => act.start()} />
-        <Button key="not-now" label="這次不用" onPress={() => act.notNow()} />
-      </Box>
-      <Text dimColor>PM 會先把 PRD 拆成功能和驗收條件。五個角色都在待命，沒有工作時不花 token。</Text>
+      {snap.takeover?.on === false && (
+        <Box flexDirection="column">
+          <Box flexDirection="row" gap={1}>
+            <Button key="takeover-on" label="讓大腦接手這個 repo" variant="primary" onPress={() => act.takeover(true)} />
+          </Box>
+          <Text dimColor>之後在這個 repo 開 session，大腦會從你的第一句話開始主導：和你寫 PRD、分派給角色、小事直接處理。其他 repo 不受影響。</Text>
+        </Box>
+      )}
+      {takenOver && !drafting && <Text dimColor>已經有寫好的 PRD，也可以直接選：</Text>}
+      {snap.takeover?.on === false && <Text dimColor>或自己選 PRD 開始：</Text>}
+      {!drafting && (
+        <Box flexDirection="column" gap={1}>
+          {PrdPicker({ el, snap, act, id: 'prd-pick', label: 'PRD 檔案' })}
+          {Field({ el, id: 'prd-path', label: '或輸入路徑', placeholder: 'docs/PRD.md', submit: '開始', what: 'PRD 路徑', onSubmit: path => act.start(path) })}
+          <Box flexDirection="row" gap={1}>
+            <Button key="start" label="開始" variant={takenOver ? 'secondary' : 'primary'} onPress={() => act.start()} />
+            {!takenOver && <Button key="not-now" label="這次不用" onPress={() => act.notNow()} />}
+          </Box>
+          <Text dimColor>PM 會先把 PRD 拆成功能和驗收條件。五個角色都在待命，沒有工作時不花 token。</Text>
+        </Box>
+      )}
     </Box>
   )
 }
@@ -581,6 +657,17 @@ function Settings({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapsho
   const prds = snap.start?.prds ?? []
   return (
     <Box flexDirection="column" gap={1}>
+      {snap.takeover !== undefined && (
+        <Box flexDirection="column">
+          <Text bold>大腦</Text>
+          <Box flexDirection="row" gap={1}>
+            <Button key="takeover-on" label="接手這個 repo" variant={snap.takeover.on ? 'primary' : 'secondary'} onPress={() => act.takeover(true)} />
+            <Button key="takeover-off" label="不接手" variant={snap.takeover.on ? 'secondary' : 'primary'} onPress={() => act.takeover(false)} />
+            <Text dimColor>現在：{snap.takeover.on ? '接手，這個 repo 每個 session 從第一句話起由大腦主導' : '不接手，你叫 crew 時它才做事'}</Text>
+          </Box>
+          <Text dimColor>只影響這個 repo。設定存在這台電腦，不進 git，所以別人的 repo 不能替你打開。</Text>
+        </Box>
+      )}
       {snap.prd !== null && prds.length > 0 && (
         <Box flexDirection="column">
           <Text bold>PRD</Text>
@@ -885,6 +972,14 @@ export function CrewPane({ el, snap, view, act, isDemo = true }: { el: Elements;
 const alignmentWord = (a: NonNullable<Snapshot['alignment']>): string =>
   aligned(a) ? '對準 PRD ✓' : a.problem !== undefined ? `⚠ ${a.problem}` : a.gaps > 0 ? `⚠ PRD 對不上 ${a.gaps}` : '⚠ PRD 改了'
 
+/** The brain that took over, in a few words: its draft and where it stands, or waiting to hear with no PRD under way. */
+const takeoverWords = (t: Takeover): string[] =>
+  t.draft !== undefined
+    ? [t.draft.stage === 'confirm' ? `PRD 草稿等你確認：${t.draft.title}` : `PRD 草稿 ${t.draft.title} · ${reviewsLine(t.draft)}`]
+    : t.idle === true
+      ? ['大腦接手中 · 還沒有 PRD']
+      : []
+
 /** The one line above the prompt: what needs the person first, then the roles. */
 export function bandText(snap: Snapshot, label = 'crew（設計稿）'): string {
   const roles = snap.roles
@@ -893,7 +988,9 @@ export function bandText(snap: Snapshot, label = 'crew（設計稿）'): string 
   const parts = [
     label,
     ...(snap.boardProblem === undefined ? [] : ['⚠ 看板讀不到']),
-    ...(snap.progress !== null ? [`進度 ${percentOf(snap.progress)}%（${snap.progress.done}/${snap.progress.total}）`] : []),
+    ...(snap.takeover?.on === true ? takeoverWords(snap.takeover) : []),
+    // With no PRD under way, the progress of a board an earlier one left is history, as in the pane's head.
+    ...(snap.progress !== null && !waitsForWord(snap) ? [`進度 ${percentOf(snap.progress)}%（${snap.progress.done}/${snap.progress.total}）`] : []),
     ...(snap.alignment === undefined ? [] : [alignmentWord(snap.alignment)]),
     `待你決定 ${snap.decisions.length}`,
     // A flow held for the person is said here too, for when the pane is closed.

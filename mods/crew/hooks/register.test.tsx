@@ -292,7 +292,7 @@ describe('/crew demo', () => {
     expect(text).toMatch(/提醒已送大腦/)
     expect(text).toMatch(/命中率/)
     await ui.unmount()
-    expect((await $.command.run(command('demo calm'))).text).toMatch(/用法：\/crew demo \[normal\|empty\|attention\|restart\] \[overview\|progress\|board\|threads\|memory\|tokens\|settings\]/)
+    expect((await $.command.run(command('demo calm'))).text).toMatch(/用法：\/crew demo \[normal\|empty\|attention\|restart\|leading\|drafting\|confirm\] \[overview\|progress\|board\|threads\|memory\|tokens\|settings\]/)
   })
 
   test('says in 設定 which file holds the board', async ($, on) => {

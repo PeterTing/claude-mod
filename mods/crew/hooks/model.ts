@@ -90,6 +90,29 @@ export type Decision = { id: string; question: string; from: RoleId | 'crew' | '
 /** What crew offers when it loads: the PRDs in the repo to start from, or the PRD it stopped on. */
 export type Start = { prds: readonly { path: string; title: string }[]; chosen?: string; resumable?: string; paused?: boolean }
 
+/**
+ * A PRD the brain wrote with the person and has not started: the roles it
+ * asked to review it, what each found, and whether it waits for the person.
+ */
+export type Draft = {
+  path: string
+  title: string
+  requirements: number
+  stage: 'reviewing' | 'confirm'
+  reviews: readonly { role: RoleId; done: boolean; failed?: boolean; unsure?: boolean; found?: string }[]
+  /** The brain's word on the reviews when it asks the person to confirm. */
+  note?: string
+  /** How many times the draft went to review. */
+  sends?: number
+}
+
+/**
+ * The brain taking this repo over from the person's first message, as the
+ * person turned it on here; whether no PRD is under way (`idle`: a board may
+ * still be there from one before); and the PRD it drafts.
+ */
+export type Takeover = { on: boolean; idle?: boolean; draft?: Draft }
+
 /** crew's settings, set in the pane: the test command, and whether the pane opens when crew loads. */
 export type Settings = { testCommand?: string; openOnLoad: boolean }
 
@@ -225,6 +248,8 @@ export type Snapshot = {
   /** Where crew keeps its board, from the repo's root, and why when it is not in .crew/. */
   boardFile?: { path: string; why?: string }
   settings?: Settings
+  /** Whether the brain has taken this repo over, and its draft PRD; none where crew does not say. */
+  takeover?: Takeover
   /** A design the person opened to read in the pane. */
   opened?: { id: string; title: string; body: string }
   /** The person's memory search, and what it found. */
