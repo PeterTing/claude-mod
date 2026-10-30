@@ -2482,6 +2482,12 @@ async function readPage($: any): Promise<string> {
   forget(READ_PAGE)
   tellBrain(`使用者說他在待你決定頁上決定好了（還有 ${waiting.count} 件等他），但頁面的留言不一定叫醒了你。${readComments(waiting.url)}`, 'now', READ_PAGE)
   await note($, { kind: 'design_page', read: true })
+  // The person pressed for it and waits on it: it goes now, but never behind a role's notice crew may drop.
+  // The brain at work: it rides on such a notice, or goes once that turn ends. A role at work: the same, or the next tick.
+  if (brain.atWork) return '已請大腦讀待你決定頁的留言：它手上這一輪做完就讀，再把你的決定轉給 crew；轉好之後這裡會更新。'
+  if (Object.values((await read($, live)).roles).some(r => r.state === 'working')) {
+    for (const n of brain.queue) if (n.key === READ_PAGE) n.ticks = BRAIN_TICKS
+  } else $.clock.after(0, () => sendKeyed($, READ_PAGE, asNote))
   return '已請大腦讀待你決定頁的留言，把你的決定轉給 crew；轉好之後這裡會更新。'
 }
 
@@ -2617,7 +2623,7 @@ async function reviewPublished($: any, said: string, named = ''): Promise<string
   // Answered: a report the brain makes later of its own is the page on screen's.
   if (!newer && path === l.pageAsked) await update($, live, ({ pageAsked: _p, ...s }) => s)
   $.ui.toast(chose.failed === undefined ? 'crew：待你決定頁發佈好了，在「待你決定」按［開待你決定頁］' : 'crew：待你決定頁發佈好了；你選了在面板決定，設計稿那一行都有［開待你決定頁］可以看畫面')
-  return `記下了。請把連結給使用者：${url}。使用者在頁面上決定時，你會收到開頭是 ${HEADS} 的留言，用 crew 工具的 decide 轉給 crew。留言不一定叫醒得了你（你正在忙時送來的會漏掉）：使用者說他在頁面上決定了，就先用 ArtifactComments（action=read）讀這一頁的留言，把還沒回覆的轉給 crew。`
+  return `記下了。請把連結給使用者：${url}。使用者在頁面上決定時，你會收到開頭是 ${HEADS} 的留言，用 crew 工具的 decide 轉給 crew。留言不一定叫醒得了你（你閒著時送來的也可能漏掉）：使用者說他在頁面上決定了，就先用 ArtifactComments（action=read）讀這一頁的留言，把還沒回覆的轉給 crew。`
 }
 
 /** A decision the person made on the decide page, as the brain passed it on: crew takes it only as the page said it, on what the person saw. */
@@ -3063,16 +3069,23 @@ async function tellSwitch($: any, on: boolean) {
   $.clock.after(0, () => sendSwitch($))
 }
 
-/** Sends the switch note still waiting; dropped or refused, it waits again, unless a later switch is the news by then. */
-function sendSwitch($: any) {
-  const note = brain.queue.find(n => n.key === SWITCH)
+/** Sends the switch note still waiting, unless a later switch is the news by then. */
+const sendSwitch = ($: any) => sendKeyed($, SWITCH, texts => `[crew] ${texts.join('')}`, n => n.seq === switches.last)
+
+/**
+ * Sends the note waiting under `key` at once, alone: from a timer, as a hook of
+ * the person's own may not submit. Dropped or refused, it waits again, unless
+ * `still` says it is old news by then.
+ */
+function sendKeyed($: any, key: string, words: (texts: readonly string[]) => string, still: (n: { seq?: number }) => boolean = () => true) {
+  const note = brain.queue.find(n => n.key === key)
   if (note === undefined) return
-  forget(SWITCH)
+  forget(key)
   const back = (why: string) => {
-    $.ui.log(`crew: could not tell the brain of the switch at once: ${why}`, { to: 'debug' })
-    if (note.seq === switches.last && !brain.queue.some(n => n.key === SWITCH)) brain.queue.push(note)
+    $.ui.log(`crew: could not tell the brain at once (${key}): ${why}`, { to: 'debug' })
+    if (still(note) && !brain.queue.some(n => n.key === key)) brain.queue.push(note)
   }
-  void Promise.resolve($.prompt.submit({ text: `[crew] ${note.text}` }))
+  void Promise.resolve($.prompt.submit({ text: words([note.text]) }))
     .then(r => {
       const drop = (r as { drop?: unknown } | undefined)?.drop
       if (typeof drop === 'string') back(drop)
@@ -3115,7 +3128,7 @@ const BRAIN_NOTE =
  * dropped, the ones after it are shown but never answered. So crew never puts
  * a prompt of its own behind a role's notice it is about to drop.
  */
-const brain: { queue: { text: string; ticks: number; key?: string; seq?: number }[]; timer: { cancel: () => void } | undefined } = { queue: [], timer: undefined }
+const brain: { queue: { text: string; ticks: number; key?: string; seq?: number }[]; timer: { cancel: () => void } | undefined; atWork: boolean } = { queue: [], timer: undefined, atWork: false }
 
 /** The last takeover switch's number: a note of an earlier one is old news. */
 const switches = { last: 0 }
@@ -5616,6 +5629,7 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) brain.atWork = true
     const role = e.agentId === undefined ? undefined : (await read($, live)).agents[e.agentId]
     if (role !== undefined) {
       await update($, live, l => (l.roles[role].agentId !== e.agentId ? l : { ...l, roles: { ...l.roles, [role]: { ...l.roles[role], state: 'working' } } }))
@@ -5653,6 +5667,11 @@ export const register: Register = on => {
     const before = await read($, live)
     const role = e.agentId === undefined ? undefined : before.agents[e.agentId]
     if (role === undefined) {
+      // The person's request to read the page, held while the brain was at work, goes at the next tick unless a notice took it.
+      if (e.agentId === undefined) {
+        brain.atWork = false
+        for (const n of brain.queue) if (n.key === READ_PAGE) n.ticks = BRAIN_TICKS
+      }
       const done = await next(e)
       // The brain's own turn ending is when its requests reach the disk: no role may end again that day.
       if (e.agentId === undefined && files.crew !== '' && (await $.fs.exists(files.crew))) await saveUsage($)

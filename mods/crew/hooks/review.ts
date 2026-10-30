@@ -208,8 +208,10 @@ const SCRIPT = String.raw`<script>
   var data = null;
   var comments = null;
   var can = 'loading';
-  // What the person sent and typed, kept through a redraw and through a new version of the page.
+  // What the person sent and typed, kept through a redraw. A send waits in sentAt, with the code
+  // of what it was about, until data.json shows crew recorded it.
   var sent = {};
+  var sentAt = {};
   var drafts = {};
   var picked = {};
   var html = {};
@@ -240,14 +242,15 @@ const SCRIPT = String.raw`<script>
     return '這個畫面沒辦法把決定送給 Claude Code：在 Claude Code 右側面板「待你決定」按［改在面板決定］，在那裡決定。';
   }
 
-  // One comment to the brain under the box it is about; done() runs once it is sent.
-  function send(key, text, box, said, done) {
+  // One comment to the brain under the box it is about, ending with the code of what the person saw.
+  function send(key, body, code, box, said, done) {
     said.textContent = '送出中…';
     disable(box, true);
     comments.anchorFor(box).then(function (anchor) {
-      return comments.sendToClaude({ anchor: anchor, text: text });
+      return comments.sendToClaude({ anchor: anchor, text: body + '\n代碼 ' + code });
     }).then(function () {
       sent[key] = done || true;
+      sentAt[key] = { at: Date.now(), code: code };
       draw();
     }).catch(function (e) {
       var code = e && e.code;
@@ -323,7 +326,7 @@ const SCRIPT = String.raw`<script>
     var box = el('div', { class: 'box', 'aria-label': 'PRD 草稿的決定' });
     var said = el('p', { class: 'said', role: 'status' });
     if (sent.prd && d.state === 'confirm') {
-      said.textContent = sent.prd === 'confirm' ? '已送出確認，等 crew 開始；開始之後這一頁會更新。' : '已送出要改的地方，等大腦修改；改好之後這一頁會更新。';
+      said.textContent = sent.prd === 'confirm' ? '已送出確認，等 Claude Code 收下交給 crew；開始之後這一頁會更新。' : '已送出要改的地方，等 Claude Code 收下；大腦改好之後這一頁會更新。';
       box.append(el('div', { class: 'act' }, said));
     } else if (d.state === 'reviewing') {
       box.append(el('p', { class: 'cap', text: 'PM 和 UI/UX 審查中。審完之後大腦會整理缺口問你，改好再請你在這裡確認。' }));
@@ -333,12 +336,12 @@ const SCRIPT = String.raw`<script>
       var change = el('textarea', { id: 'prd-change', maxlength: '2000', placeholder: '要改的地方：寫哪一段、改成什麼', 'aria-label': '要改的地方', oninput: function () { drafts.prd = change.value; } });
       change.value = drafts.prd || '';
       var yes = el('button', { type: 'button', class: 'primary', text: '確認，開始', onclick: function () {
-        send('prd', 'crew PRD 確認：開始 ' + d.path + '\n代碼 ' + d.code, box, said, 'confirm');
+        send('prd', 'crew PRD 確認：開始 ' + d.path, d.code, box, said, 'confirm');
       } });
       var ask = el('button', { type: 'button', text: '送出要改的地方', onclick: function () {
         var t = change.value.trim();
         if (t === '') { said.textContent = '要改的地方要寫內容。'; change.focus(); return; }
-        send('prd', 'crew PRD 要改：' + d.path + '\n' + t + '\n代碼 ' + d.code, box, said, 'change');
+        send('prd', 'crew PRD 要改：' + d.path + '\n' + t, d.code, box, said, 'change');
       } });
       var act = el('div', { class: 'act' }, yes, change, ask, said);
       box.append(el('p', { class: 'cap', text: '確認之後，PM 先把它拆成功能和驗收條件。' }), act);
@@ -355,12 +358,12 @@ const SCRIPT = String.raw`<script>
     qs.forEach(function (q) {
       var key = 'q:' + q.id;
       var box = el('section', { class: 'q' + (q.state === 'open' ? '' : ' done'), 'aria-label': q.id });
-      var chip = q.state !== 'open' ? el('span', { class: 'chip ok', text: '已回答' }) : sent[key] ? el('span', { class: 'chip sent', text: '已送出回答' }) : el('span', { class: 'chip wait', text: '等你回答' });
+      var chip = q.state !== 'open' ? el('span', { class: 'chip ok', text: '已回答' }) : sent[key] ? el('span', { class: 'chip sent', text: '已送出回答，等收下' }) : el('span', { class: 'chip wait', text: '等你回答' });
       box.append(el('div', { class: 'meta' }, el('span', { class: 'id', text: q.id }), el('span', { text: q.from + ' 問的' }), el('span', { text: q.at }), chip));
       if (q.item) box.append(el('div', { class: 'ctx', text: q.item + (q.itemTitle ? '　' + q.itemTitle : '') }));
       box.append(el('p', { class: 'qtext', text: q.question }));
       if (q.state !== 'open') { box.append(el('p', { class: 'cap', text: '你回答了：' + (q.answer || '') })); panel.append(box); return; }
-      if (sent[key]) { box.append(el('p', { class: 'said', text: '已送出，等 crew 轉給' + q.from + '；記好之後這一頁會更新。' })); panel.append(box); return; }
+      if (sent[key]) { box.append(el('p', { class: 'said', text: '已送出，等 Claude Code 收下交給' + q.from + '；記好之後這一頁會更新。' })); panel.append(box); return; }
       var said = el('p', { class: 'said', role: 'status' });
       var other = el('input', { type: 'text', id: 'answer-' + q.id, maxlength: '500', placeholder: q.options && q.options.length ? '其他：自己寫' : '你的回答', 'aria-label': q.id + ' 的回答', oninput: function () { drafts[key] = other.value; picked[key] = undefined; mark(); } });
       other.value = drafts[key] || '';
@@ -377,7 +380,7 @@ const SCRIPT = String.raw`<script>
       var go = el('button', { type: 'button', class: 'primary', text: '送出回答', onclick: function () {
         var a = picked[key] !== undefined ? q.options[picked[key]] : other.value.trim();
         if (!a) { said.textContent = q.options && q.options.length ? '選一個選項，或自己寫回答。' : '回答要寫內容。'; return; }
-        send(key, 'crew 回答：' + q.id + '\n' + a + '\n代碼 ' + q.code, box, said);
+        send(key, 'crew 回答：' + q.id + '\n' + a, q.code, box, said);
       } });
       var act = el('div', { class: 'act' }, other, go, said);
       box.append(act);
@@ -388,7 +391,7 @@ const SCRIPT = String.raw`<script>
 
   // ---- Designs ----
   function designChip(d) {
-    if (sent['d:' + d.id]) return el('span', { class: 'chip sent', text: sent['d:' + d.id] === 'approved' ? '已送出核准' : '已送出退回' });
+    if (sent['d:' + d.id]) return el('span', { class: 'chip sent', text: sent['d:' + d.id] === 'approved' ? '已送出核准，等收下' : '已送出退回，等收下' });
     var s = STATES[d.state];
     return el('span', { class: 'chip ' + s[1], text: s[0] });
   }
@@ -419,7 +422,7 @@ const SCRIPT = String.raw`<script>
   function designActions(d, box) {
     var key = 'd:' + d.id;
     var said = el('span', { class: 'said' });
-    if (sent[key]) { said.textContent = '已送出，等 crew 記下；記好之後這一頁會更新。'; return el('div', { class: 'act' }, said); }
+    if (sent[key]) { said.textContent = '已送出，等 Claude Code 收下交給 crew；記好之後這一頁會更新。'; return el('div', { class: 'act' }, said); }
     if (d.state === 'approved') return el('div', { class: 'act' }, el('span', { class: 'said', text: '你核准了這一版。' }));
     if (d.state === 'rejected') return el('div', { class: 'act' }, el('span', { class: 'said', text: '你退回了：' + (d.reason || '沒有寫原因') + '。UI/UX 會照原因重畫一份新的。' }));
     if (d.state === 'drawing') return el('div', { class: 'act' }, el('span', { class: 'said', text: 'UI/UX 還在畫這份的 mockup；畫好之後這一頁會更新，才能核准或退回。' }));
@@ -427,11 +430,11 @@ const SCRIPT = String.raw`<script>
     reason.value = drafts[key] || '';
     var head = 'crew 設計稿決定：';
     var ver = d.version ? '（第 ' + d.version + ' 版）' : '';
-    var approve = el('button', { type: 'button', class: 'primary', text: '核准', onclick: function () { send(key, head + '核准 ' + d.id + ver + '\n代碼 ' + d.code, box, said, 'approved'); } });
+    var approve = el('button', { type: 'button', class: 'primary', text: '核准', onclick: function () { send(key, head + '核准 ' + d.id + ver, d.code, box, said, 'approved'); } });
     var reject = el('button', { type: 'button', text: '退回', onclick: function () {
       var r = reason.value.trim();
       if (r === '') { said.textContent = '退回要寫原因。'; reason.focus(); return; }
-      send(key, head + '退回 ' + d.id + ver + '\n原因：' + r + '\n代碼 ' + d.code, box, said, 'rejected');
+      send(key, head + '退回 ' + d.id + ver + '\n原因：' + r, d.code, box, said, 'rejected');
     } });
     var act = el('div', { class: 'act' }, approve, reason, reject, said);
     if (idle(said)) disable(act, true);
@@ -480,12 +483,57 @@ const SCRIPT = String.raw`<script>
     if (data.questions.length) list.push(['questions', '問題']);
     return list;
   }
+  // ---- Sent, until crew records it ----
+  // A comment the page sends does not always reach Claude Code, even an idle one: past this, the page says what to do.
+  var LATE_MS = 120000;
+  function pending() { return Object.keys(sentAt); }
+  // What data.json now shows decided, or changed since the send, waits no more.
+  function settle() {
+    pending().forEach(function (key) {
+      var code = sentAt[key].code;
+      var id = key.slice(2);
+      var item = key === 'prd' ? data.draft : key.charAt(0) === 'q' ? data.questions.filter(function (q) { return q.id === id; })[0] : data.designs.filter(function (d) { return d.id === id; })[0];
+      var open = key === 'prd' ? 'confirm' : key.charAt(0) === 'q' ? 'open' : 'waiting';
+      if (!item || item.state !== open || item.code !== code) { delete sentAt[key]; delete sent[key]; }
+    });
+  }
+  function tally() {
+    var n = waiting();
+    var total = n.prd + n.designs + n.questions;
+    var m = pending().length;
+    var parts = [];
+    if (total) parts.push('等你決定 ' + total + ' 件');
+    if (m) parts.push('已送出 ' + m + ' 件，等 Claude Code 收下');
+    if (!parts.length) parts.push('現在沒有等你決定的事');
+    document.getElementById('counts').textContent = parts.join(' · ') + ' · 更新於 ' + data.at;
+    var now = Date.now();
+    var late = pending().filter(function (key) { return now - sentAt[key].at >= LATE_MS; }).length;
+    notice.textContent = channel() || (late ? '有 ' + late + ' 件送出超過兩分鐘，這一頁還沒更新：這一頁的留言不一定送得到 Claude Code，它閒著時也可能沒收到。在 Claude Code 右側面板「待你決定」按［我在頁面上決定好了］，或對 Claude Code 說一句話，它會先讀這一頁的留言再交給 crew。決定已經留言在這一頁，先不用再送；大腦在留言下回覆說 crew 沒收，再重新整理這一頁決定一次。' : '');
+  }
+  // While something waits, data.json is read again: what crew recorded shows without reloading the page.
+  function poll() {
+    if (data === null || pending().length === 0) return;
+    tally();
+    fetch('data.json', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); }).then(function (j) {
+      var next = { prd: String(j.prd || ''), at: String(j.at || ''), draft: j.draft || null, designs: j.designs || [], questions: j.questions || [] };
+      if (JSON.stringify(next) === JSON.stringify(data)) return;
+      data = next;
+      settle();
+      // The redraw keeps the field the person is typing in, and where in it.
+      var at = document.activeElement;
+      var id = at && at.id;
+      var from = at && at.selectionStart;
+      var to = at && at.selectionEnd;
+      draw();
+      var back = id ? document.getElementById(id) : null;
+      if (back) { back.focus(); try { if (typeof from === 'number') back.setSelectionRange(from, to); } catch (e) {} }
+    }).catch(function () {});
+  }
+
   function draw() {
     var list = tabs();
     var n = waiting();
-    var total = n.prd + n.designs + n.questions;
-    document.getElementById('counts').textContent = (total ? '等你決定 ' + total + ' 件' : '現在沒有等你決定的事') + ' · 更新於 ' + data.at;
-    notice.textContent = channel();
+    tally();
     if (!list.some(function (t) { return t[0] === tab; })) {
       var first = list.filter(function (t) { return n[t[0]] > 0; })[0] || list[0];
       tab = first ? first[0] : null;
@@ -522,7 +570,8 @@ const SCRIPT = String.raw`<script>
 
   // What was sent lives for this load: an update reloads the page, and data.json then says what crew recorded.
   function start() {
-    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') recheck(); });
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { recheck(); poll(); } });
+    setInterval(poll, 20000);
     fetch('data.json', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); }).then(function (j) {
       data = { prd: String(j.prd || ''), at: String(j.at || ''), draft: j.draft || null, designs: j.designs || [], questions: j.questions || [] };
       draw();
@@ -555,7 +604,7 @@ export const pageShell = (prd: string): string =>
     '  <p class="notice" id="notice" role="status"></p>',
     '  <div class="tabs" id="tabs" role="tablist" aria-label="分頁"></div>',
     '  <div class="panel" id="main" role="tabpanel"></div>',
-    '  <p class="cap">在這裡按的決定，會在那一項下面用你的名字留一則留言，送給 Claude Code（crew 的大腦），由它交給 crew 記下。這一頁由 crew 產生。</p>',
+    '  <p class="cap">在這裡按的決定，會在那一項下面用你的名字留一則留言，送給 Claude Code（crew 的大腦），由它交給 crew 記下；crew 記下之前，這一頁顯示「等收下」。這一頁由 crew 產生。</p>',
     '</div>',
     SCRIPT,
   ].join('\n')

@@ -69,7 +69,7 @@ A press or a field in the pane is yours alone: no plugin or model can raise one,
 
 For each PRD the brain publishes a page for you to decide on, as an artifact: 待你決定頁. It has three tabs: the PRD draft waiting for your yes, the designs (each screen's mockup, to click through) with approve or send back, and the roles' questions, with the options the role gave. Open it from the pane's 待你決定 (［開待你決定頁 ↗］). You decide in the page's comments; the brain passes each comment to crew word for word (`decide`), and crew takes it only as the page wrote it, on what you saw: a question numbered again since, or a design rewritten since, is refused, and the brain says so in the thread. crew keeps the page's files in `.crew/designs/<PRD>/` and asks the brain to publish it again whenever something on it changes.
 
-A comment sent while Claude is busy may not reach it. When you have decided on the page and the pane still waits, press 我在頁面上決定好了 (or tell Claude): it reads the page's comments and passes on the ones not yet answered. If the page cannot be published, you decide in the pane, as before.
+A comment does not always reach Claude, even an idle one: Claude Code may hand a comment the page sent to its background auto-reply, which neither answers it nor passes it on. Until crew records a decision, the page shows it as sent and waiting (「等收下」), and reads its data again every 20 seconds; after two minutes it tells you what to do. When you have decided on the page and the pane still waits, press 我在頁面上決定好了 (or tell Claude): Claude reads the page's comments at once and passes on the ones not yet answered. If the page cannot be published, you decide in the pane, as before.
 
 ## Run a role on Claude or Codex
 
