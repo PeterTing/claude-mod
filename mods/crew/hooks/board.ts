@@ -5,7 +5,7 @@
  * does not know.
  */
 
-import { droppedRequirements, refsOf, REQUIREMENT_ID } from './prd'
+import { droppedRequirements, fingerprint, refsOf, REQUIREMENT_ID } from './prd'
 
 export type TestCase = {
   id: string
@@ -66,8 +66,13 @@ export type Design = {
   crew_dropped?: string
   /** The person's decision on it, as crew recorded it. */
   crew_decision?: DesignDecision
+  /** Its clickable mockup, kept by crew beside the board: which version, and what it says, as a mark. */
+  crew_mockup?: Mockup
   [key: string]: unknown
 }
+
+/** A design's mockup as the board names it: the HTML itself is in .crew/designs/, never on the board every role reads. */
+export type Mockup = { version: number; mark: string; bytes: number }
 
 /** The person approved the design, or sent it back with why. */
 export type DesignDecision = { verdict: 'approved' | 'rejected'; reason?: string }
@@ -113,7 +118,9 @@ export type Op =
   | { op: 'drop_feature'; id: string; reason: string }
   | { op: 'add_task'; feature: string; criteria: string[]; title: string; detail: string; size?: string }
   | { op: 'drop_task'; id: string; reason: string }
-  | { op: 'add_design'; feature: string; title: string; kind: string; body: string }
+  /** `html`: the clickable mockup, which a design with a screen must have and one without must not. */
+  | { op: 'add_design'; feature: string; title: string; kind: string; body: string; html?: string }
+  | { op: 'add_mockup'; id: string; html: string }
   | { op: 'drop_design'; id: string; reason: string }
   | {
       op: 'add_test_case'
@@ -138,13 +145,44 @@ const ALLOWED: Record<string, readonly Op['op'][]> = {
   pm: ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement'],
   qa: ['add_test_case'],
   techlead: ['add_task', 'drop_task'],
-  uiux: ['add_design', 'drop_design'],
+  uiux: ['add_design', 'add_mockup', 'drop_design'],
 }
 
 const ROLE_LABEL: Record<string, string> = { pm: 'PM', qa: 'QA', techlead: 'Tech lead', fullstack: '全端', uiux: 'UI/UX' }
 
 /** The longest a design may be: it lives on the board, which every role reads. */
 const DESIGN_MAX = 6000
+
+/** The longest a mockup may be: the brain reads each before it publishes it. */
+export const MOCKUP_MAX = 200_000
+
+/**
+ * Why a mockup cannot be shown, or undefined when it can: it runs in the
+ * person's artifact, so it is whole in itself, loading nothing and calling
+ * no one. Pure.
+ */
+export const mockupProblem = (html: string): string | undefined => {
+  if (html.trim() === '') return 'mockup 是空的'
+  if (html.length > MOCKUP_MAX) return `mockup 最多 ${MOCKUP_MAX} 字`
+  if (!/<[a-z!]/i.test(html)) return 'mockup 要是 HTML'
+  if (/\b(?:src|href|srcset|poster|action|data)\s*=\s*["']?\s*(?:https?:)?\/\//i.test(html) || /(?:@import|url\()\s*["']?\s*(?:https?:)?\/\//i.test(html)) return 'mockup 不能載入或連到外部網址（script、字型、圖片、樣式要寫在檔案裡，連結用 # 代替）'
+  if (/http-equiv\s*=\s*["']?\s*refresh/i.test(html) || /\blocation(?:\.href)?\s*=\s*["'`]\s*(?:https?:)?\/\//i.test(html)) return 'mockup 不能跳到外部網址（不用 meta refresh，也不改 location）'
+  if (/\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon|importScripts)\b/.test(html) || /\bimport\s*\(/.test(html)) return 'mockup 不能連網路（fetch、XMLHttpRequest、WebSocket、import() 都不能用）'
+  return undefined
+}
+
+/** The board's name for a mockup: its version and its mark. */
+export const mockupOf = (html: string, version: number): Mockup => ({ version, mark: fingerprint(html), bytes: html.length })
+
+/** A design's mockup, when the board names one crew could have written. */
+export const mockupOfDesign = (d: Design): Mockup | undefined => {
+  const v = d.crew_mockup as Partial<Mockup> | undefined
+  if (typeof v !== 'object' || v === null || typeof v.version !== 'number' || typeof v.mark !== 'string' || typeof v.bytes !== 'number') return undefined
+  return { version: v.version, mark: v.mark, bytes: v.bytes }
+}
+
+/** A design the person cannot see yet: a screen with no mockup. */
+export const needsMockup = (d: Design): boolean => d.kind === 'screen' && mockupOfDesign(d) === undefined
 
 const SIZES: readonly TaskSize[] = ['S', 'M', 'L', 'XL']
 
@@ -449,10 +487,28 @@ const apply = (t: Tracker, op: Op, ctx: OpContext): string | OpResult => {
       if (op.kind !== 'screen' && op.kind !== 'none') return 'add_design：kind 要是 screen（有畫面）或 none（沒有畫面）'
       if (op.body.trim() === '') return `add_design：${op.feature} 的設計稿內容是空白的`
       if (op.body.length > DESIGN_MAX) return `add_design：設計稿內容最多 ${DESIGN_MAX} 字`
+      if (op.kind === 'screen' && op.html === undefined) return `add_design：${op.feature} 有畫面，要附 html（可以點的 mockup），使用者看了畫面才能核准`
+      if (op.kind === 'none' && op.html !== undefined) return `add_design：${op.feature} 沒有畫面，不要附 html`
+      const problem = op.html === undefined ? undefined : mockupProblem(op.html)
+      if (problem !== undefined) return `add_design：${op.feature} 的 ${problem}`
       // A dropped or sent-back design's id stays taken: threads and decisions point at it.
       const id = next(t.prd_items.flatMap(i => designsOf(i).map(d => d.id)), 'SCR-')
-      item.crew_designs = [...(Array.isArray(item.crew_designs) ? item.crew_designs : []), { id, title: op.title.trim(), kind: op.kind, body: op.body.trim() }]
+      item.crew_designs = [...(Array.isArray(item.crew_designs) ? item.crew_designs : []), { id, title: op.title.trim(), kind: op.kind, body: op.body.trim(), ...(op.html === undefined ? {} : { crew_mockup: mockupOf(op.html, 1) }) }]
       return { op: op.op, id }
+    }
+    case 'add_mockup': {
+      const item = t.prd_items.find(i => designsOf(i).some(d => d.id === op.id))
+      const found = item === undefined ? undefined : designsOf(item).find(d => d.id === op.id)
+      if (item === undefined || found === undefined) return `add_mockup：找不到設計稿 ${op.id}`
+      if (found.crew_dropped !== undefined) return `add_mockup：${op.id} 已經移出`
+      if (found.kind !== 'screen') return `add_mockup：${op.id} 沒有畫面，不用 mockup`
+      // A mockup would change what the person already decided on: a new design is drawn with add_design instead.
+      if (decisionOf(found) !== undefined) return `add_mockup：使用者已經決定了 ${op.id}，不用補 mockup；要改就用 add_design 畫新的一份`
+      const problem = mockupProblem(op.html)
+      if (problem !== undefined) return `add_mockup：${op.id} 的 ${problem}`
+      const version = (mockupOfDesign(found)?.version ?? 0) + 1
+      item.crew_designs = (item.crew_designs ?? []).map(d => ((d as { id?: unknown } | null)?.id === op.id ? { ...(d as object), crew_mockup: mockupOf(op.html, version) } : d))
+      return { op: op.op, id: op.id }
     }
     case 'drop_design': {
       const item = t.prd_items.find(i => designsOf(i).some(d => d.id === op.id))
@@ -622,7 +678,8 @@ export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): strin
     for (const d of designsOf(item)) {
       const decision = decisionOf(d)
       const where = decision === undefined ? '等你核准' : decision.verdict === 'approved' ? '你核准了' : `你退回了${decision.reason === undefined ? '' : `：${decision.reason}`}`
-      lines.push(d.crew_dropped !== undefined ? `  設計 ${d.id} ${d.title} — 移出：${d.crew_dropped}` : `  設計 ${d.id} ${d.title}（${d.kind === 'screen' ? '畫面' : '沒有畫面'}）· ${where}`)
+      const mockup = d.kind !== 'screen' ? '' : mockupOfDesign(d) !== undefined ? ` · mockup 第 ${mockupOfDesign(d)?.version} 版` : decision === undefined ? ' · 還沒有 mockup' : ''
+      lines.push(d.crew_dropped !== undefined ? `  設計 ${d.id} ${d.title} — 移出：${d.crew_dropped}` : `  設計 ${d.id} ${d.title}（${d.kind === 'screen' ? '畫面' : '沒有畫面'}）· ${where}${mockup}`)
       // One feature's view carries the design itself; the whole board names it only.
       if (scope.feature !== undefined && d.crew_dropped === undefined) lines.push(d.body.split('\n').map(l => `    ${l}`).join('\n'))
     }
@@ -640,7 +697,7 @@ export const renderBoard = (t: Tracker, scope: { feature?: string } = {}): strin
   return lines.join('\n')
 }
 
-const OP_NAMES = ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement', 'add_test_case', 'add_task', 'drop_task', 'add_design', 'drop_design'] as const
+const OP_NAMES = ['add_feature', 'add_criterion', 'drop_criterion', 'drop_feature', 'link_requirements', 'drop_requirement', 'add_test_case', 'add_task', 'drop_task', 'add_design', 'add_mockup', 'drop_design'] as const
 
 const isText = (v: unknown): v is string => typeof v === 'string'
 const isTextList = (v: unknown): v is string[] => Array.isArray(v) && v.every(isText)
@@ -704,7 +761,14 @@ export const parseOps = (raw: unknown): { ok: true; ops: Op[] } | { ok: false; e
       case 'add_design': {
         const missing = need(['feature', 'title', 'kind', 'body'])
         if (missing.length > 0) errors.push(`${at} add_design 缺少 ${missing.join('、')}`)
-        else ops.push({ op: 'add_design', feature: o.feature as string, title: o.title as string, kind: o.kind as string, body: o.body as string })
+        else if (o.html !== undefined && !isText(o.html)) errors.push(`${at} add_design 的 html 要是字串`)
+        else ops.push({ op: 'add_design', feature: o.feature as string, title: o.title as string, kind: o.kind as string, body: o.body as string, ...(isText(o.html) ? { html: o.html } : {}) })
+        return
+      }
+      case 'add_mockup': {
+        const missing = need(['id', 'html'])
+        if (missing.length > 0) errors.push(`${at} add_mockup 缺少 ${missing.join('、')}`)
+        else ops.push({ op: 'add_mockup', id: o.id as string, html: o.html as string })
         return
       }
       case 'drop_design':

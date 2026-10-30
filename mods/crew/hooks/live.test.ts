@@ -45,8 +45,8 @@ const LIVE: CrewLive = {
   prdPath: 'docs/PRD.md',
   flow: { stage: 'confirming', round: 1, retries: 0 },
   roles: {
-    pm: { agentId: 'a1', model: 'claude-sonnet-5-5', label: 'Sonnet', effort: 'high', tier: 'S', limit: 60_000, state: 'working', doing: '確認 AC-003', context: 8_000 },
-    qa: { agentId: 'a2', model: 'claude-sonnet-5-5', label: 'Sonnet', effort: 'medium', tier: 'S', limit: 60_000, state: 'idle', doing: '—', context: 12_000 },
+    pm: { agentId: 'a1', model: 'claude-sonnet-5-5', label: 'Sonnet 5.5', effort: 'high', tier: 'S', limit: 60_000, state: 'working', doing: '確認 AC-003', context: 8_000 },
+    qa: { agentId: 'a2', model: 'claude-sonnet-5-5', label: 'Sonnet 5.5', effort: 'medium', tier: 'S', limit: 60_000, state: 'idle', doing: '—', context: 12_000 },
     uiux: { state: 'idle', doing: '—', context: 0 },
     techlead: { state: 'idle', doing: '—', context: 0 },
     fullstack: { state: 'idle', doing: '—', context: 0 },
@@ -118,7 +118,7 @@ describe('snapshotOf', () => {
   test('shows each of the five roles, the designer among them', () => {
     const s = snapshotOf({ board: BOARD, live: LIVE, now: NOW })
     expect(s.roles.map(r => r.id)).toEqual(['pm', 'uiux', 'fullstack', 'qa', 'techlead'])
-    expect(s.roles.find(r => r.id === 'pm')).toMatchObject({ state: 'working', doing: '確認 AC-003', context: 8_000, limit: 60_000, route: { tier: 'S', model: 'Sonnet', effort: 'high' } })
+    expect(s.roles.find(r => r.id === 'pm')).toMatchObject({ state: 'working', doing: '確認 AC-003', context: 8_000, limit: 60_000, route: { tier: 'S', model: 'Sonnet 5.5', effort: 'high' } })
     expect(s.roles.find(r => r.id === 'uiux')).toMatchObject({ state: 'idle', doing: '—' })
   })
 
@@ -455,7 +455,7 @@ describe('the full-stack’s commits', () => {
   })
 
   describe('and crew’s test runs on them', () => {
-    const drawn = withDecisions(apply(planned, [{ op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '卡片' }], 'uiux'), new Map([['SCR-001', { verdict: 'approved' as const }]])) ?? planned
+    const drawn = withDecisions(apply(planned, [{ op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '卡片', html: '<p>mockup</p>' }], 'uiux'), new Map([['SCR-001', { verdict: 'approved' as const }]])) ?? planned
     const approved = withReviews(withCommits(drawn, new Map([['TASK-001', ['abc1234def']], ['TASK-002', ['def5678abc']]])) ?? drawn, new Map([['TASK-001', { sha: 'abc1234def', verdict: 'approve' as const }], ['TASK-002', { sha: 'def5678abc', verdict: 'approve' as const }]])) ?? drawn
     const ran = (result: 'passed' | 'failed', stale = false): Tracker => withResults(approved, new Map([['TC-001', { result, sha: 'def5678abc', run: '20261020-120000', ...(stale ? { stale: true as const } : {}) }]])) ?? approved
     const testing: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'testing', round: 0, retries: 0 } }
@@ -551,7 +551,7 @@ describe('the UI/UX designer’s designs', () => {
   const designed = apply(
     split,
     [
-      { op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張卡片' },
+      { op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張卡片', html: '<p>mockup</p>' },
       { op: 'add_design', feature: 'PRD-002', title: '取消', kind: 'none', body: '後台處理' },
     ],
     'uiux',
@@ -578,11 +578,11 @@ describe('the UI/UX designer’s designs', () => {
 
   test('list each design on the board tab by where it stands, and the designer’s row as it runs', () => {
     const b = decide(designed, [['SCR-001', { verdict: 'approved' }]])
-    const designing: CrewLive = { ...approving, flow: { stage: 'designing', round: 0, retries: 0 }, roles: { ...approving.roles, uiux: { state: 'working', doing: '畫設計稿', context: 9_000, label: 'Sonnet', tier: 'S', effort: 'medium' } } }
+    const designing: CrewLive = { ...approving, flow: { stage: 'designing', round: 0, retries: 0 }, roles: { ...approving.roles, uiux: { state: 'working', doing: '畫設計稿', context: 9_000, label: 'Sonnet 5.5', tier: 'S', effort: 'medium' } } }
     const snap = snapshotOf({ board: b, live: designing, now: NOW })
     expect(snap.items.find(i => i.id === 'SCR-001')).toMatchObject({ owner: 'uiux', status: 'done', note: expect.stringMatching(/PRD-001・畫面 · 你核准了/) })
     expect(snap.items.find(i => i.id === 'SCR-002')).toMatchObject({ owner: 'uiux', status: 'review', note: expect.stringMatching(/PRD-002・沒有畫面 · 等你核准/) })
-    expect(snap.roles.find(r => r.id === 'uiux')).toMatchObject({ state: 'working', doing: '畫設計稿', route: { tier: 'S', model: 'Sonnet', effort: 'medium' } })
+    expect(snap.roles.find(r => r.id === 'uiux')).toMatchObject({ state: 'working', doing: '畫設計稿', route: { tier: 'S', model: 'Sonnet 5.5', effort: 'medium' } })
   })
 })
 
@@ -610,15 +610,18 @@ describe('usage signals for the brain', () => {
     expect(keys({ fullstack: u(50_000, 0, 0) })).toEqual(['share:fullstack', 'hit:fullstack'])
     expect(keys({ fullstack: u(49_999, 0, 0) })).toEqual([])
     // A context at its limit is no reminder; past it is.
-    const at = (context: number): CrewLive => ({ ...emptyLive(), roles: { ...emptyLive().roles, qa: { ...emptyLive().roles.qa, context, limit: 60_000 } } })
+    const at = (context: number): CrewLive => ({ ...emptyLive(), roles: { ...emptyLive().roles, qa: { ...emptyLive().roles.qa, state: 'working', context, limit: 60_000 } } })
     expect(usageSignals(at(60_000))).toEqual([])
     expect(usageSignals(at(60_001)).map(x => x.key)).toEqual(['context:qa'])
   })
 
   test('name a role past its context threshold, its own or the brain’s', () => {
-    const l = { ...emptyLive(), roles: { ...emptyLive().roles, qa: { ...emptyLive().roles.qa, context: 70_000, limit: 60_000 } } }
-    expect(usageSignals(l)).toEqual([{ key: 'context:qa', text: 'QA 的 context 70K 超過門檻 60K' }])
+    const l: CrewLive = { ...emptyLive(), roles: { ...emptyLive().roles, qa: { ...emptyLive().roles.qa, state: 'working', context: 70_000, limit: 60_000 } } }
+    expect(usageSignals(l)).toEqual([{ key: 'context:qa', text: 'QA 這一輪的 context 70K 超過輪替門檻 60K（工作不會中斷，這一輪做完、下次叫醒時換新 context；門檻不是 context 容量）' }])
     expect(usageSignals({ ...l, tuned: { qa: { limit: 80_000 } } })).toEqual([])
+    // A role at rest, or one already marked to start fresh, is no reminder: its next wake rotates it anyway.
+    expect(usageSignals({ ...l, roles: { ...l.roles, qa: { ...l.roles.qa, state: 'idle' } } })).toEqual([])
+    expect(usageSignals({ ...l, roles: { ...l.roles, qa: { ...l.roles.qa, rotate: true } } })).toEqual([])
   })
 
   test('name two roles going back and forth on one item more than six times', () => {
@@ -640,7 +643,7 @@ describe('the brain’s actions on usage, measured', () => {
   const action = (day: string): NonNullable<CrewLive['tunings']>[number] => ({
     id: 'DEC-007',
     role: 'fullstack',
-    text: '全端之後的工作改用 Sonnet・high',
+    text: '全端之後的工作改用 Sonnet 5.5・high',
     change: { model: 'sonnet' },
     reason: '',
     before: '今日佔 80% · 命中率 75% · context 96K',
@@ -659,7 +662,7 @@ describe('the brain’s actions on usage, measured', () => {
   test('by what came since: the role’s share and hit rate since the action, and its context now', () => {
     const usage = { fullstack: at({ input: 110_000, cacheRead: 340_000, wakes: 4 }), pm: at({ input: 150_000 }) }
     const snap = snapshotOf({ board: null, live: now([action('2026-10-15')], usage), now: 0 })
-    expect(snap.actions).toEqual([{ id: 'DEC-007', text: '全端之後的工作改用 Sonnet・high', before: '今日佔 80% · 命中率 75% · context 96K', after: '之後佔 50% · 命中率 80% · context 8K' }])
+    expect(snap.actions).toEqual([{ id: 'DEC-007', text: '全端之後的工作改用 Sonnet 5.5・high', before: '今日佔 80% · 命中率 75% · context 96K', after: '之後佔 50% · 命中率 80% · context 8K' }])
   })
 
   test('waiting for the role to run again before there is anything since', () => {
@@ -688,7 +691,7 @@ describe('where a running flow stopped', () => {
   test('is no stop while someone works, work is queued, the flow is held, or the person has a question to answer', () => {
     const flow = { stage: 'building' as const, round: 0, retries: 0, building: 'TASK-001' }
     expect(stopKey(at(flow, { roles: { ...emptyLive().roles, fullstack: { ...emptyLive().roles.fullstack, state: 'working' } } }), RUN)).toBeUndefined()
-    expect(stopKey(at(flow, { pending: { fullstack: [{ kind: 'message', text: 'x', route: { tier: 'S', model: 'sonnet', label: 'Sonnet', effort: 'high', limit: 60_000 }, run: 'flow' }] } as never }), RUN)).toBeUndefined()
+    expect(stopKey(at(flow, { pending: { fullstack: [{ kind: 'message', text: 'x', route: { tier: 'S', model: 'sonnet', label: 'Sonnet 5.5', effort: 'high', limit: 60_000 }, run: 'flow' }] } as never }), RUN)).toBeUndefined()
     expect(stopKey(at(flow, { paused: 'person' }), RUN)).toBeUndefined()
     expect(stopKey(at(flow, { questions: [{ id: 'Q-01', question: 'q', from: 'pm', status: 'open', t: 0 }] }), RUN)).toBeUndefined()
     // The brain's proposal on usage is no question about the flow.

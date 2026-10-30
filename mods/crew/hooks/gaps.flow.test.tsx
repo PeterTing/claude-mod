@@ -133,6 +133,49 @@ describe('context, measured each request', () => {
     expect(Object.keys(usage.usage).sort()).toEqual(['brain', 'pm'])
   })
 
+  test('keeps the brain’s requests on disk once its own turn ends, with no role finishing after', async ($, on) => {
+    const seen = requests(on)
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    // The brain goes on with the person, and no role ends again that day.
+    await step($, undefined, { input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 5_000, cache_creation_input_tokens: 0 }, seen)
+    await $.turn.complete({ answer: '好', durationMs: 5, isAborted: false, turnId: 'turn-brain', reason: 'answer' } as never)
+    const usage = JSON.parse(w.disk.get(USAGE) ?? '{}') as { usage: Record<string, { input: number; cacheRead: number }> }
+    expect(usage.usage.brain?.input).toBe(100)
+    expect(usage.usage.brain?.cacheRead).toBe(5_000)
+  })
+
+  test('keeps the counts a reload finds in memory and not yet on disk', async ($, on) => {
+    const seen = requests(on)
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    // A reload in the middle of the brain's turn: its request is counted, the turn has not ended.
+    await step($, undefined, { input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, seen)
+    await start($)
+    await step($, undefined, { input_tokens: 50, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, seen)
+    await $.turn.complete({ answer: '好', durationMs: 5, isAborted: false, turnId: 'turn-brain', reason: 'answer' } as never)
+    const usage = JSON.parse(w.disk.get(USAGE) ?? '{}') as { usage: Record<string, { input: number; output: number }> }
+    expect(usage.usage.brain?.input).toBe(150)
+    expect(usage.usage.brain?.output).toBe(15)
+    // The PM's count, written before, is kept as it was.
+    expect(usage.usage.pm).toBeDefined()
+  })
+
+  test('writes no usage for the brain in a repo crew has never used', async ($, on) => {
+    const seen = requests(on)
+    const w = world($, on)
+    await start($)
+    await step($, undefined, { input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, seen)
+    await $.turn.complete({ answer: '好', durationMs: 5, isAborted: false, turnId: 'turn-brain', reason: 'answer' } as never)
+    expect([...w.disk.keys()].filter(k => k.startsWith(`${ROOT}/.crew/`))).toEqual([])
+  })
+
   test('takes no reading from an agent crew has replaced', async ($, on) => {
     const seen = requests(on)
     const w = world($, on)
@@ -200,14 +243,15 @@ describe('what is not crew’s', () => {
 })
 
 describe('work the person started', () => {
-  test('never wakes the brain', async ($, on) => {
+  test('wakes the brain only to publish the decide page', async ($, on) => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     await call($, 'ask_person', { question: '年繳要不要做？' }, 'a-pm-1')
     await write($, 'a-pm-1', SPLIT)
     await done($, 'a-pm-1')
-    expect((await notice($, 'a-pm-1')).drop).toBeDefined()
+    // The person answers on the page only the brain can publish: that is all the brain hears.
+    expect((await notice($, 'a-pm-1')).text).toMatch(/^\[crew\] 待你決定頁要發佈給使用者看（問題 Q-01（PM） 等使用者回答）/)
     await $.command.run(command('ask pm 為什麼這樣拆？'))
     await done($, 'a-pm-1', '因為')
     expect((await notice($, 'a-pm-1')).drop).toBeDefined()
@@ -353,10 +397,11 @@ describe('every action of the crew tool', () => {
     world($, on)
     await start($)
     const cases: [Record<string, unknown>, RegExp][] = [
-      [{ action: 'remember', text: '用新台幣' }, /已記住 PREF-001/],
+      [{ action: 'remember', text: '用新台幣', said: '金額用新台幣' }, /已記住 PREF-001/],
       [{ action: 'recall', text: '新台幣' }, /PREF-001/],
       [{ action: 'status' }, /crew（idle）/],
-      [{ action: 'rotate', role: 'pm' }, /PM 還沒開始/],
+      [{ action: 'rotate', role: 'pm' }, /要寫為什麼/],
+      [{ action: 'rotate', role: 'pm', text: '下一件和上一件無關' }, /PM 還沒開始/],
       [{ action: 'resume' }, /沒有進行中的 PRD/],
       [{ action: 'start', path: 'docs/PRD.md' }, /PM 正在拆/],
       [{ action: 'ask', role: 'qa', text: '你好' }, /已問 QA（ASK-01）/],

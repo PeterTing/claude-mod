@@ -12,7 +12,7 @@ Five roles take a PRD to tested code, and you approve the designs:
 2. **QA** writes a test case for every criterion.
 3. **UI/UX** writes a design for every feature: a screen, with its layout, states, interactions and copy, or no screen, with why. You approve each one, or send it back with a reason (gate **G2**).
 4. **Tech lead** breaks the criteria into tasks: what to build, for which criteria, and how big (S, M, L, XL). Gate **G3**, checked by code, needs a task for every criterion. The tech lead also reviews each task's code (gate **G5**).
-5. **Full-stack** builds the tasks, one at a time, in crew's own git worktree and branch. Each commit's message starts with its task's id (`TASK-003: …`), and crew reads the commits to see what is built. The task's size picks the model: S and M run on Sonnet at high effort, L on Opus at high, XL on Opus at xhigh.
+5. **Full-stack** builds the tasks, one at a time, in crew's own git worktree and branch. Each commit's message starts with its task's id (`TASK-003: …`), and crew reads the commits to see what is built. How hard the task is (易, 中, 難, 極難) picks the model, from the role's floor up (see [Claude or Codex](#run-a-role-on-claude-or-codex)).
 
   What counts as built:
   - Only commits on crew's branch count, made after crew made the branch and on no other branch. A `TASK-001: …` in your own history is not crew's work.
@@ -41,6 +41,12 @@ You do not need a PRD to start. Press 讓大腦接手這個 repo on the pane's s
 
 - For feature-sized work, the brain asks you what it needs, writes a PRD to `docs/crew/<name>-PRD.md`, and sends it to the PM and the designer to review (`draft`, three times at most; after that you decide whether to go on with the draft as it is). It asks you about the gaps they find, changes the draft, and asks you to confirm it (`ready`). Once you say yes in the conversation, or press 確認，開始 in the pane, the flow starts and the roles report back to the brain.
 - Small things, such as a bug fix or a change of copy, the brain does itself, with no PRD.
+- A batch of bugs, a fix across modules, or work you already wrote a spec for is feature-sized too: it goes through crew, and with an empty board the brain drafts the PRD from your spec.
+- The roles' work (splitting, designing, test cases, planning, review, building) goes to the roles: the brain does not start agents of its own for it.
+- When you turn takeover on, the brain lists the work it already has going (its own agents, open PRs) and asks you, for each, whether it goes on or goes to crew.
+- A decision or preference the brain records for you carries your own words. One without them is the brain's judgment, and the roles read it as 「大腦的判斷，使用者沒有明說」, entries from before 0.7.0 included. A question you ask back is not a decision.
+
+In a repo not taken over, Claude still knows what crew is for: told to use crew, it does, and it does not do the roles' work with agents of its own.
 
 The switch is yours alone: the brain, the roles, another plugin and a repo's own files cannot turn it on. It is kept on this machine, per repo, not in git, so other repos are not affected. Turned on in a conversation already under way, the brain hears it there: at once, or with the next role's report while a role is at work. A new session has it from its first message. Turned off, the brain goes back to working as usual and its draft is dropped (the file stays). crew never commits the draft.
 
@@ -59,6 +65,24 @@ A press or a field in the pane is yours alone: no plugin or model can raise one,
 
 **Or ask Claude.** Say something like 「請 crew 開始處理 docs/PRD.md」 or 「問 crew 的 PM 為什麼這樣拆」. Claude uses crew's `crew` tool. For work Claude started, crew tells Claude at once what needs it: a question for you, a design to approve, a usage reminder, a flow that stopped, the end of the work. Routine news (a step along the way, a PRD change the PM syncs on its own) goes to Claude in one message every 30 minutes. Each message starts a turn of the main conversation, so it uses tokens. Work started from the pane reports only in the pane, the line above the prompt and toasts, except in a repo the brain has taken over, where it reports to Claude too.
 
+## Decide on one page
+
+For each PRD the brain publishes a page for you to decide on, as an artifact: 待你決定頁. It has three tabs: the PRD draft waiting for your yes, the designs (each screen's mockup, to click through) with approve or send back, and the roles' questions, with the options the role gave. Open it from the pane's 待你決定 (［開待你決定頁 ↗］). You decide in the page's comments; the brain passes each comment to crew word for word (`decide`), and crew takes it only as the page wrote it, on what you saw: a question numbered again since, or a design rewritten since, is refused, and the brain says so in the thread. crew keeps the page's files in `.crew/designs/<PRD>/` and asks the brain to publish it again whenever something on it changes.
+
+A comment sent while Claude is busy may not reach it. When you have decided on the page and the pane still waits, press 我在頁面上決定好了 (or tell Claude): it reads the page's comments and passes on the ones not yet answered. If the page cannot be published, you decide in the pane, as before.
+
+## Run a role on Claude or Codex
+
+Each role runs on Claude (Claude Code's own agents) or on Codex (OpenAI's `codex` CLI), set in the pane's 模型 tab:
+
+- **系統預設.** The role runs on the engine you set as its default, from the floor you set for it there. Each piece of work starts at the floor and goes one step up per level of difficulty (易, 中, 難, 極難), and one more after two failures; the difficulty also sets the rotation threshold (60K, 100K, 160K, 256K). Claude may propose moving the role to the other engine.
+- **自己挑選.** The role runs on the model and effort you pick, and nothing moves it. When it gets stuck, crew asks you.
+- **大腦換模型前.** 先問你 (default): a move Claude proposes waits for your answer under 模型的事. 自動: Claude moves the role, never below its floor, and says why.
+
+A Codex role uses your own Codex login (`codex login`); crew checks it when you open the 模型 tab, before a Codex run, and when you press 重新檢查, and never reads your credentials. It runs `codex exec` without your `config.toml`, rules or MCP servers, with no web search, browser, plugins, image making or sub-agents, and with approvals off: read-only for the roles that do not build, and writing only in crew's worktree for the full-stack. Tried on Codex 0.162.1. When Codex is logged out or out of quota, a role on 系統預設 goes to Claude (or asks you first, as 大腦換模型前 says); one you picked waits for Codex.
+
+A Codex run is a process of crew's own: a reload of crew (an edit to a mod loaded with `--plugin-dir`, or a restart) ends it. The role stops with 「Codex 這一輪被 crew 重新載入打斷」, which is not Codex's fault; press 接續 to start it again. Roles on Claude go on.
+
 ## crew looks after its work
 
 - **A heartbeat every 5 minutes**, in code, with no model call:
@@ -68,7 +92,8 @@ A press or a field in the pane is yours alone: no plugin or model can raise one,
   - The pane's 常駐 line says when crew last looked, what it found and did, and where a restart went on from. The look when Claude Code starts only marks the time.
   - A role the heartbeat, the PRD check or a test run needs to start afresh starts at Claude Code's next action (a command, a prompt, a tool call, a role's turn end, any press in the pane), not from the timer itself: the engine runs an agent a timer starts as crew's own code and skips crew's hooks for it, so it could use none of crew's tools. In a quiet session it waits for your next action, and the 常駐 line says so. Waking a role whose agent is still there works from the timer.
 - **Token reminders**, worked out in code, each condition at most once an hour: a role over 40% of the day; a role reading under 60% from the cache (both only on a day, and a role, over 50K tokens); a role past its context threshold; two senders going back and forth on one item more than six times; a role's single tool output over 10K tokens. Claude hears of each, and the Token tab lists them with the time.
-- **What Claude may do about usage.** With the `crew` tool's `tune`, Claude can set a role's model, effort or rotation threshold for its work from now on, never below the floor you set for that role. By default it asks you first: its proposal waits under 待你決定. Switch to 自動 in 設定 to let it act on its own. Either way each action is kept as a decision, and the Token tab shows the role's numbers before and since. Nothing skips a gate, a test or a review to save tokens.
+- **What Claude may do about usage.** With the `crew` tool's `tune`, Claude can set a role's engine, model, effort or rotation threshold for its work from now on, never below the floor you set for that role. A move of engine, model or effort follows 大腦換模型前 in the 模型 tab. A threshold follows 大腦處置 in 設定: by default Claude asks you first, and its proposal waits under 待你決定. With 自動, Claude may raise a threshold up to 256K, as an at-least one (a harder piece of work keeps its own, higher one), giving the reason and telling you it did; lowering one, or going past 256K, still waits for you. Either way each action is kept as a decision, one you approved as yours, and the Token tab shows the role's numbers before and since. Nothing skips a gate, a test or a review to save tokens.
+- **A threshold is not the context's size.** Past it, nothing stops: the role starts afresh the next time it is woken. Within one long turn Claude Code compacts the role itself, and crew tells Claude when it did. Claude rotates a role only with a reason, which the log keeps as 「大腦輪替：…」. A role at rest, or one marked to start afresh, gets no hourly reminder about its threshold.
 
 ## Commands
 
@@ -105,6 +130,8 @@ For a phone, or if you prefer typing. Each does what its pane control does.
 **After upgrading from 0.3.0.** A board crew finished then has code that was never reviewed, no designs and no test runs. The next time the flow runs to its end, after you start the PRD again, the designer designs each feature for you to approve, the tech lead reviews each task, and crew runs your tests. Set your test command first, in the pane's 設定 tab.
 
 **After upgrading from 0.4.** When Claude Code starts on a PRD crew left unfinished, it no longer starts the roles again by itself: the pane asks you first.
+
+**After upgrading from 0.6.** Nothing to do. Every role stays on Claude until you choose Codex in the 模型 tab. Decisions and preferences Claude recorded without your words read to the roles as its own judgment.
 
 **After upgrading from 0.5.1.** crew keeps its board in `.crew/prd-tracker.json`. A repo where an earlier crew already made its board at the root keeps it there, as long as there is no `.crew/prd-tracker.json` yet: crew tells its board from the repo's own `prd-tracker.json` by `crew_prd`, which starting a PRD writes. A root board crew made without a PRD ever started on it has none, and is left as the repo's. The pane's 設定 tab says which file holds the board. To move a root board into `.crew/`, `git mv prd-tracker.json .crew/prd-tracker.json`: crew follows it the next time Claude Code starts, and until then says so and writes neither file.
 
@@ -158,11 +185,15 @@ For a phone, or if you prefer typing. Each does what its pane control does.
 | `.crew/log/*.jsonl` | no | The day's log, used for consolidation. |
 | `.crew/usage/*.json` | no | Token use per day. |
 | `.crew/runs/*.log` | no | Each test run's evidence: the command, the folder, the commit, the exit code and everything it printed, with secrets masked. |
+| `.crew/designs/<PRD>/` | partly | 待你決定頁 for a PRD: the mockups UI/UX drew are kept; the page shell and its data (`index.html`, `data.json`, `prd.json`) are made again by crew and ignored by git. |
+| `.crew/codex/` | no | What a Codex role reads instead of crew's tools: the board and threads as text, and the shape its report must take. |
 | `.crew/work/<name>/` | no | The full-stack's git worktree for a PRD, on branch `crew/<name>`, named after the PRD file. It is a second copy of your code: add `.crew/` to the ignore lists of your test runner, linter and type-checker (Vitest, Jest, ESLint and a `tsconfig.json` that includes `**/*` all pick it up otherwise). The other roles' searches in your checkout see it too. |
 
 Where the board is kept, the flow, the open questions, who started the work, your test command, and, for each PRD, crew's branch, the commits it has seen, the tech lead's reviews, crew's latest test run and your decisions on designs are not in the repo. crew keeps them in its own store on this machine, keyed by the repo's path. A repo you clone therefore cannot start work by itself, and the marks a board carries (commits, reviews, test results, approved designs) count for nothing until crew has recorded them itself. On another machine, crew starts without that record: the board shows no code built there until crew sees the commits on its own branch. Where crew keeps the board is kept too, so it never moves under the work on another branch: `.crew/` once crew wrote its board there, the root once crew took a board up there, until that board is moved into `.crew/`.
 
-crew adds `usage/`, `log/`, `work/` and `runs/` to `.crew/.gitignore` and leaves your own rules there alone.
+crew adds `usage/`, `log/`, `work/`, `runs/`, `codex/` and the page files under `designs/` to `.crew/.gitignore` and leaves your own rules there alone.
+
+crew's root in a session is the folder Claude Code started in, and it stays there when crew is reloaded or the shell moves into a subfolder or a worktree. A subfolder that is a git repo of its own is that repo's.
 
 ## Safety
 
@@ -170,7 +201,7 @@ crew adds `usage/`, `log/`, `work/` and `runs/` to `.crew/.gitignore` and leaves
 - **crew never writes over what it cannot read, nor outside the repo.** A board it cannot parse (a merge conflict, a typo) is left as it is until you fix it. So is a board with a part crew cannot read, such as a feature whose `test_cases` is not a list: the pane says which part, the line above the prompt and `/crew status` show 「⚠ 看板讀不到」, and the work stops there. A feature with no criteria or test case list yet is read as having none, and crew adds the empty list when it next writes the board. A `prd-tracker.json` at the repo's root is the repo's own, read by its own tools, unless crew made it there before 0.5.2: crew reads it only to tell whose it is, never writes it, and keeps its board in `.crew/`. A file in the board's place that is not crew's board, one with no `prd_items` list, is neither read nor written either, and crew cannot start until it is fixed or moved. A file of crew's that is itself a link, or whose path leads out of the repo, is neither read nor written. That includes a file that links to another file inside the repo. A directory link on the way is followed only when it lands inside the repo. Either way crew tells you why.
 - **Write tools take only crew's own callers.** Only crew's roles and the main conversation can write to the board, threads, questions or memory. Other agents and the roles a reset retired cannot.
 - **Each role has its own permissions on the board.** The PM edits features and criteria; QA writes test cases; the designer writes designs; the tech lead plans tasks and sends reviews. The full-stack cannot write the board at all.
-- **Some decisions are yours alone.** Approving or sending back a design, setting the test command, and approving Claude's proposals on usage take your own press or field in the pane, a `/crew` command you type at the prompt yourself, or one you send from your Remote Control client. Claude's `crew` tool cannot do them, and neither can another plugin, another Claude session, a channel relay, a schedule, an answer to a question, or anything written on the board.
+- **Some decisions are yours alone.** Approving or sending back a design, setting the test command, approving Claude's proposals on usage, and saving your preferences take your own press or field in the pane, a `/crew` command you type at the prompt yourself, one you send from your Remote Control client, or your comment on 待你決定頁, which the brain passes on word for word. Claude's `crew` tool cannot do them, and neither can another plugin, another Claude session, a channel relay, a schedule, an answer to a question, or anything written on the board.
 - **Claude's actions on usage keep to your floors.** A model or effort below the floor you set for a role is refused, whether Claude asks you first or acts on its own; and nothing skips a gate, a test or a review to save tokens.
 - **Your test command runs without asking each time.** crew runs it in its worktree on crew's branch, by its words, with no shell (no pipes or `&&`), for at most ten minutes, with your environment and `CI=true` (so a runner does not wait in watch mode). It runs code the full-stack wrote, outside your Claude Code permission prompts, with whatever keys your environment holds, so set it only for a repo whose code you are willing to run. A command a repo or a board carries is never run: crew keeps yours on this machine. A run that breaks down on the way (a full disk, a reload) says so instead of leaving the flow waiting, and opening Claude Code on a flow that stopped while testing runs the command again once you press 接續.
 - **Test output stays out of git.** The evidence in `.crew/runs/` is masked and ignored by git. The end of a failing run's output goes to the full-stack alone, never into the repo's threads, since it may hold values masking does not recognize.

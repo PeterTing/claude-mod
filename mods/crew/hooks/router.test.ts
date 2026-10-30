@@ -35,18 +35,18 @@ describe('tierFor', () => {
 
 describe('routeFor', () => {
   test('maps each tier to its model, effort and context limit', () => {
-    expect(routeFor('qa', 'S')).toEqual({ tier: 'S', model: 'sonnet', label: 'Sonnet', effort: 'medium', limit: 60_000 })
+    expect(routeFor('qa', 'S')).toEqual({ tier: 'S', model: 'sonnet', label: 'Sonnet 5.5', effort: 'medium', limit: 60_000 })
     expect(routeFor('qa', 'M')).toMatchObject({ model: 'sonnet', effort: 'high', limit: 100_000 })
     expect(routeFor('qa', 'L')).toMatchObject({ model: 'opus', effort: 'high', limit: 160_000 })
     expect(routeFor('qa', 'XL')).toMatchObject({ model: 'opus', effort: 'xhigh', limit: 256_000 })
   })
 
   test('keeps each role at or above its floor', () => {
-    expect(routeFor('pm', 'S')).toMatchObject({ label: 'Sonnet', effort: 'high' })
-    expect(routeFor('fullstack', 'S')).toMatchObject({ label: 'Sonnet', effort: 'high' })
-    expect(routeFor('techlead', 'S')).toMatchObject({ label: 'Opus', effort: 'high' })
-    expect(routeFor('techlead', 'XL')).toMatchObject({ label: 'Opus', effort: 'xhigh' })
-    expect(routeFor('uiux', 'S')).toMatchObject({ label: 'Sonnet', effort: 'medium' })
+    expect(routeFor('pm', 'S')).toMatchObject({ label: 'Sonnet 5.5', effort: 'high' })
+    expect(routeFor('fullstack', 'S')).toMatchObject({ label: 'Sonnet 5.5', effort: 'high' })
+    expect(routeFor('techlead', 'S')).toMatchObject({ label: 'Opus 5.5', effort: 'high' })
+    expect(routeFor('techlead', 'XL')).toMatchObject({ label: 'Opus 5.5', effort: 'xhigh' })
+    expect(routeFor('uiux', 'S')).toMatchObject({ label: 'Sonnet 5.5', effort: 'medium' })
   })
 
   test('keeps the tier’s context limit when a floor raises the model', () => {
@@ -54,8 +54,8 @@ describe('routeFor', () => {
     expect(routeFor('techlead', 'S').limit).toBe(60_000)
   })
 
-  test('escalates past XL to Opus max', () => {
-    expect(routeFor('fullstack', 'XL', { beyond: true })).toMatchObject({ label: 'Opus', effort: 'max', limit: 256_000 })
+  test('escalates past XL to Fable at xhigh', () => {
+    expect(routeFor('fullstack', 'XL', { beyond: true })).toMatchObject({ model: 'fable', label: 'Fable 5.1', effort: 'xhigh', limit: 256_000, beyond: true })
   })
 })
 
@@ -63,7 +63,7 @@ describe('a route the brain tuned', () => {
   test('takes the model, effort and threshold the brain set for the role, and nothing else', () => {
     const base = routeFor('fullstack', 'S')
     expect(tunedRoute(base, undefined)).toEqual(base)
-    expect(tunedRoute(base, { model: 'opus', effort: 'xhigh' })).toEqual({ ...base, model: 'opus', label: 'Opus', effort: 'xhigh' })
+    expect(tunedRoute(base, { model: 'opus', effort: 'xhigh' })).toEqual({ ...base, model: 'opus', label: 'Opus 5.5', effort: 'xhigh' })
     expect(tunedRoute(base, { limit: 80_000 })).toEqual({ ...base, limit: 80_000 })
   })
 
@@ -73,9 +73,9 @@ describe('a route the brain tuned', () => {
   })
 
   test('never goes below the role’s floor', () => {
-    expect(floorOf('fullstack', { model: 'haiku' })).toBe('Sonnet・high')
-    expect(floorOf('fullstack', { effort: 'medium' })).toBe('Sonnet・high')
-    expect(floorOf('techlead', { model: 'sonnet' })).toBe('Opus・high')
+    expect(floorOf('fullstack', { model: 'haiku' })).toBe('Sonnet 5.5・high')
+    expect(floorOf('fullstack', { effort: 'medium' })).toBe('Sonnet 5.5・high')
+    expect(floorOf('techlead', { model: 'sonnet' })).toBe('Opus 5.5・high')
     expect(floorOf('qa', { model: 'sonnet', effort: 'medium' })).toBeUndefined()
     expect(floorOf('fullstack', { limit: 80_000 })).toBeUndefined()
   })

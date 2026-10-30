@@ -1,5 +1,5 @@
-import { approvedNow, criteriaOf, decisionOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveDesignsOf, liveTasksOf, resultOf, reviewOf, tasksOf, tipOf } from './board'
-import type { Task } from './board'
+import { approvedNow, criteriaOf, decisionOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveDesignsOf, liveTasksOf, MOCKUP_MAX, needsMockup, resultOf, reviewOf, tasksOf, tipOf } from './board'
+import type { Design, Task } from './board'
 import type { GateGap, Tracker } from './board'
 import { gateG0, refsOf, requirementList } from './prd'
 import type { Requirement } from './prd'
@@ -314,26 +314,34 @@ const NOT_AN_ATTEMPT = -1
 /** The features in scope with no design in play: none yet, or all dropped or sent back. */
 const undesigned = (board: Tracker) => board.prd_items.filter(i => i.crew_dropped === undefined && liveDesignsOf(i).length === 0)
 
-/** The designs in play that the person has not decided on. */
+/** The designs in play that the person has not decided on and can see: a screen is seen through its mockup. */
 const undecided = (board: Tracker): string[] =>
-  board.prd_items.filter(i => i.crew_dropped === undefined).flatMap(i => liveDesignsOf(i).filter(d => decisionOf(d) === undefined).map(d => d.id))
+  board.prd_items.filter(i => i.crew_dropped === undefined).flatMap(i => liveDesignsOf(i).filter(d => decisionOf(d) === undefined && !needsMockup(d)).map(d => d.id))
+
+/** The designs in play the person cannot see yet: screens not decided on, with no mockup. */
+export const unmocked = (board: Tracker): (Design & { feature: string })[] =>
+  board.prd_items.filter(i => i.crew_dropped === undefined).flatMap(i => liveDesignsOf(i).filter(d => decisionOf(d) === undefined && needsMockup(d)).map(d => ({ ...d, feature: i.id })))
 
 const uxRoute = (size: number): Route => routeFor('uiux', tierFor({ kind: 'design', size: Math.max(1, size) }))
 
-/** What the UI/UX designer is asked to design: each feature with its criteria, and why a design was sent back. */
-const designPrompt = (board: Tracker, items: ReturnType<typeof undesigned>, opening: string): string => {
+/** How a mockup is drawn: the person sees it in their own artifact, and approves or sends back there. */
+const MOCKUP_RULES = `mockup（html）：一份完整的 HTML 文件，用這個產品自己的版面、元件和用語畫出真的畫面，使用者會在自己的私人 artifact 裡看它、在裡面核准或退回。最上面放一排按鈕切換每個狀態（載入中、空的、錯誤、成功，以及驗收條件提到的狀態）；360px 寬也要能用；CSS 和 JS 都寫在檔案裡，不載入任何外部資源（字型、圖片、script、樣式都不行）、不連網路、不用 localStorage；資料用假的，但要像真的；最多 ${MOCKUP_MAX} 字。`
+
+/** What the UI/UX designer is asked to design: each feature with its criteria, why a design was sent back, and the screens still without a mockup. */
+const designPrompt = (board: Tracker, items: ReturnType<typeof undesigned>, bare: ReturnType<typeof unmocked>, opening: string): string => {
   const lines = items.map(i => {
     const back = designsOf(i).filter(d => decisionOf(d)?.verdict === 'rejected')
     const why = back.map(d => `（你的 ${d.id} 被使用者退回，原因：${decisionOf(d)?.reason ?? '沒有寫'}）`).join('')
     return `- ${i.id} ${i.title}${why}：${criteriaOf(i).map(c => `${c.id} ${c.text}`).join('；')}`
   })
   return [
-    `${opening}請為這 ${items.length} 個功能畫設計稿，給使用者核准：`,
-    ...lines,
-    '1. 用 board_read 看功能、驗收條件和 test case。',
-    '2. 每個功能用 board_write 的 add_design 寫一份：有畫面的，kind 填 screen，body 寫版面（文字或 ASCII 線框圖都可以）、每個狀態（載入中、空的、錯誤、成功）、互動和文案；沒有畫面的（例如只有 API、函式或背景工作），kind 填 none，body 寫為什麼沒有畫面、使用者怎麼用到它。',
-    '3. 被退回的照使用者的原因重畫，用 add_design 寫新的一份；不要的設計稿用 drop_design 移出。',
-    '4. 需要產品決定用 ask_person；設計問題可以用 thread_post 問 PM。完成後用一句話回報。',
+    ...(items.length === 0 ? [] : [`${opening}請為這 ${items.length} 個功能畫設計稿，給使用者核准：`, ...lines]),
+    ...(bare.length === 0 ? [] : [`${items.length === 0 ? opening : ''}這 ${bare.length} 份有畫面的設計稿還沒有 mockup，使用者看不到畫面就沒辦法核准，請用 board_write 的 add_mockup（id 填設計稿編號，html 填 mockup）照設計稿的內容補上：`, ...bare.map(d => `- ${d.id} ${d.title}（${d.feature}）`)]),
+    '1. 用 board_read 看功能、驗收條件、test case 和設計稿（board_read 帶 feature 會列出設計稿全文）。',
+    '2. 每個功能用 board_write 的 add_design 寫一份：有畫面的，kind 填 screen，body 寫版面、每個狀態、互動、文案和無障礙要點，而且一定要附 html（可以點的 mockup）；沒有畫面的（例如只有 API、函式或背景工作），kind 填 none，body 寫為什麼沒有畫面、使用者怎麼用到它，不附 html。',
+    `3. ${MOCKUP_RULES}`,
+    '4. 被退回的照使用者的原因重畫，用 add_design 寫新的一份；不要的設計稿用 drop_design 移出。',
+    '5. 需要產品決定用 ask_person；設計問題可以用 thread_post 問 PM。完成後用一句話回報。',
   ].join('\n')
 }
 
@@ -344,12 +352,13 @@ const designPrompt = (board: Tracker, items: ReturnType<typeof undesigned>, open
  */
 const designStep = (state: FlowState, board: Tracker, opening = ''): StepResult => {
   const need = undesigned(board)
-  if (need.length > 0) {
+  const bare = unmocked(board)
+  if (need.length > 0 || bare.length > 0) {
     const fresh = board.prd_items.every(i => designsOf(i).length === 0)
     const next: FlowState = { ...state, stage: 'designing', retries: state.stage === 'designing' ? state.retries : 0, round: 0 }
-    const text = designPrompt(board, need, opening)
-    const route = uxRoute(need.length)
-    return { state: next, actions: [fresh && opening === '' ? { type: 'spawn', role: 'uiux', route, prompt: text } : { type: 'message', role: 'uiux', item: need[0]?.id, text, route }] }
+    const text = designPrompt(board, need, bare, opening)
+    const route = uxRoute(need.length + bare.length)
+    return { state: next, actions: [fresh && opening === '' ? { type: 'spawn', role: 'uiux', route, prompt: text } : { type: 'message', role: 'uiux', item: need[0]?.id ?? bare[0]?.id, text, route }] }
   }
   return { state: { ...state, stage: 'approving', retries: 0, round: 0 }, actions: [{ type: 'approve', ids: undecided(board) }] }
 }
@@ -375,9 +384,13 @@ const afterDesign = (state: FlowState, board: Tracker, inbox: Inbox = {}, requir
     return { state: { ...state, round: state.round + 1 }, actions: [{ type: 'message', role: 'pm', item: forPm[0], text: threadNotice('UI/UX', forPm), route: routeFor('pm', tierFor({ kind: 'confirm_gaps', size: forPm.length })) }] }
   }
   const need = undesigned(board)
-  if (need.length === 0) return finish({ ...state, retries: 0 }, board, requirements)
-  if (state.retries >= MAX_RETRIES - 1) return escalate({ ...state, retries: state.retries + 1 }, `UI/UX 兩次都沒有為 ${need.map(i => i.id).join('、')} 畫設計稿。要怎麼處理？`, need[0]?.id, 'designing')
-  const again = designStep(state, board, '還有功能沒有設計稿。')
+  const bare = unmocked(board)
+  if (need.length === 0 && bare.length === 0) return finish({ ...state, retries: 0 }, board, requirements)
+  if (state.retries >= MAX_RETRIES - 1) {
+    const missing = [...(need.length === 0 ? [] : [`沒有為 ${need.map(i => i.id).join('、')} 畫設計稿`]), ...(bare.length === 0 ? [] : [`沒有替 ${bare.map(d => d.id).join('、')} 補 mockup`])]
+    return escalate({ ...state, retries: state.retries + 1 }, `UI/UX 兩次都${missing.join('，也')}。要怎麼處理？`, need[0]?.id ?? bare[0]?.feature, 'designing')
+  }
+  const again = designStep(state, board, need.length > 0 ? '還有功能沒有設計稿。' : '還有設計稿沒有 mockup。')
   return { ...again, state: { ...again.state, retries: state.retries + 1 } }
 }
 

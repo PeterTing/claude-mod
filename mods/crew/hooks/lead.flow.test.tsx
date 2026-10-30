@@ -41,8 +41,8 @@ describe('the brain runs crew', () => {
     expect(w.prompts).toEqual([])
     const relayed = await notice($, 'a-pm-1')
     expect(relayed.drop).toBeUndefined()
-    expect(relayed.text).toMatch(/^\[crew\] PM 有一件事要使用者決定（Q-01）[\s\S]*「年繳要不要做？」/)
-    expect(relayed.text).toMatch(/answer/)
+    // The person answers on the decide page: the brain is asked to put the question there.
+    expect(relayed.text).toMatch(/^\[crew\] 待你決定頁要發佈給使用者看（問題 Q-01（PM） 等使用者回答）[\s\S]*「crew 回答」[\s\S]*decide/)
     expect(w.logs).toEqual([])
 
     const a = await crew($, { action: 'answer', question: 'Q-01', text: '這一版不做' })
@@ -97,13 +97,13 @@ describe('the brain runs crew', () => {
     expect(w.prompts).toHaveLength(1)
   })
 
-  test('keeps work the person started with /crew to toasts, without waking the brain', async ($, on) => {
+  test('keeps work the person started with /crew to toasts, waking the brain only to publish the decide page', async ($, on) => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     await askPerson($, 'a-pm-1', '年繳要不要做？')
     await done($, 'a-pm-1')
-    expect((await notice($, 'a-pm-1')).drop).toBeDefined()
+    expect((await notice($, 'a-pm-1')).text).toMatch(/^\[crew\] 待你決定頁要發佈給使用者看（問題 Q-01（PM） 等使用者回答）/)
     expect(w.toasts.some(t => /Q-01/.test(t))).toBe(true)
     await w.clock.advance(61_000)
     expect(w.prompts).toEqual([])

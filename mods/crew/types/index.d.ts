@@ -1,8 +1,8 @@
 /** The pane's tabs. */
-export type CrewTab = 'overview' | 'progress' | 'board' | 'threads' | 'memory' | 'tokens' | 'settings'
+export type CrewTab = 'overview' | 'progress' | 'board' | 'threads' | 'memory' | 'tokens' | 'models' | 'settings'
 
 /** The sample situation the design preview shows. */
-export type CrewScenario = 'normal' | 'empty' | 'attention' | 'restart' | 'leading' | 'drafting' | 'confirm'
+export type CrewScenario = 'normal' | 'empty' | 'attention' | 'restart' | 'leading' | 'drafting' | 'confirm' | 'codex' | 'quota'
 
 export type CrewTier = 'S' | 'M' | 'L' | 'XL'
 
@@ -26,8 +26,16 @@ export type CrewLiveRole = {
   given?: string[]
   /** The person asked for a fresh context at its next wake. */
   rotate?: boolean
+  /** Whose rotation it is and why, as the log says it: `你要求輪替`, `大腦輪替：…`. */
+  rotateWhy?: string
   /** Whom its current or last run was for: the flow's work, or the person (a question, an answer). */
   run?: 'flow' | 'person'
+  /** Its current agent runs on Codex; absent, on Claude. */
+  engine?: 'codex'
+  /** The Codex thread its current agent goes on with. */
+  thread?: string
+  /** That thread's tokens so far, as Codex last told them: a run's own are what it adds. */
+  codexTotal?: { input: number; cached: number; output: number; reasoning: number }
 }
 
 export type CrewUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; wakes: number; rotations: number }
@@ -44,6 +52,10 @@ export type CrewQuestion = {
   status: 'open' | 'answered'
   answer?: string
   t: number
+  /** The choices the role gave, at most four: the person may still answer in their own words. */
+  options?: string[]
+  /** The PRD whose decide page shows it: the draft or the PRD under way when it was asked. */
+  prd?: string
 }
 
 export type CrewActivity = { t: number; day: string; role: string; id: string; title: string }
@@ -97,7 +109,14 @@ export type CrewWork = {
   text: string
   item?: string
   run?: 'flow' | 'person'
+  /** A start that replaces the role's agent: why. */
+  reason?: string
+  /** The question to the role this work answers, kept with it while it waits. */
+  ask?: CrewAsking
 }
+
+/** A question to a role under way, ASK-: who asked, and the draft when it is a draft's review. */
+export type CrewAsking = { id: string; by: 'person' | 'brain'; draft?: string }
 
 /** Everything crew keeps for a running team in this session. */
 export type CrewLive = {
@@ -108,9 +127,13 @@ export type CrewLive = {
   agents: Record<string, 'pm' | 'qa' | 'uiux' | 'techlead' | 'fullstack'>
   /** Token use by role, `brain` being the main conversation. */
   usage: Record<string, CrewUsage>
+  /** The roles' tokens on Codex, the same day's: Codex's own account, so apart from `usage`. */
+  codexUsage?: Record<string, CrewUsage>
   /** Tokens by the tier of the task that spent them. */
   tiers: Record<string, number>
   threads: Record<string, CrewMessage[]>
+  /** How many messages a thread has, where that is more than the session keeps (its last 50); its file has all. */
+  threadTotals?: Record<string, number>
   /** The number of the last message posted. */
   posted: number
   /** The last message number each role was woken after: later messages to it are unread. */
@@ -118,7 +141,7 @@ export type CrewLive = {
   questions: CrewQuestion[]
   activity: CrewActivity[]
   /** Role → the ASK thread of the question it is answering, and who asked: the person, or the brain for them; with `draft`, a review of that draft PRD. */
-  asks: Record<string, { id: string; by: 'person' | 'brain'; draft?: string }>
+  asks: Record<string, CrewAsking>
   /** Who started the PRD under way: work the brain started reports back to it. */
   lead: 'person' | 'brain'
   /** How many questions the person has asked the roles directly. */
@@ -142,8 +165,17 @@ export type CrewLive = {
   resident?: { checkedAt: number; found?: string; resumed?: string }
   /** Reminders on usage sent to the brain: the condition, what was said, when; one per condition an hour. */
   alerts?: { key: string; text: string; at: number }[]
-  /** The brain's tuning of each role's work from now on: a model, an effort, a rotation threshold. */
+  /** The brain's tuning of each role's work from now on: under auto, an engine and a model or effort on it; a rotation threshold. */
   tuned?: Record<string, CrewTuning>
+  /** The questions on a role's model waiting for the person (M-), apart from the others; and the next one's number. */
+  modelAsks?: CrewModelAsk[]
+  modelAskSeq?: number
+  /** The review page of the PRD under way, as the pane shows it: its link once the brain published it, why it could not, or that it was asked to. */
+  review?: { url?: string; failed?: string; asked?: true; path?: string }
+  /** The PRD whose decide page the brain was last asked to publish: its report is that page's, though another PRD is shown since. */
+  pageAsked?: string
+  /** Codex on this machine as crew last checked: found, logged in, out of quota until when. */
+  codex?: { state: 'ready' | 'logged-out' | 'missing'; login?: 'chatgpt' | 'apikey'; version?: string; at: number; limited?: string; until?: number }
   /**
    * The brain's actions on usage: taken (a decision, `DEC-`), or waiting for
    * the person (a question, `Q-`); what they change, why, and the role's
@@ -185,9 +217,53 @@ export type CrewDraft = {
   note?: string
   /** How many times this draft went to review. */
   sends?: number
+  /** What the person asked to change on the decide page: the brain changes the draft, and asks again. */
+  change?: string
 }
 
-export type CrewTuning = { model?: 'haiku' | 'sonnet' | 'opus'; effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; limit?: number }
+/** A model is the engine's own: a Claude alias, or a Codex model; `why`, the brain's reason for the engine it moved the role to. */
+export type CrewTuning = { engine?: 'claude' | 'codex'; model?: string; effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; limit?: number; why?: string; raise?: true }
+
+/** An engine, a model on it and an effort: what a role's piece of work runs on. */
+export type CrewPick = { engine: 'claude' | 'codex'; model: string; label: string; effort: string }
+
+/** A piece of work held for the person's answer on its model: started, or handed to the role, when they answer. */
+export type CrewHeldWork = {
+  kind: 'start' | 'message'
+  route: { tier: CrewTier; model: string; label: string; effort: string; limit: number }
+  text: string
+  reason?: string
+  item?: string
+  run: 'flow' | 'person'
+  /** The question to the role this work answers, kept with it while it waits. */
+  ask?: CrewAsking
+}
+
+/**
+ * A question on a role's model, M-: the brain's move to another engine, model
+ * or effort (`change`, taken on yes); or crew's, for a piece of work that would
+ * climb (`pick` on yes, `keep` on no) or that Codex cannot take now (`fallback`:
+ * the role goes back to Claude on yes, and waits for Codex on no). Crew's hold
+ * their work (`work`) till the person answers.
+ */
+export type CrewModelAsk = {
+  id: string
+  kind: 'switch' | 'climb'
+  role: string
+  text: string
+  yes: string
+  no: string
+  from: 'crew' | 'brain'
+  at: number
+  change?: CrewTuning
+  reason?: string
+  pick?: CrewPick
+  keep?: CrewPick
+  fallback?: string
+  /** Codex unable to take the work of a role the person set on Codex: Claude takes this piece only, and the setting stays. */
+  onlyThis?: boolean
+  work?: CrewHeldWork
+}
 
 export type CrewSignals = {
   /** The PRD file's version (time and size) crew last took in; '' before the first look. */
@@ -222,12 +298,18 @@ declare module 'claude-code' {
       thread: string | null
       /** The role whose question field the overview has open, if any. */
       asking: string | null
+      /** The role whose work and last report the overview shows in full, if any. */
+      detail: string | null
       /** The settings tab asks to confirm a reset. */
       confirming: boolean
       /** The PRD picked on the start screen, before the start. */
       picked: string | null
       /** The design whose content the overview shows, if any. */
       designOpen: string | null
+      /** The conversation crew last started in: a start in the same one is a reload. */
+      began: string
+      /** The repo a conversation started in: a reload keeps it, wherever the shell has moved since. */
+      rootedIn: { session: string; root: string }
       /** The person's last memory search on the memory tab, and what it found. */
       recalled: { query: string; text: string } | null
       /** The gate whose detail the overview has open, if any. */

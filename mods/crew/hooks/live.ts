@@ -1,12 +1,13 @@
 import type { CrewLive, CrewUsage } from '../types'
-import { approvedNow, criteriaOf, decisionOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveDesignsOf, liveTasksOf, passedNow, resultOf, reviewOf, tasksOf, tipOf } from './board'
+import { approvedNow, criteriaOf, decisionOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, liveCasesOf, liveDesignsOf, liveTasksOf, needsMockup, passedNow, resultOf, reviewOf, tasksOf, tipOf } from './board'
 import type { GateResult, PrdItem, Task, TestCase, Tracker } from './board'
 import { estimateTokens } from './memory'
 import type { MemoryEntry } from './memory'
 import { droppedRequirements, gateG0, refsOf } from './prd'
+import { labelOf } from './router'
 import type { Requirement } from './prd'
 import { hitRate, percent, ROLE_NAMES } from './model'
-import type { Feature, Gate, Item, RequirementRow, RoleId, RoleRow, Snapshot, Stage, StageCell, Tier, UsageRow } from './model'
+import type { Decision, Feature, Gate, Item, RequirementRow, RoleId, RoleRow, Snapshot, Stage, StageCell, Tier, UsageRow } from './model'
 
 /** A team that has not started. */
 export const emptyLive = (): CrewLive => ({
@@ -141,6 +142,8 @@ export const stopKey = (l: CrewLive, running: readonly string[]): string | undef
   if (l.prdPath === null || l.paused !== undefined || !running.includes(l.flow.stage)) return undefined
   if ((['pm', 'qa', 'uiux', 'techlead', 'fullstack'] as const).some(r => l.roles[r].state === 'working') || Object.values(l.pending).some(p => p.length > 0)) return undefined
   if (l.questions.some(q => q.status === 'open' && !(q.from === 'brain' && q.item === 'tune'))) return undefined
+  // Work held for the person's answer on a role's model: the flow waits for them, as for any question.
+  if ((l.modelAsks ?? []).some(a => a.work !== undefined)) return undefined
   return `${l.flow.stage}:${l.flow.building ?? ''}:${l.flow.fixing ?? ''}:${l.flow.reviewing?.task ?? ''}:${l.flow.reviewing?.sha ?? ''}`
 }
 
@@ -166,8 +169,12 @@ export const usageSignals = (live: CrewLive): { key: string; text: string }[] =>
     const rate = u === undefined ? 100 : hitRate({ role, ...u })
     if (spent >= SIGNIFICANT && rate < 60) out.push({ key: `hit:${role}`, text: roleSays(role, `快取命中率 ${rate}%（低於 60%）`) })
     const r = live.roles[role]
-    const limit = live.tuned?.[role]?.limit ?? r.limit
-    if (limit !== undefined && r.context > limit) out.push({ key: `context:${role}`, text: roleSays(role, `的 context ${Math.round(r.context / 1000)}K 超過門檻 ${Math.round(limit / 1000)}K`) })
+    const t = live.tuned?.[role]
+    const limit = t?.limit === undefined ? r.limit : t.raise === true ? Math.max(t.limit, r.limit ?? 0) : t.limit
+    // Only a run going on past it: a role at rest starts fresh at its next wake anyway, and one marked to rotate already will.
+    if (limit !== undefined && r.context > limit && r.state === 'working' && r.rotate !== true) {
+      out.push({ key: `context:${role}`, text: roleSays(role, `這一輪的 context ${Math.round(r.context / 1000)}K 超過輪替門檻 ${Math.round(limit / 1000)}K（工作不會中斷，這一輪做完、下次叫醒時換新 context；門檻不是 context 容量）`) })
+    }
   }
   for (const [item, messages] of Object.entries(live.threads)) {
     // The latest run of messages two senders passed back and forth, newest first.
@@ -196,6 +203,9 @@ export const ageOf = (t: number, now: number): string => {
 export const dayOf = (t: number): string => new Date(t).toISOString().slice(0, 10)
 
 const total = (u: CrewUsage | undefined): number => (u === undefined ? 0 : u.input + u.output + u.cacheRead + u.cacheWrite)
+
+/** A role's tokens on Codex, as the token tab lists them: Codex writes no cache, so it has none. */
+const codexRow = (role: RoleId, u: CrewUsage): UsageRow => ({ role, engine: 'codex', input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: 0, wakes: u.wakes, rotations: u.rotations })
 
 const TESTING: readonly CrewLive['flow']['stage'][] = ['writing_tests', 'confirming', 'adding_tests', 'escalated']
 
@@ -344,6 +354,61 @@ const requirementRows = (board: Tracker, requirements: readonly Requirement[]): 
 }
 
 /** Everything the pane draws, from the board and memories on disk and the team this session runs. */
+/**
+ * The designs waiting for the person, as one row once the review page is
+ * theirs to decide on: its link, or that the brain is publishing it; or, on a
+ * board from before mockups, that UI/UX has them to draw first. Where the
+ * brain could not publish the page, or the person chose the pane, each design
+ * stays a row of its own.
+ */
+/** A question the decide page holds: a role's or crew's own; the brain's own and its proposals stay in the pane. */
+const onPage = (d: Decision): boolean => d.kind === 'design' || (d.kind === undefined && d.from !== 'brain')
+
+/**
+ * What waits for the person on the decide page, as one row with its link:
+ * the designs and the roles' questions. Each keeps a row of its own when the
+ * person chose the pane or the page could not be published, and before a
+ * page is asked for while something can be decided.
+ */
+const reviewed = (decisions: Decision[], review: CrewLive['review'], board: Tracker | null): Decision[] => {
+  // Decided in the pane, each design still has the page to see it on, once there is one.
+  if (review?.failed !== undefined) return review.url === undefined ? decisions : decisions.map(d => (d.kind === 'design' ? { ...d, url: review.url as string } : d))
+  const paged = decisions.filter(onPage)
+  if (paged.length === 0) return decisions
+  const designs = paged.filter(d => d.kind === 'design')
+  const questions = paged.length - designs.length
+  const all = board === null ? [] : board.prd_items.flatMap(i => designsOf(i))
+  const drawing = designs.filter(d => {
+    const found = all.find(x => x.id === d.design)
+    return found !== undefined && needsMockup(found)
+  }).length
+  const ready = designs.length - drawing + questions
+  // A page nobody was asked to publish: rows of their own, unless none of them can be decided yet.
+  if (review === undefined && ready > 0) return decisions
+  const parts = [...(designs.length - drawing === 0 ? [] : [`設計稿 ${designs.length - drawing} 份等你核准`]), ...(questions === 0 ? [] : [`問題 ${questions} 題等你回答`])].join('、')
+  const rest = drawing === 0 ? '' : `，${drawing} 份設計稿 UI/UX 補畫中`
+  const question =
+    ready === 0
+      ? `設計稿：${drawing} 份還沒有 mockup，UI/UX 補好才能看和決定`
+      : review?.url === undefined
+        ? `待你決定頁：${parts}${rest}；大腦發佈待你決定頁中，好了才能看和決定`
+        : `待你決定頁：${parts}${rest}；在頁面上看完再決定，結果會回到這裡`
+  const row: Decision = {
+    id: 'designs',
+    question,
+    from: 'crew',
+    age: paged[paged.length - 1]?.age ?? '',
+    kind: 'review',
+    // The row holds every one of them: the pane counts each.
+    count: paged.length,
+    ...(review?.url === undefined ? {} : { url: review.url }),
+    ...(ready > 0 ? { inPane: true as const } : {}),
+  }
+  const at = decisions.indexOf(paged[0] as Decision)
+  const others = decisions.filter(d => !onPage(d))
+  return [...others.slice(0, at), row, ...others.slice(at)]
+}
+
 export const snapshotOf = ({
   board,
   live,
@@ -441,7 +506,10 @@ export const snapshotOf = ({
       ...(r.tier !== undefined && r.label !== undefined && r.effort !== undefined ? { route: { tier: r.tier, model: r.label, effort: r.effort } } : {}),
       context: r.context,
       limit: r.limit ?? 60_000,
-      today: total(live.usage[id]),
+      today: total(live.usage[id]) + total(live.codexUsage?.[id]),
+      ...(r.engine === 'codex' ? { engine: 'codex' as const } : {}),
+      ...(r.task === undefined ? {} : { task: r.task }),
+      ...(r.report === undefined ? {} : { report: r.report }),
     }
   }
 
@@ -459,7 +527,7 @@ export const snapshotOf = ({
             title: d.title,
             owner: 'uiux' as const,
             status: decision === undefined ? ('review' as const) : decision.verdict === 'approved' ? ('done' as const) : ('doing' as const),
-            route: { tier: ux.tier ?? 'S', model: ux.label ?? 'Sonnet', effort: ux.effort ?? 'medium' },
+            route: { tier: ux.tier ?? 'S', model: ux.label ?? labelOf('sonnet'), effort: ux.effort ?? 'medium' },
             note: `${i.id}・${d.kind === 'screen' ? '畫面' : '沒有畫面'} · ${decision === undefined ? '等你核准' : decision.verdict === 'approved' ? '你核准了' : `你退回了${decision.reason === undefined ? '' : `：${decision.reason}`}`}`,
           }
         }),
@@ -476,7 +544,7 @@ export const snapshotOf = ({
         title: item.title,
         owner: 'pm',
         status: done ? 'done' : stage === 'idle' || stage === 'done' ? 'todo' : 'doing',
-        route: { tier: pm.tier ?? 'M', model: pm.label ?? 'Sonnet', effort: pm.effort ?? 'high' },
+        route: { tier: pm.tier ?? 'M', model: pm.label ?? labelOf('sonnet'), effort: pm.effort ?? 'high' },
         note: `${covered}/${criteria.length} 條驗收條件有 test case`,
       }
     })
@@ -498,7 +566,7 @@ export const snapshotOf = ({
       title: x.title,
       owner,
       status: approvedNow(x) ? 'done' : underReview ? 'review' : taken ? 'doing' : 'todo',
-      route: { tier: by.tier ?? x.size ?? 'M', model: by.label ?? (owner === 'fullstack' ? 'Sonnet' : 'Opus'), effort: by.effort ?? 'high' },
+      route: { tier: by.tier ?? x.size ?? 'M', model: by.label ?? labelOf(owner === 'fullstack' ? 'sonnet' : 'opus'), effort: by.effort ?? 'high' },
       note: [
         `對應 ${x.acceptance_criteria.join('、')}${x.size === undefined ? '' : `・${x.size}`}`,
         ...(commits.length > 0 ? [`commit ${commits.map(c => c.slice(0, 7)).join('、')}`] : []),
@@ -522,6 +590,11 @@ export const snapshotOf = ({
       const u = live.usage[r] as CrewUsage
       return { role: r, input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite, wakes: u.wakes, rotations: u.rotations }
     })
+  // Codex's rows, each after its role's Claude one: its own account's tokens, not in today's count.
+  const codexBook = live.codexUsage ?? {}
+  const withCodex: UsageRow[] = usage.flatMap(u => (codexBook[u.role] === undefined ? [u] : [u, codexRow(u.role, codexBook[u.role] as CrewUsage)]))
+  const onlyCodex: UsageRow[] = crewRoles.filter(r => live.usage[r] === undefined && codexBook[r] !== undefined).map(r => codexRow(r, codexBook[r] as CrewUsage))
+  const codexToday = crewRoles.reduce((n, r) => n + total(codexBook[r]), 0)
   const today = crewRoles.reduce((n, r) => n + total(live.usage[r]), 0)
   const brain = total(live.usage.brain)
   const tiers = (['S', 'M', 'L', 'XL'] as const satisfies readonly Tier[])
@@ -554,18 +627,28 @@ export const snapshotOf = ({
               gaps: cases.filter(c => !passedNow(c)).map(c => ({ id: c.id, title: typeof c.title === 'string' ? c.title : c.id, status: runGap(c), ...(live.threads[c.id] !== undefined ? { thread: c.id } : {}) })),
             },
           ],
-    decisions: live.questions
-      .filter(q => q.status === 'open')
-      .map(q => ({
-        id: q.id,
-        question: q.question,
-        from: q.from,
-        age: ageOf(q.t, now),
-        // crew's question on a design is the person's to approve or send back in the pane.
-        ...(q.from === 'crew' && q.item !== undefined && /^SCR-\d+$/.test(q.item) ? { kind: 'design' as const, design: q.item } : {}),
-        // The brain's proposal on usage is the person's to approve or not.
-        ...(q.from === 'brain' && q.item === 'tune' ? { kind: 'proposal' as const } : {}),
-      })),
+    decisions: reviewed(
+      live.questions
+        .filter(q => q.status === 'open')
+        .map(q => ({
+          id: q.id,
+          question: q.question,
+          from: q.from,
+          age: ageOf(q.t, now),
+          // crew's question on a design is the person's to approve or send back in the pane.
+          ...(q.from === 'crew' && q.item !== undefined && /^SCR-\d+$/.test(q.item) ? { kind: 'design' as const, design: q.item } : {}),
+          // The brain's proposal on usage is the person's to approve or not.
+          ...(q.from === 'brain' && q.item === 'tune' ? { kind: 'proposal' as const } : {}),
+          // The choices the role gave, for the person to pick in the pane too.
+          ...(Array.isArray(q.options) && q.options.length >= 2 ? { options: q.options.filter((o): o is string => typeof o === 'string').slice(0, 4) } : {}),
+        })),
+      live.review,
+      board,
+    ),
+    // The questions on a role's model, apart from the others: the person answers each in the pane.
+    ...((live.modelAsks ?? []).length === 0
+      ? {}
+      : { modelAsks: (live.modelAsks ?? []).map(a => ({ id: a.id, kind: a.kind, role: a.role as RoleId, text: a.text, yes: a.yes, no: a.no, from: a.from, age: ageOf(a.at, now) })) }),
     ...(live.paused === undefined || live.prdPath === null ? {} : { start: { prds: [], resumable: heldText(live), ...(live.paused === 'offer' ? {} : { paused: true }) } }),
     ...(live.resident === undefined ? {} : { resident: residentOf(live.resident, now) }),
     ...(boardProblem === undefined ? {} : { boardProblem: { text: boardProblem, ...(live.prdPath === null ? {} : { prd: live.prdPath }) } }),
@@ -574,6 +657,7 @@ export const snapshotOf = ({
     threads: Object.entries(live.threads).map(([item, messages]) => ({
       item,
       title: titles.get(item) ?? item,
+      ...((live.threadTotals?.[item] ?? 0) > messages.length ? { total: live.threadTotals?.[item] } : {}),
       messages: messages.map(m => ({
         from: m.from === 'crew' || m.to === undefined ? name(m.from) : `${name(m.from)} → ${name(m.to)}`,
         text: m.text,
@@ -584,6 +668,7 @@ export const snapshotOf = ({
       .sort((a, b) => Number(a.supersededBy !== undefined) - Number(b.supersededBy !== undefined) || b.t - a.t)
       .slice(0, MEMORY_ROWS)
       .map(m => ({ id: m.id, type: m.type, text: m.text, source: m.source, refs: m.refs, ...(m.supersededBy !== undefined ? { supersededBy: m.supersededBy } : {}) })),
+    ...(memories.length > MEMORY_ROWS ? { memoryTotal: memories.length } : {}),
     carrying: crewRoles
       .map(r => {
         const ids = live.roles[r as 'pm' | 'qa' | 'uiux' | 'techlead' | 'fullstack'].given ?? []
@@ -591,8 +676,9 @@ export const snapshotOf = ({
         return { role: r, ids, tokens: known.reduce((n, m) => n + estimateTokens(m.text), 0) }
       })
       .filter(c => c.ids.length > 0),
-    usage,
+    usage: [...withCodex, ...onlyCodex],
     tiers,
+    ...(codexToday === 0 ? {} : { codexToday }),
     brainShare: today + brain === 0 ? 0 : brain / (today + brain),
     // What crew told the brain in the last hour, and what the brain did about usage.
     alerts: (live.alerts ?? []).filter(a => now - a.at < HOUR).map(a => ({ text: a.text, at: clockOf(a.at) })),

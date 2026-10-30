@@ -12,7 +12,65 @@ export const ROLE_NAMES: Record<RoleId, string> = {
 /** How hard an item is, which picks the model and effort it runs on. */
 export type Tier = 'S' | 'M' | 'L' | 'XL'
 
-export type Route = { tier: Tier; model: string; effort: string }
+/** What runs a role: Claude through the Agent tool, or Codex through its own CLI. */
+export type Engine = 'claude' | 'codex'
+
+export const ENGINE_NAMES: Record<Engine, string> = { claude: 'Claude', codex: 'Codex' }
+
+/** What a role on auto is doing once the person told it to wait for Codex: how crew and the pane know it waits for Codex and not for something else. */
+export const CODEX_WAIT = '停著：等 Codex'
+
+/** `engine` absent: Claude. */
+export type Route = { tier: Tier; model: string; effort: string; engine?: Engine }
+
+/** Whether Codex can run on this machine: its CLI found, how it is logged in, and when its quota comes back if it ran out. */
+export type CodexStatus =
+  | { state: 'ready'; login: 'chatgpt' | 'apikey'; version: string; checked: string; limited?: string }
+  | { state: 'logged-out'; version: string; checked: string }
+  | { state: 'missing'; checked: string }
+
+/** A model and an effort on one engine: a role's floor there, or what it is fixed on. */
+export type Pick = { model: string; effort: string }
+
+/**
+ * How a role picks its model. `auto`, crew's default: the brain picks the
+ * engine, and each piece of work starts at that engine's floor and climbs with
+ * its size, its risk and its failures. `fixed`: the person's engine and model,
+ * always, with no climbing and no switch by the brain.
+ */
+export type RoleModels = {
+  mode: 'auto' | 'fixed'
+  floors: Readonly<Record<Engine, Pick>>
+  fixed: Pick & { engine: Engine }
+  /** The engine the role is on now; under `auto`, why the brain picked it. */
+  now: Engine
+  why?: string
+  /** Under `auto`, the engine the person set the role on; Claude when none. */
+  chose?: Engine
+  /**
+   * Tokens in context before the role is rotated: by the work's size, or a
+   * number the person set. By the work's size, the brain may tune it, which
+   * `tuned` says, with the decision it made; a number the person set it leaves.
+   */
+  limit: 'tier' | number
+  tuned?: { limit: number; by: string }
+}
+
+/**
+ * Each role's models; Codex as crew last found it, and the models it offers
+ * here; and whether the brain asks the person before it moves a role to
+ * another engine or model.
+ */
+export type Engines = { roles: Readonly<Record<RoleId, RoleModels>>; codex: CodexStatus; models: readonly string[]; askBeforeSwitch: boolean }
+
+/**
+ * A question on a role's model, asked apart from the others: Codex not logged
+ * in, or out of quota, for a role fixed on it; a role fixed on a model that
+ * keeps failing; or, when the person has it ask first, any move to another
+ * engine, model or effort: the brain's, or a climb for harder work or a
+ * failure. Its two answers.
+ */
+export type ModelAsk = { id: string; kind: 'login' | 'quota' | 'stuck' | 'switch' | 'climb'; role: RoleId; text: string; yes: string; no: string; from: 'crew' | 'brain'; age: string }
 
 export type RoleState = 'idle' | 'working' | 'waiting' | 'rotating' | 'blocked'
 
@@ -33,8 +91,13 @@ export type RoleRow = {
   /** Tokens in its context now, and the threshold that rotates it. */
   context: number
   limit: number
-  /** Tokens it used today. */
+  /** Tokens it used today, on Claude and on Codex. */
   today: number
+  /** Its agent runs on Codex, which tells no context size. */
+  engine?: 'codex'
+  /** The work it was last given, and what it said at the end of its last run, in full. */
+  task?: string
+  report?: string
 }
 
 export type ItemStatus = 'doing' | 'review' | 'todo' | 'blocked' | 'done'
@@ -54,6 +117,8 @@ export type Item = {
   status: ItemStatus
   route: Route
   note?: string
+  /** Why it is as hard as its tier says: the tech lead's word on it. */
+  hard?: string
 }
 
 export type GateState = 'pass' | 'gap' | 'active' | 'pending'
@@ -85,7 +150,8 @@ export type Gate = {
  * A question waiting for the person, from a role or from crew itself: answered
  * in words, a design to approve or send back, or the brain's proposal to approve.
  */
-export type Decision = { id: string; question: string; from: RoleId | 'crew' | 'brain'; age: string; kind?: 'design' | 'proposal'; design?: string }
+/** `review`: the PRD's designs, decided on the review page the brain published, at `url` once it has; `inPane`, that they can be decided in the pane instead. */
+export type Decision = { id: string; question: string; from: RoleId | 'crew' | 'brain'; age: string; kind?: 'design' | 'proposal' | 'review'; design?: string; url?: string; inPane?: true; options?: readonly string[]; count?: number }
 
 /** What crew offers when it loads: the PRDs in the repo to start from, or the PRD it stopped on. */
 export type Start = { prds: readonly { path: string; title: string }[]; chosen?: string; resumable?: string; paused?: boolean }
@@ -104,6 +170,10 @@ export type Draft = {
   note?: string
   /** How many times the draft went to review. */
   sends?: number
+  /** What the person asked to change on the decide page, while the brain changes it. */
+  change?: string
+  /** The decide page the draft is on, while the person decides there. */
+  url?: string
 }
 
 /**
@@ -118,7 +188,8 @@ export type Settings = { testCommand?: string; openOnLoad: boolean }
 
 export type Message = { from: string; text: string; kind?: 'message' | 'memory' | 'route' }
 
-export type Thread = { item: string; title: string; messages: readonly Message[] }
+/** A thread, its last messages; `total`, how many it has, where that is more. */
+export type Thread = { item: string; title: string; messages: readonly Message[]; total?: number }
 
 export type MemoryType = 'DEC' | 'MEM' | 'LES' | 'PREF'
 
@@ -142,6 +213,8 @@ export type Carrying = { role: RoleId; ids: readonly string[]; tokens: number }
 
 export type UsageRow = {
   role: RoleId
+  /** Absent: Claude. Codex's tokens are its own account's, so they are told apart from Claude's. */
+  engine?: Engine
   input: number
   output: number
   cacheRead: number
@@ -185,6 +258,10 @@ export type Feature = {
 export type Progress = {
   done: number
   total: number
+  /** The same, each item weighed by how hard it is (1, 2, 4, 8 by tier): the percentage the pane shows. */
+  weighted?: { done: number; total: number }
+  /** Items found harder or easier than rated, latest first, and the percentage before and after. */
+  rated?: readonly { id: string; from: Tier; to: Tier; why: string; before: number; after: number }[]
   stages: readonly Stage[]
   features: readonly Feature[]
   /** Items finished per day, oldest first; the last one is today. */
@@ -230,6 +307,8 @@ export type Snapshot = {
   items: readonly Item[]
   threads: readonly Thread[]
   memories: readonly Memory[]
+  /** How many memories there are, when more than the list shows. */
+  memoryTotal?: number
   carrying: readonly Carrying[]
   usage: readonly UsageRow[]
   tiers: readonly { tier: Tier; tokens: number }[]
@@ -248,6 +327,16 @@ export type Snapshot = {
   /** Where crew keeps its board, from the repo's root, and why when it is not in .crew/. */
   boardFile?: { path: string; why?: string }
   settings?: Settings
+  /** The engine each role runs on, and whether Codex can run here; none where crew does not say. */
+  engines?: Engines
+  /** Today's Codex tokens, apart from Claude's `today`. */
+  codexToday?: number
+  /** Questions on a role's model, kept apart from `decisions`. */
+  modelAsks?: readonly ModelAsk[]
+  /** Where the tokens went and what costs the most, from every run crew recorded. */
+  audit?: Audit
+  /** crew's web page on this machine: its address, whether it opens when crew starts, and the phone's way in. */
+  web?: { url: string; openOnStart: boolean; tailnet?: Tailnet }
   /** Whether the brain has taken this repo over, and its draft PRD; none where crew does not say. */
   takeover?: Takeover
   /** A design the person opened to read in the pane. */
@@ -272,6 +361,40 @@ export type Snapshot = {
   }
   /** Tokens the small model spent tidying memory today. */
   chores?: number
+}
+
+/**
+ * One thing that costs the most tokens, from the runs crew recorded across
+ * sessions: where, how much and its share, what is done about it, and how it
+ * stands: acted on (a decision), being acted on, or the person's to do.
+ */
+export type Bottleneck = { title: string; tokens: number; share: string; fix: string; state: 'done' | 'acting' | 'person' }
+
+/**
+ * The token audit: what today's tokens went to, by part of a run, and what
+ * each of the brain's turns carries; and the bottlenecks over the days and
+ * sessions crew recorded.
+ */
+export type Audit = {
+  parts: readonly { part: string; tokens: number }[]
+  brain?: readonly { part: string; tokens: number }[]
+  since: string
+  sessions: number
+  bottlenecks: readonly Bottleneck[]
+  /** The last bottleneck crew told the brain about, and when: crew reckons them in code after each piece of work. */
+  told?: string
+}
+
+/**
+ * The web page on the person's tailnet, for their phone: off, open through
+ * `tailscale serve`, or Tailscale not running or not installed here; this
+ * machine's name and address there, and the devices paired with it.
+ */
+export type Tailnet = {
+  state: 'on' | 'off' | 'stopped' | 'missing'
+  machine?: string
+  url?: string
+  devices: readonly { id: string; name: string; paired: string }[]
 }
 
 /** A whole percentage, rounded down: it reads 100 only once everything is done. */

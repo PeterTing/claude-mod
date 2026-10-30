@@ -5,15 +5,18 @@
  * brings no decision of its own. Pure.
  */
 
-import { designsOf } from './board'
+import { designsOf, mockupOfDesign } from './board'
 import type { Design, DesignDecision, Tracker } from './board'
 import { fingerprint } from './prd'
 
 /** crew's record of the person's decisions: design id → the decision, with the design it was made on. */
 export type Decided = Record<string, DesignDecision & { mark: string }>
 
-/** Which design an id named: its title, its kind and what it says. */
-export const designMark = (d: Design): string => fingerprint(`${d.title}\n${d.kind}\n${d.body}`)
+/** Which design an id named: its title, its kind, what it says and the mockup the person saw, when it has one. */
+export const designMark = (d: Design): string => {
+  const mockup = mockupOfDesign(d)
+  return fingerprint(`${d.title}\n${d.kind}\n${d.body}${mockup === undefined ? '' : `\n${mockup.version}:${mockup.mark}`}`)
+}
 
 /** Design id → the person's decision on that very design. */
 export const decisionsOf = (board: Tracker, decided: Decided): Map<string, DesignDecision> => {

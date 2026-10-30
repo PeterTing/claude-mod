@@ -80,14 +80,14 @@ describe('step', () => {
     const { state, actions } = run([START])
     expect(state.stage).toBe('splitting')
     expect(actions).toHaveLength(1)
-    expect(actions[0]).toMatchObject({ type: 'spawn', role: 'pm', route: { tier: 'M', label: 'Sonnet', effort: 'high' } })
+    expect(actions[0]).toMatchObject({ type: 'spawn', role: 'pm', route: { tier: 'M', label: 'Sonnet 5.5', effort: 'high' } })
     expect((actions[0] as { prompt: string }).prompt).toMatch(/docs\/PRD\.md/)
   })
 
   test('hands over to QA once every feature has criteria', () => {
     const { state, actions } = run([START, { type: 'role_done', role: 'pm', board: board(SPLIT) }])
     expect(state.stage).toBe('writing_tests')
-    expect(actions.at(-1)).toMatchObject({ type: 'spawn', role: 'qa', route: { tier: 'S', label: 'Sonnet', effort: 'medium' } })
+    expect(actions.at(-1)).toMatchObject({ type: 'spawn', role: 'qa', route: { tier: 'S', label: 'Sonnet 5.5', effort: 'medium' } })
     expect((actions.at(-1) as { prompt: string }).prompt).toMatch(/2 條驗收條件/)
   })
 
@@ -115,7 +115,7 @@ describe('step', () => {
       { type: 'role_done', role: 'qa', board: board(SPLIT, [tc(['AC-001', 'AC-002'])]) },
     ])
     expect(state.stage).toBe('planning')
-    expect(actions.at(-1)).toMatchObject({ type: 'spawn', role: 'techlead', route: { label: 'Opus', effort: 'high' } })
+    expect(actions.at(-1)).toMatchObject({ type: 'spawn', role: 'techlead', route: { label: 'Opus 5.5', effort: 'high' } })
     expect((actions.at(-1) as { prompt: string }).prompt).toMatch(/2 條驗收條件[\s\S]*add_task/)
   })
 
@@ -719,7 +719,7 @@ describe('the PRD as the flow holds the board to it', () => {
     test('hands the planned tasks to the full-stack one at a time, in order', () => {
       const r = step({ stage: 'planning', round: 0, retries: 0 }, { type: 'role_done', role: 'techlead', board: plannedTwo() })
       expect(r.state).toMatchObject({ stage: 'building', building: 'TASK-001' })
-      expect(r.actions[0]).toMatchObject({ type: 'spawn', role: 'fullstack', route: { label: 'Sonnet', effort: 'high' } })
+      expect(r.actions[0]).toMatchObject({ type: 'spawn', role: 'fullstack', route: { label: 'Sonnet 5.5', effort: 'high' } })
       const prompt = (r.actions[0] as { prompt: string }).prompt
       expect(prompt).toMatch(/TASK-001 任務 1/)
       expect(prompt).toMatch(/AC-001 可以選月繳方案/)
@@ -732,7 +732,7 @@ describe('the PRD as the flow holds the board to it', () => {
       const built = committed(plannedTwo(), ['TASK-001'])
       const toReview = step(s, { type: 'role_done', role: 'fullstack', board: built })
       expect(toReview.state).toMatchObject({ stage: 'reviewing', reviewing: { task: 'TASK-001', sha: 'abc0000' } })
-      expect(toReview.actions[0]).toMatchObject({ type: 'review', task: 'TASK-001', sha: 'abc0000', route: { label: 'Opus' } })
+      expect(toReview.actions[0]).toMatchObject({ type: 'review', task: 'TASK-001', sha: 'abc0000', route: { label: 'Opus 5.5' } })
       expect((toReview.actions[0] as { text: string }).text).toMatch(/review_submit/)
       const next = step(toReview.state, { type: 'role_done', role: 'techlead', board: reviewed(built, 'TASK-001', 'abc0000', 'approve') })
       expect(next.state).toMatchObject({ stage: 'building', building: 'TASK-002', retries: 0 })
@@ -1035,7 +1035,7 @@ describe('the PRD as the flow holds the board to it', () => {
       const back = step(s, { type: 'answered', question: 'q', answer: '照規格', escalation: true, board: xl })
       const asked = step({ ...s, stage: 'reviewing', retries: 0 }, { type: 'role_done', role: 'techlead', board: xl })
       expect((back.actions[0] as { route: unknown }).route).toEqual((asked.actions[0] as { route: unknown }).route)
-      expect((back.actions[0] as { route: { label: string } }).route.label).toBe('Opus')
+      expect((back.actions[0] as { route: { label: string } }).route.label).toBe('Opus 5.5')
     })
 
     test('sends the full-stack back to a task with no commit, then asks the person, whose answer goes to the full-stack', () => {
@@ -1055,10 +1055,10 @@ describe('the PRD as the flow holds the board to it', () => {
       const xl: Tracker = { ...big, prd_items: big.prd_items.map(i => ({ ...i, tasks: (i.tasks ?? []).map(t => ({ ...(t as object), size: 'XL' })) })) }
       const stuck = { stage: 'escalated' as const, round: 0, retries: 0, building: 'TASK-001', resumeAt: 'building' as const }
       const r = step(stuck, { type: 'answered', question: 'q', answer: '先用假資料', escalation: true, board: xl })
-      expect(r.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', item: 'TASK-001', route: { label: 'Opus', effort: 'xhigh' } })
+      expect(r.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', item: 'TASK-001', route: { label: 'Opus 5.5', effort: 'xhigh' } })
       // The full-stack's own question, answered while it builds: the same model, so its context is kept.
       const own = step({ stage: 'building', round: 0, retries: 0, building: 'TASK-001' }, { type: 'answered', question: 'q', answer: 'a', role: 'fullstack', board: xl })
-      expect(own.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', route: { label: 'Opus', effort: 'xhigh' } })
+      expect(own.actions[0]).toMatchObject({ type: 'message', role: 'fullstack', route: { label: 'Opus 5.5', effort: 'xhigh' } })
     })
 
     test('sends new criteria to QA and the tech lead before building on', () => {
@@ -1143,13 +1143,13 @@ describe('designs', () => {
     return r.tracker
   }
   const both = (t: Tracker): Tracker =>
-    design(t, [{ op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張卡片' } as Op, { op: 'add_design', feature: 'PRD-002', title: '取消', kind: 'none', body: '後台' } as Op])
+    design(t, [{ op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張卡片', html: '<p>mockup</p>' } as Op, { op: 'add_design', feature: 'PRD-002', title: '取消', kind: 'none', body: '後台' } as Op])
   const decided = (t: Tracker, d: [string, { verdict: 'approved' | 'rejected'; reason?: string }][]): Tracker => withDecisions(t, new Map(d)) ?? t
 
   test('are made for every feature once its test cases are in, and approved by the person before the plan', () => {
     const toDesign = step({ stage: 'confirming', round: 0, retries: 0 }, { type: 'role_done', role: 'pm', board: tested() })
     expect(toDesign.state).toMatchObject({ stage: 'designing' })
-    expect(toDesign.actions[0]).toMatchObject({ type: 'spawn', role: 'uiux', route: { label: 'Sonnet' } })
+    expect(toDesign.actions[0]).toMatchObject({ type: 'spawn', role: 'uiux', route: { label: 'Sonnet 5.5' } })
     expect((toDesign.actions[0] as { prompt: string }).prompt).toMatch(/2 個功能[\s\S]*PRD-001 方案選擇：AC-001 可以選月繳方案[\s\S]*PRD-002 取消訂閱[\s\S]*add_design[\s\S]*kind 填 none/)
     const drawn = both(tested())
     const toApprove = step(toDesign.state, { type: 'role_done', role: 'uiux', board: drawn })
@@ -1171,7 +1171,7 @@ describe('designs', () => {
   })
 
   test('missing after the designer’s run are asked for once more, then the person decides', () => {
-    const half = design(tested(), [{ op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張卡片' } as Op])
+    const half = design(tested(), [{ op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張卡片', html: '<p>mockup</p>' } as Op])
     const again = step({ stage: 'designing', round: 0, retries: 0 }, { type: 'role_done', role: 'uiux', board: half })
     expect(again.actions[0]).toMatchObject({ type: 'message', role: 'uiux', item: 'PRD-002' })
     expect(again.state.retries).toBe(1)
@@ -1267,7 +1267,7 @@ describe('a design sent back after the work is done', () => {
     expect(r.state).toMatchObject({ stage: 'designing', redesigned: ['PRD-001'] })
     expect(r.actions[0]).toMatchObject({ type: 'message', role: 'uiux', item: 'PRD-001' })
     // The designer's new design, approved: the tech lead checks PRD-001's tasks against it.
-    const drawn = applyOps(back, [{ op: 'add_design', feature: 'PRD-001', title: '比較表', kind: 'screen', body: '表格' } as Op], ctx('uiux'))
+    const drawn = applyOps(back, [{ op: 'add_design', feature: 'PRD-001', title: '比較表', kind: 'screen', body: '表格', html: '<p>mockup</p>' } as Op], ctx('uiux'))
     if (!drawn.ok) throw new Error(drawn.errors.join())
     const approved = withDecisions(drawn.tracker, new Map(drawn.tracker.prd_items.flatMap(i => designsOf(i)).map(d => [d.id, d.id === 'SCR-001' ? { verdict: 'rejected' as const, reason: '要有比較表' } : { verdict: 'approved' as const }]))) ?? drawn.tracker
     const replan = step({ ...r.state, stage: 'approving' }, { type: 'designs_decided', board: approved })
@@ -1280,7 +1280,7 @@ describe('a design sent back after the work is done', () => {
   test('keeps the tasks to check until the tech lead’s run ends, through a restart', () => {
     const back = reject(planned2(), 'SCR-001', '要有比較表')
     const r = step({ stage: 'done', round: 0, retries: 0 }, { type: 'designs_decided', board: back })
-    const drawn = applyOps(back, [{ op: 'add_design', feature: 'PRD-001', title: '比較表', kind: 'screen', body: '表格' } as Op], ctx('uiux'))
+    const drawn = applyOps(back, [{ op: 'add_design', feature: 'PRD-001', title: '比較表', kind: 'screen', body: '表格', html: '<p>mockup</p>' } as Op], ctx('uiux'))
     if (!drawn.ok) throw new Error(drawn.errors.join())
     const approved = withDecisions(drawn.tracker, new Map(drawn.tracker.prd_items.flatMap(i => designsOf(i)).map(d => [d.id, d.id === 'SCR-001' ? { verdict: 'rejected' as const, reason: '要有比較表' } : { verdict: 'approved' as const }]))) ?? drawn.tracker
     const replan = step({ ...r.state, stage: 'approving' }, { type: 'designs_decided', board: approved })

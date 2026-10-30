@@ -9,7 +9,7 @@ const ctx = (by: string) => ({ by, today: '2026-10-20', prefixes: { feature: 'PR
 const designed = (): Tracker => {
   const a = applyOps(newTracker('x'), [{ op: 'add_feature', title: '方案', summary: '' }, { op: 'add_criterion', feature: 'PRD-001', text: '可以選月繳' }], ctx('pm'))
   if (!a.ok) throw new Error(a.errors.join())
-  const b = applyOps(a.tracker, [{ op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張卡片' }] as Op[], ctx('uiux'))
+  const b = applyOps(a.tracker, [{ op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張卡片', html: '<p>mockup</p>' }] as Op[], ctx('uiux'))
   if (!b.ok) throw new Error(b.errors.join())
   return b.tracker
 }

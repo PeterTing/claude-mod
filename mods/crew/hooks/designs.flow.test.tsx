@@ -14,7 +14,7 @@ const tested = async ($: Engine) => {
 }
 
 const DESIGNS = [
-  { op: 'add_design', feature: 'PRD-001', title: '方案選擇頁', kind: 'screen', body: '版面：三張方案卡片，月繳預設選中。\n狀態：載入中、錯誤。' },
+  { op: 'add_design', feature: 'PRD-001', title: '方案選擇頁', kind: 'screen', body: '版面：三張方案卡片，月繳預設選中。\n狀態：載入中、錯誤。', html: '<p>mockup</p>' },
   { op: 'add_design', feature: 'PRD-002', title: '取消訂閱', kind: 'none', body: '在帳號頁既有的按鈕取消，沒有新畫面。' },
 ]
 
@@ -31,7 +31,7 @@ describe('designs', () => {
     await done($, 'a-uiux-3')
     const status = (await $.command.run(command('status'))).text
     expect(status).toMatch(/approving[\s\S]*待你決定 2/)
-    expect(w.toasts.some(t => /設計稿 SCR-001 等你核准，在右側面板「待你決定」看內容、核准或退回/.test(t))).toBe(true)
+    expect(w.toasts.some(t => /設計稿 SCR-001 等你核准，大腦更新待你決定頁後在「待你決定」按［開待你決定頁］/.test(t))).toBe(true)
     expect((await $.command.run(command('design SCR-001'))).text).toMatch(/^SCR-001 方案選擇頁（PRD-001 方案選擇，畫面）・等你核准\n\n版面：三張方案卡片/)
     expect(String((await crew($, { action: 'design', question: 'SCR-002' })).result)).toMatch(/SCR-002 取消訂閱（PRD-002 取消訂閱，沒有畫面）/)
     expect(await paneText($, 'progress')).toMatch(/→ 設計 0\/2/)
@@ -84,7 +84,7 @@ describe('designs', () => {
     expect(w.sent.at(-1)?.text).toMatch(/PRD-001 方案選擇（你的 SCR-001 被使用者退回，原因：卡片太擠，要有比較表）/)
     expect(w.disk.get(`${ROOT}/.crew/threads/SCR-001.jsonl`)).toMatch(/使用者退回：卡片太擠，要有比較表/)
     expect((await $.command.run(command('status'))).text).toMatch(/designing/)
-    await write($, 'a-uiux-3', [{ op: 'add_design', feature: 'PRD-001', title: '方案比較表', kind: 'screen', body: '表格比較三個方案。' }])
+    await write($, 'a-uiux-3', [{ op: 'add_design', feature: 'PRD-001', title: '方案比較表', kind: 'screen', body: '表格比較三個方案。', html: '<p>mockup</p>' }])
     await done($, 'a-uiux-3')
     expect((await $.command.run(command('status'))).text).toMatch(/approving[\s\S]*待你決定 1/)
     expect(w.toasts.some(t => /設計稿 SCR-003 等你核准/.test(t))).toBe(true)
@@ -119,7 +119,7 @@ describe('designs', () => {
     await write($, agentOf('uiux'), DESIGNS)
     await done($, agentOf('uiux'))
     await w.clock.advance(61_000)
-    expect(w.prompts.at(-1)).toMatch(/設計稿 SCR-001 「方案選擇頁」等使用者核准。請使用者自己在右側面板核准或退回；不要替使用者核准/)
+    expect(w.prompts.at(-1)).toMatch(/待你決定頁要發佈給使用者看（2 份設計稿等使用者核准）[\s\S]*不要替使用者決定/)
   })
 
   test('take an approval only from the person’s own typing: not another plugin, a peer, a channel or a relay', async ($, on) => {

@@ -20,7 +20,7 @@ describe('the brain’s digest', () => {
     // At once: the PM has a question for the person.
     await call($, 'ask_person', { question: '年繳要不要打折？' }, 'a-pm-1')
     await w.clock.advance(60_000)
-    expect(w.prompts.some(p => /有一件事要使用者決定/.test(p))).toBe(true)
+    expect(w.prompts.some(p => /待你決定頁要發佈給使用者看（問題 Q-01（PM） 等使用者回答）/.test(p))).toBe(true)
     expect(w.prompts.some(p => /PRD 改了/.test(p))).toBe(false)
     let ui = await paneUi($)
     expect(await textOf(ui)).toMatch(/大腦摘要 還沒有送出，1 則等 \d\d:\d\d/)

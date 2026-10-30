@@ -74,9 +74,9 @@ const k = (n: number): string => `${Math.round(n / 1000)}K`
  * resends its whole conversation (measured: about 1.25× its context), so past
  * half its limit a fresh start with the pack costs less.
  */
-export const wakePlan = (role: CrewLiveRole, route: Route, options: { forced?: boolean } = {}): WakePlan => {
+export const wakePlan = (role: CrewLiveRole, route: Route, options: { forced?: boolean; why?: string } = {}): WakePlan => {
   if (role.agentId === undefined) return { kind: 'start' }
-  if (options.forced === true) return { kind: 'rotate', reason: '你要求輪替' }
+  if (options.forced === true) return { kind: 'rotate', reason: options.why ?? '你要求輪替' }
   if (role.model !== route.model) return { kind: 'rotate', reason: `換模型（${role.label ?? role.model ?? '?'} → ${route.label}），要用新的 context` }
   const limit = route.limit
   if (role.context >= limit) return { kind: 'rotate', reason: `context ${k(role.context)} 已達上限 ${k(limit)}` }

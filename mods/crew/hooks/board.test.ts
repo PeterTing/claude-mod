@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { applyOps, approvedNow, criteriaOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, isTracker, liveCasesOf, liveTasksOf, madeByCrew, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf, tipOf, trackerProblem, withEmptyLists } from './board'
 import type { Op, Tracker } from './board'
+import { fingerprint } from './prd'
 
 const CTX = { by: 'pm', today: '2026-10-15', prefixes: { feature: 'PRD-', testCase: 'TC-' } } as const
 
@@ -723,7 +724,7 @@ describe('the test results of a test case', () => {
 })
 
 describe('designs the UI/UX designer makes', () => {
-  const design = (feature: string, title: string, kind = 'screen', body = '版面：方案卡片三張，選中時高亮。狀態：載入中、空、錯誤。'): Op => ({ op: 'add_design', feature, title, kind, body }) as Op
+  const design = (feature: string, title: string, kind = 'screen', body = '版面：方案卡片三張，選中時高亮。狀態：載入中、空、錯誤。'): Op => ({ op: 'add_design', feature, title, kind, body, ...(kind === 'screen' ? { html: '<p>mockup</p>' } : {}) }) as Op
   const decide = (t: Tracker, id: string, decision: unknown): Tracker => ({
     ...t,
     prd_items: t.prd_items.map(i => ({ ...i, crew_designs: ((i.crew_designs as unknown[] | undefined) ?? []).map(d => ((d as { id?: string }).id === id ? { ...(d as object), crew_decision: decision } : d)) })),
@@ -733,7 +734,7 @@ describe('designs the UI/UX designer makes', () => {
     const r = run(withTwoFeatures(), [design('PRD-001', '方案選擇頁'), design('PRD-002', '取消訂閱', 'none', '只在後台處理，沒有新畫面。')], 'uiux')
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(designsOf(r.tracker.prd_items[0]!)).toEqual([{ id: 'SCR-001', title: '方案選擇頁', kind: 'screen', body: '版面：方案卡片三張，選中時高亮。狀態：載入中、空、錯誤。' }])
+    expect(designsOf(r.tracker.prd_items[0]!)).toEqual([{ id: 'SCR-001', title: '方案選擇頁', kind: 'screen', body: '版面：方案卡片三張，選中時高亮。狀態：載入中、空、錯誤。', crew_mockup: { version: 1, mark: fingerprint('<p>mockup</p>'), bytes: 13 } }])
     expect(designsOf(r.tracker.prd_items[1]!).map(d => [d.id, d.kind])).toEqual([['SCR-002', 'none']])
   })
 
@@ -784,7 +785,7 @@ describe('designs the UI/UX designer makes', () => {
   })
 
   test('parse from what the model wrote', () => {
-    const ok = parseOps([{ op: 'add_design', feature: 'PRD-001', title: 't', kind: 'screen', body: 'b' }, { op: 'drop_design', id: 'SCR-001', reason: 'r' }])
+    const ok = parseOps([{ op: 'add_design', feature: 'PRD-001', title: 't', kind: 'screen', body: 'b', html: '<p>m</p>' }, { op: 'drop_design', id: 'SCR-001', reason: 'r' }])
     expect(ok.ok).toBe(true)
     const bad = parseOps([{ op: 'add_design', feature: 'PRD-001', title: 't' }])
     expect(bad).toMatchObject({ ok: false, error: expect.stringMatching(/第 1 筆 add_design 缺少 kind、body/) })

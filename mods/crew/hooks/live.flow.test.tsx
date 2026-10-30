@@ -22,7 +22,7 @@ describe('crew, PM and QA', () => {
     expect(w.spawned[0]?.name).toBeUndefined()
     expect(w.spawned[0]?.prompt).toMatch(/docs\/PRD\.md/)
     expect(w.board()?.mode).toBe('local-only')
-    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\nwork/\nruns/\n')
+    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\nwork/\nruns/\ncodex/\ndesigns/*/index.html\ndesigns/*/data.json\ndesigns/*/prd.json\n')
 
     const wrote = await write($, 'a-pm-1', SPLIT)
     expect(String(wrote.result)).toMatch(/已寫入：PRD-001、PRD-002、AC-001、AC-002/)
@@ -178,7 +178,7 @@ describe('crew, PM and QA', () => {
     const early = $.prompt.submit({ text: '<task-notification><task-id>a-pm-1</task-id></task-notification>', wait: false, origin: { kind: 'task-notification' } as PromptOrigin, isMeta: true })
     await done($, 'a-pm-1')
     const r = await early
-    expect(typeof (r as { drop?: string }).drop).toBe('string')
+    expect((r as { drop?: string }).drop).toBe('crew：PM 的回報已收進面板，不用大腦處理')
     const other = await $.prompt.submit({ text: '<task-notification><task-id>a-other</task-id></task-notification>', wait: false, origin: { kind: 'task-notification' } as PromptOrigin, isMeta: true })
     expect(other.drop).toBeUndefined()
   })
@@ -210,7 +210,7 @@ describe('crew, PM and QA', () => {
     await $.command.run(command('start docs/PRD.md'))
     const asked = await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 't-ask', agentId: 'a-pm-1', question: '年繳要不要做？', item: 'PRD-001' } as never)
     expect(String((asked as { result: unknown }).result)).toMatch(/Q-01/)
-    expect(w.toasts.at(-1)).toMatch(/有一件事等你決定（Q-01），在右側面板「待你決定」回答/)
+    expect(w.toasts.at(-1)).toMatch(/有一件事等你決定（Q-01），大腦更新待你決定頁後在「待你決定」按［開待你決定頁］/)
 
     const status = await $.command.run(command('status'))
     expect(status.text).toMatch(/待你決定 1/)

@@ -142,12 +142,14 @@ export const draftOf = (v: unknown): CrewDraft | undefined => {
     reviews,
     ...(typeof d.note === 'string' ? { note: d.note } : {}),
     ...(Number.isInteger(d.sends) && (d.sends ?? 0) >= 0 ? { sends: d.sends } : {}),
+    ...(typeof d.change === 'string' && d.stage === 'confirm' ? { change: d.change } : {}),
   }
 }
 
 /** The brain's takeover as the pane and the line above the prompt show it: on or not, whether no PRD is under way, and its draft. */
-export const takeoverOf = (on: boolean, prdPath: string | null, draft: CrewDraft | undefined): Takeover => ({
+export const takeoverOf = (on: boolean, prdPath: string | null, draft: CrewDraft | undefined, page?: { url?: string; failed?: string; path?: string }): Takeover => ({
   on,
   idle: prdPath === null,
-  ...(on && draft !== undefined ? { draft } : {}),
+  // The page's link is the draft's only when the page is of that draft: another PRD's page is not opened from it.
+  ...(on && draft !== undefined ? { draft: page?.url === undefined || page.failed !== undefined || (page.path !== undefined && page.path !== draft.path) ? draft : { ...draft, url: page.url } } : {}),
 })

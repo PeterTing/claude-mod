@@ -344,6 +344,8 @@ describe('the full-stack', () => {
 
   test('goes back to a stuck task on the model its size calls for once the person answers, keeping its agent', async ($, on) => {
     const w = world($, on)
+    // The climb this work takes is not what the test is about: crew does not ask before it here.
+    w.store.set(`settings:${ROOT}`, { askBeforeSwitch: false })
     await start($)
     await $.command.run(command('start docs/PRD.md'))
     await write($, 'a-pm-1', SPLIT)

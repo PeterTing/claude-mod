@@ -1,0 +1,693 @@
+<title>Crew 第 6 階段規劃</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@700&display=swap">
+<style>
+/* Layout: one reading column (~46rem) for prose; figures (mockups, diagrams, wide tables) break out to ~64rem. */
+:root {
+  --bg: #F4F5F2;
+  --surface: #FFFFFF;
+  --fg: #1C2127;
+  --muted: #5B646D;
+  --line: #D9DDD8;
+  --accent: #1E6B64;
+  --accent-soft: #E1EEEA;
+  --warn: #9A5A0C;
+  --warn-soft: #F6EBDB;
+  --ok: #2C743B;
+  --term-bg: #15191E;
+  --term-panel: #1C2229;
+  --term-fg: #D8DEE4;
+  --term-dim: #7F8A95;
+  --term-line: #2B333C;
+  --term-acc: #6CC4B9;
+  --term-warn: #E3A64F;
+  --term-ok: #7CCB8A;
+  --font-body: "Noto Sans TC", "PingFang TC", "Heiti TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-display: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.1875rem;
+  --step-2: 1.5rem;
+  --step-3: 2.125rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101417; --surface: #171C20; --fg: #E3E7EA; --muted: #9AA3AB; --line: #2A3238;
+    --accent: #62BBB0; --accent-soft: #17302C; --warn: #E1A757; --warn-soft: #33281A; --ok: #73C383;
+    --term-bg: #0B0E11; --term-panel: #12171C; --term-fg: #D8DEE4; --term-dim: #7F8A95; --term-line: #252C33;
+    --term-acc: #6CC4B9; --term-warn: #E3A64F; --term-ok: #7CCB8A;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101417; --surface: #171C20; --fg: #E3E7EA; --muted: #9AA3AB; --line: #2A3238;
+  --accent: #62BBB0; --accent-soft: #17302C; --warn: #E1A757; --warn-soft: #33281A; --ok: #73C383;
+  --term-bg: #0B0E11; --term-panel: #12171C; --term-fg: #D8DEE4; --term-dim: #7F8A95; --term-line: #252C33;
+  --term-acc: #6CC4B9; --term-warn: #E3A64F; --term-ok: #7CCB8A;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: var(--step-0);
+  line-height: 1.75;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 2.5rem 4rem;
+}
+.page { max-width: 64rem; margin: 0 auto; display: grid; gap: 3rem; }
+.prose { max-width: 46rem; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: var(--step-3); letter-spacing: 0.01em; }
+h2 { font-size: var(--step-2); }
+h3 { font-size: var(--step-1); font-family: var(--font-body); font-weight: 700; }
+p { margin: 0; }
+section { display: grid; gap: 1.25rem; min-width: 0; }
+section > * { min-width: 0; }
+.eyebrow { font-size: var(--step--1); letter-spacing: 0.08em; color: var(--muted); font-weight: 500; }
+code, .mono { font-family: var(--font-mono); font-size: 0.875em; }
+code { background: var(--accent-soft); padding: 0.05em 0.35em; border-radius: 4px; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header.top { display: grid; gap: 1rem; border-bottom: 1px solid var(--line); padding-bottom: 2rem; }
+.lede { font-size: var(--step-1); color: var(--muted); max-width: 46rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.chip { font-size: var(--step--1); border: 1px solid var(--line); border-radius: 999px; padding: 0.15rem 0.7rem; color: var(--muted); background: var(--surface); }
+.chip.wait { border-color: var(--warn); color: var(--warn); background: var(--warn-soft); }
+
+nav.toc ol { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; font-size: var(--step--1); }
+nav.toc a { color: var(--muted); text-decoration: none; }
+nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+
+.answer { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 1.25rem 1.5rem; display: grid; gap: 0.75rem; max-width: 46rem; }
+.answer strong { color: var(--accent); }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; line-height: 1.6; }
+th, td { text-align: left; vertical-align: top; padding: 0.6rem 0.85rem; border-bottom: 1px solid var(--line); }
+th { font-weight: 500; color: var(--muted); font-size: var(--step--1); letter-spacing: 0.04em; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.nw { white-space: nowrap; }
+.tag { display: inline-block; font-size: 0.75rem; padding: 0 0.45rem; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.tag.ok { color: var(--ok); border-color: var(--ok); }
+.tag.spike { color: var(--warn); border-color: var(--warn); }
+
+ul.plain, ol.plain { margin: 0; padding-left: 1.25rem; display: grid; gap: 0.4rem; }
+
+figure { margin: 0; display: grid; gap: 0.6rem; min-width: 0; }
+figcaption { font-size: var(--step--1); color: var(--muted); }
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 1rem; }
+pre.mermaid { margin: 0; font-family: var(--font-body); background: transparent; }
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1rem; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 1rem 1.15rem; display: grid; gap: 0.4rem; align-content: start; }
+.card h3 { font-size: var(--step-0); }
+.card p { color: var(--muted); font-size: 0.9375rem; }
+
+/* Terminal mockups */
+.mock-label { display: inline-flex; gap: 0.5rem; align-items: center; font-size: var(--step--1); color: var(--warn); }
+.mock-label::before { content: ""; width: 0.5rem; height: 0.5rem; border: 1.5px dashed var(--warn); border-radius: 2px; }
+.term { background: var(--term-bg); color: var(--term-fg); font-family: var(--font-mono); font-size: 0.8125rem; line-height: 1.6; border-radius: 8px; padding: 0.9rem 1rem; overflow-x: auto; border: 1.5px dashed var(--term-warn); }
+.term .dim { color: var(--term-dim); }
+.term .acc { color: var(--term-acc); }
+.term .warn { color: var(--term-warn); }
+.term .ok { color: var(--term-ok); }
+.term-bar { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; border-bottom: 1px solid var(--term-line); padding-bottom: 0.5rem; margin-bottom: 0.5rem; }
+.term-tabs { display: flex; gap: 1.1rem; margin-bottom: 0.75rem; color: var(--term-dim); flex-wrap: wrap; }
+.term-tabs .on { color: var(--term-fg); border-bottom: 2px solid var(--term-acc); }
+.tgrid { display: grid; gap: 0.15rem 1rem; min-width: 40rem; }
+.tgrid.roles { grid-template-columns: 6.5rem 5rem minmax(10rem, 1fr) 11rem 6rem; }
+.tgrid.mem { grid-template-columns: 5rem 3.5rem minmax(14rem, 1fr) 6rem 8rem; }
+.tgrid.tok { grid-template-columns: 6.5rem repeat(4, 5.5rem) 5rem 4.5rem; }
+.tgrid .h { color: var(--term-dim); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.bar { display: inline-grid; grid-template-columns: 5rem auto; gap: 0.5rem; align-items: center; }
+.bar i { display: block; height: 0.45rem; background: var(--term-line); border-radius: 2px; position: relative; overflow: hidden; }
+.bar i b { position: absolute; inset: 0 auto 0 0; background: var(--term-acc); }
+.bar i b.hi { background: var(--term-warn); }
+.term-block { margin-top: 0.85rem; padding-top: 0.6rem; border-top: 1px solid var(--term-line); display: grid; gap: 0.25rem; }
+.thread { display: grid; gap: 0.35rem; }
+.msg { display: grid; grid-template-columns: 7.5rem 1fr; gap: 1rem; }
+.band { background: var(--term-panel); border-radius: 4px; padding: 0.35rem 0.6rem; white-space: nowrap; }
+
+.phases { display: grid; gap: 0.75rem; }
+.phase { display: grid; grid-template-columns: 4.5rem 1fr; gap: 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 1rem 1.15rem; }
+.phase .pn { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+.phase h3 { font-size: var(--step-0); }
+.phase .body { display: grid; gap: 0.35rem; min-width: 0; }
+.phase .meta { font-size: 0.9375rem; color: var(--muted); }
+.phase.opt { border-style: dashed; }
+
+.decide { border: 1.5px solid var(--warn); background: var(--warn-soft); border-radius: 6px; padding: 1.25rem 1.5rem; display: grid; gap: 0.75rem; max-width: 46rem; }
+.decide h2 { font-size: var(--step-1); }
+.decide ol { margin: 0; padding-left: 1.25rem; display: grid; gap: 0.5rem; }
+
+footer { font-size: var(--step--1); color: var(--muted); border-top: 1px solid var(--line); padding-top: 1.25rem; }
+
+@media (max-width: 34rem) {
+  .phase { grid-template-columns: 1fr; gap: 0.35rem; }
+  .msg { grid-template-columns: 1fr; gap: 0; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+pre.mono { max-width: 64rem; margin: 0.75rem 0 1.25rem; padding: 0.9rem 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; line-height: 1.6; font-size: var(--step--1); }
+pre.mono code { background: transparent; padding: 0; font-size: inherit; white-space: pre; }
+ul.prose { padding-left: 1.25rem; display: grid; gap: 0.5rem; }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <div class="eyebrow">claude-mod · crew 第 6 階段 · 架構與資安規劃</div>
+  <h1>Crew：Codex 角色、難易度、Token 稽核和網頁</h1>
+  <p class="lede">設計稿第 4 版你已經確認。這份寫實作要照著做的架構：crew 怎麼跑 Codex、怎麼用難易度選模型和算進度、怎麼記下每一次執行來找 token 瓶頸、網頁和手機怎麼連，以及每一塊的資安做法。最後是開發順序，每一段做完都先給你驗收。</p>
+  <div class="chips">
+    <span class="chip wait">規劃・等你確認一件事</span>
+    <span class="chip">2026-10-29</span>
+    <span class="chip">Claude Code 2.1.312</span>
+    <span class="chip">codex-cli 0.162.1</span>
+    <span class="chip">分支 crew-codex</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="目錄">
+  <ol>
+    <li><a href="#decide-now">已決定的設定</a></li>
+    <li><a href="#spike">實測結果</a></li>
+    <li><a href="#arch">整體架構</a></li>
+    <li><a href="#files">模組與檔案</a></li>
+    <li><a href="#codex">Codex 執行</a></li>
+    <li><a href="#engine">引擎和模型</a></li>
+    <li><a href="#difficulty">難易度與進度</a></li>
+    <li><a href="#audit">Token 稽核</a></li>
+    <li><a href="#web">網頁</a></li>
+    <li><a href="#phone">手機</a></li>
+    <li><a href="#security">資安規劃</a></li>
+    <li><a href="#phases">開發順序</a></li>
+    <li><a href="#verify">驗證方式</a></li>
+    <li><a href="#risks">風險與限制</a></li>
+    <li><a href="#decided">已確認的決定</a></li>
+  </ol>
+</nav>
+
+<section id="decide-now">
+  <h2>已決定：Codex 角色沿用你的 <code>~/.codex</code>（2026-10-29）</h2>
+  <div class="answer">
+    <p><strong>crew 不另開設定目錄，Codex 角色用你現在的登入和設定。</strong>不用再登入一次；crew 在每次執行的參數裡把會打架或越權的部分關掉。</p>
+    <p>你的 AGENTS.md（Product Brain 規則）一定會被讀到，設定拿不掉。實測時角色真的先送了「📍 意圖：SIMPLE — …」。所以 crew 把角色卡放在 <code>developer_instructions</code>（開發者指令），並寫明它優先於 AGENTS.md。你的 AGENTS.md 第 203 行本來就寫「系統或開發者指令優先於兩者」。實測放上去之後，角色就不再宣告意圖，直接照 crew 的格式回報。</p>
+    <p>你的設定裡有 7 個 MCP server（github、computer-use、playwright…），還開著多代理、上網搜尋、產圖、goals 等功能。Claude 上的角色都沒有這些權限。crew 每次都加 <code>--ignore-user-config</code>，不載入你的 <code>config.toml</code>（MCP server、功能開關、環境變數設定都不載入），登入照樣用 <code>~/.codex</code> 的；剩下的功能再逐一關掉，見下面的實測和「Codex 執行」。</p>
+  </div>
+  <p class="prose">更正我之前的說法：我說「Claude 角色也會讀到你的 CLAUDE.md」，這是錯的。crew 的 Claude 角色設了 <code>omitClaudeMd: true</code>，不讀 CLAUDE.md。Codex 角色沒辦法不讀 AGENTS.md，所以改用開發者指令壓過它。</p>
+</section>
+
+<section id="spike">
+  <h2>實測結果（2026-10-29）</h2>
+  <p class="prose">下面每一項都在這台電腦實際跑過。Codex 的 <code>debug prompt-input</code>、<code>mcp list</code>、<code>features list</code> 不送請求、不花額度；真的執行的有 12 次（11 次全新、1 次接續），另有 1 次是故意在沒登入的設定目錄跑。每次只回一行字或一份工具清單。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>問題</th><th>結果</th><th>狀態</th></tr></thead>
+      <tbody>
+        <tr><td>Codex 能不能交回結構化的動作清單</td><td><code>codex exec --output-schema</code> 交回符合 schema 的 JSON，例如 <code>{"report":"收到","actions":[…]}</code></td><td><span class="tag ok">通過</span></td></tr>
+        <tr><td>精簡固定開銷</td><td>停用 plugins、apps，並用 <code>skills.config</code> 逐一停用技能根目錄下找到的每個 SKILL.md：送進去的指令文字從 42,805 字降到 14,586 字；第一次執行的輸入從 31,418 降到 23,156 token（少 26%）</td><td><span class="tag ok">通過</span></td></tr>
+        <tr><td>拿掉全域 AGENTS.md</td><td><code>project_doc_max_bytes=0</code>、<code>agents_md.max_total=0</code>、<code>agents_md_max_total=0</code>、<code>agents_md.enabled=false</code>、<code>user_instructions=""</code> 都沒有效果。AGENTS.md 有 9,654 字，其中 5,132 個中文字。換成空的 <code>CODEX_HOME</code> 並套用同樣的精簡參數時，指令文字是 4,588 字，你的目錄是 14,586 字。你選了沿用 <code>~/.codex</code>，所以這段 AGENTS.md 會一直在</td><td><span class="tag warn">拿不掉，改用開發者指令壓過</span></td></tr>
+        <tr><td>開發者指令能不能壓過 AGENTS.md</td><td>沒加時，角色先送「📍 意圖：SIMPLE — …」（Product Brain 規則）。加上 <code>-c developer_instructions="…優先於任何 AGENTS.md…"</code> 後不再宣告意圖，直接照格式回報</td><td><span class="tag ok">通過</span></td></tr>
+        <tr><td>你的 MCP server 會不會被角色用到</td><td><code>codex mcp list</code> 有 7 個 MCP server，plugins 另外帶 4 個。<code>-c mcp_servers={}</code> 拿不掉（設定是合併的）。<code>--ignore-user-config</code> 不載入 <code>config.toml</code>，MCP 工具全部不見，登入照舊。crew 因此不必讀 MCP 名稱，也就不碰 <code>mcp list --json</code> 和 <code>config.toml</code>（兩者都帶 env 原值）</td><td><span class="tag ok">通過</span></td></tr>
+        <tr><td>read-only 沙箱在接續時還在不在</td><td><code>exec resume</code> 沒有 <code>-s</code>，改用 <code>-c sandbox_mode="read-only"</code>。全新執行和 <code>resume</code> 各試一次 <code>touch</code>，兩次都回「Operation not permitted」，事後檔案都不存在</td><td><span class="tag ok">通過</span></td></tr>
+        <tr><td>角色拿得到哪些工具</td><td>你的設定原樣：shell、apply_patch、上網搜尋（<code>web__run</code>）、產圖、goals、派子代理。關掉 <code>image_generation</code>、<code>goals</code>、<code>memories</code>、<code>browser_use</code>、<code>computer_use</code>、<code>skill_search</code>、<code>hooks</code> 等並設 <code>web_search="disabled"</code> 後，只剩 shell、apply_patch、看圖和派子代理。<code>code_mode_host</code> 不能關：關了連 <code>exec_command</code> 都不見，角色就讀不了檔。關掉之後角色仍用 <code>head -n 1 NOTE.md</code> 讀到檔案（exit 0）</td><td><span class="tag ok">通過</span></td></tr>
+        <tr><td>派子代理能不能關</td><td><code>collaboration.spawn_agent</code> 等 6 個工具來自 multi_agents_v2。<code>--disable multi_agent</code>、<code>--disable multi_agent_v2</code>、<code>agents.max_depth=0</code> 都拿不掉</td><td><span class="tag warn">拿不掉，見風險</span></td></tr>
+        <tr><td>關掉後的固定開銷</td><td>工具和功能關掉之後，第一次請求的輸入約 16K token；你的設定原樣是 23,184（少約 31%）。只關 MCP 時是 23,156，跟原樣一樣：MCP 工具要搜尋才載入，關掉不省 token，關它是為了權限</td><td><span class="tag ok">通過</span></td></tr>
+        <tr><td>你的指令規則（execpolicy rules）會不會放行沙箱外的指令</td><td>會。沒加 <code>--ignore-rules</code> 時，read-only 的角色照你規則裡允許的指令跑 <code>git commit --allow-empty</code>，commit 從 1 個變 2 個；加上之後同一個指令被沙箱擋下，commit 沒有增加。<code>exec</code> 和 <code>exec resume</code> 都接受這個參數。規則的內容 crew 不讀，也沒有印出來</td><td><span class="tag ok">已加 --ignore-rules</span></td></tr>
+        <tr><td>Codex 角色做完，接著的 Claude 角色能不能用 crew 工具</td><td>不能直接開。Codex 跑完時已經在 hook 之外，這時 spawn 的 Claude agent 會被引擎當成 crew 自己的程式：QA 的 <code>board_read</code> 兩次都回「no tool.call hook answered this call」，debug log 是「tool.call skipped: re-entry」。改成跟心跳一樣排著，等 Claude Code 下一個動作（你送一句話、下指令、按面板）才開始；接著的角色也在 Codex 上就不用等</td><td><span class="tag warn">要等下一個動作</span></td></tr>
+        <tr><td>沒登入時長什麼樣</td><td><code>codex login status</code> 回 1、印「Not logged in」。直接跑 exec 的話，Codex 先重試 10 次（約 10 秒），每次一個 <code>error</code> 事件，最後送 <code>turn.failed</code>，訊息是「401 Unauthorized: Missing bearer…」，exit 1。所以 crew 先查 login status，不等它重試</td><td><span class="tag ok">通過</span></td></tr>
+        <tr><td>額度用完長什麼樣</td><td>不能故意用完。0.162.1 執行檔裡的訊息是「You've hit your usage limit…」，後面接升級提示或「Try again at …」，還有一種「…usage limit for &lt;模型&gt;. Switch to another model now」。另外，每次執行的 session 紀錄（rollout）的 <code>token_count</code> 都帶 <code>rate_limits</code>：<code>used_percent</code>、<code>window_minutes</code>（你的是 10080，一週）、<code>resets_at</code>、<code>rate_limit_reached_type</code>，crew 每輪讀一次，就能在用完前知道</td><td><span class="tag ok">文字已取得，實際用完沒覆蓋</span></td></tr>
+        <tr><td>crew 記的大腦用量少了 38%</td><td>計數本身沒錯，錯在寫檔：crew 只在角色跑完時寫 <code>.crew/usage/</code>。hunterest 10/28 最後一次寫檔是 19:50:07（UI/UX 回報），transcript 算到那一刻的大腦用量是 14,190,459，跟檔案的四個欄位完全一樣；之後大腦又跑了 39 次、8,607,922 token，沒有角色再跑完，所以沒寫進去。另外，重載時會用舊檔蓋掉記憶中還沒寫檔的數字</td><td><span class="tag ok">已修好</span></td></tr>
+        <tr><td>喚醒角色：接續還是重開</td><td><code>codex exec resume &lt;thread&gt;</code> 可以接續，也支援 <code>--json</code> 和 <code>--output-schema</code>。接續那一輪的輸入 23,387 token，其中 23,040 命中快取（98.5%）。兩次全新執行之間沒有快取（第二次 23,157，命中 0）</td><td><span class="tag ok">喚醒用接續</span></td></tr>
+        <tr><td>Codex 回報的用量</td><td>接續時 <code>turn.completed</code> 回報的是整條對話的累計（46,543），不是這一輪。這一輪的用量要用前後兩次累計相減；Codex 自己的 session 紀錄裡的 <code>last_token_usage</code> 可以對帳</td><td><span class="tag ok">已知怎麼算</span></td></tr>
+        <tr><td>Tailscale serve 不開 HTTPS 能不能用</td><td>用 app 內附的 CLI（1.104.2，跟背景服務同版本）跑前景 <code>serve --http=47399</code>，tailnet 裡連得到。結束後 <code>serve status</code> 是「No serve config」，不留設定</td><td><span class="tag ok">通過</span></td></tr>
+        <tr><td>Tailscale 會不會帶登入身分</td><td>經 tailnet 進來的請求有 <code>Tailscale-User-Login</code>、<code>Tailscale-User-Name</code> 等 header。後端看到的來源位址是 127.0.0.1；直接連本機的請求沒有這些 header，但本機程式可以自己加</td><td><span class="tag ok">有，但不能單獨當驗證</span></td></tr>
+        <tr><td>mod 能不能自己開網頁伺服器</td><td>不能。<code>$.http</code> 只有 <code>fetch</code>，可以走 unix socket；<code>$.process.spawn</code> 能開常駐子程序，模組卸載時子程序跟著結束。所以網頁由 crew 開的子程序負責</td><td><span class="tag ok">已確認型別</span></td></tr>
+        <tr><td>網頁對話需要的 API</td><td><code>$.prompt.submit</code> 把訊息送進主對話（主對話空閒時成為一輪）；<code>turn.complete</code> 在主對話每一輪結束時給 <code>answer</code>，拿得到大腦的回覆</td><td><span class="tag ok">已確認型別</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="arch">
+  <h2>整體架構</h2>
+  <p class="prose">crew mod 還是唯一的中心：看板、記憶、路由、稽核和面板都在它裡面。新加的三種子程序都由 crew 開，Claude Code 一關就跟著結束：Codex 角色每件工作跑一次 <code>codex exec</code>（之後用 <code>resume</code> 接續）；網頁橋接負責網頁；<code>tailscale serve</code> 把網頁開放到你的 tailnet。</p>
+  <figure>
+    <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  you["你（終端機）"] <--> brain["大腦<br/>Claude Code 主對話"]
+  pc["這台電腦的瀏覽器"] -->|"127.0.0.1<br/>一次性鑰匙"| bridge
+  phone["手機瀏覽器"] -->|"tailnet http<br/>配對過的裝置"| ts
+  subgraph CC["Claude Code（常駐）"]
+    brain
+    crew["crew mod<br/>看板・記憶・路由<br/>稽核・面板"]
+    claude["Claude 角色<br/>subagent"]
+  end
+  subgraph kids["crew 開的子程序（跟著 Claude Code 結束）"]
+    codex["Codex 角色<br/>codex exec / resume"]
+    bridge["網頁橋接<br/>node web/bridge.mjs"]
+    ts["tailscale serve<br/>前景"]
+  end
+  brain <--> crew
+  crew --> claude
+  crew -->|"工作（stdin）"| codex
+  codex -->|"JSON 事件＋動作清單"| crew
+  crew -->|"unix socket<br/>畫面資料・對話"| bridge
+  bridge -->|"stdout<br/>按鈕・訊息・配對"| crew
+  ts --> bridge
+  crew <--> repo[".crew/<br/>看板・記憶・討論串<br/>usage/ 稽核紀錄（不進 git）"]
+  codex --- home["~/.codex<br/>你的 Codex 設定與登入（沿用）"]
+</pre>
+    </div>
+    <figcaption>Codex 角色不直接寫看板：它交回動作清單，crew 用跟 Claude 角色相同的檢查套用。</figcaption>
+  </figure>
+</section>
+
+<section id="files">
+  <h2>模組與檔案</h2>
+  <p class="prose"><code>register.tsx</code> 已經 3,920 行。新功能各自放在獨立檔案，register.tsx 只負責接線；現在寫在 <code>tool.call</code> hook 裡的工具邏輯抽成函式，讓 Claude 角色的工具呼叫和 Codex 的動作清單走同一條路。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>檔案</th><th>負責</th><th></th></tr></thead>
+      <tbody>
+        <tr><td><code>hooks/register.tsx</code></td><td>crew 工具的實作從 <code>tool.call</code> hook 抽成檔案最上層的具名函式（<code>boardWrite</code>、<code>threadPost</code>…），hook 和 Codex 動作（<code>crewAction</code>）都呼叫它們。引擎會靜態追蹤 <code>$</code> 傳到哪裡，從 Map 取出的函式不能收 <code>$</code>，所以用 <code>switch</code> 直接叫名字。角色能交回哪些動作照 <code>AGENT_SPECS</code></td><td>改</td></tr>
+        <tr><td><code>hooks/codex.ts</code></td><td>Codex：找指令、登入狀態、模型清單、產生 argv、跑 exec／resume、解析 JSON 事件、算每一輪用量、分類錯誤</td><td>新</td></tr>
+        <tr><td><code>hooks/actions.ts</code></td><td>Codex 的輸出 schema、解析動作清單、交給 <code>callCrewTool</code>、被退回時組出接續用的訊息</td><td>新</td></tr>
+        <tr><td><code>hooks/engine.ts</code></td><td>每個角色的引擎設定（系統預設／自己挑選、下限、固定模型、門檻）、換模型前詢問、模型的事（M-xx）。6a 先把設定的讀寫和 <code>engineFor</code> 放在 register.tsx，6b 加上下限和模型的事時再抽出</td><td>6b 新</td></tr>
+        <tr><td><code>hooks/router.ts</code></td><td>依難易度從下限往上爬；<code>tierFor</code> 改成讀項目的難易度</td><td>改</td></tr>
+        <tr><td><code>hooks/board.ts</code></td><td>項目的難易度欄位、<code>rate</code> 操作、<code>add_task</code> 帶難易度和理由</td><td>改</td></tr>
+        <tr><td><code>hooks/difficulty.ts</code></td><td>自動往上調的四個訊號、權重、加權進度</td><td>新</td></tr>
+        <tr><td><code>hooks/audit.ts</code></td><td>每次執行的紀錄、存檔與保留、瓶頸偵測、要不要告訴大腦</td><td>新</td></tr>
+        <tr><td><code>hooks/web.ts</code></td><td>開橋接子程序、推畫面資料、處理按鈕和訊息、對話紀錄</td><td>新</td></tr>
+        <tr><td><code>hooks/tailnet.ts</code></td><td>找 Tailscale、讀自己的 tailnet 名稱和擁有者、開 serve、配對與裝置</td><td>新</td></tr>
+        <tr><td><code>web/bridge.mjs</code></td><td>網頁橋接：Node 18 以上、不用任何套件。驗證、靜態檔、API、SSE</td><td>新</td></tr>
+        <tr><td><code>web/index.html</code>、<code>web/app.js</code>、<code>web/app.css</code></td><td>真的網頁，從 <code>web/console.html</code> 設計稿改成讀 API 的資料；不載入任何外部資源</td><td>新</td></tr>
+        <tr><td><code>hooks/views.tsx</code>、<code>hooks/live.ts</code>、<code>types/index.d.ts</code></td><td>面板改讀真的資料；Snapshot 也是網頁的資料格式</td><td>改</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="codex">
+  <h2>Codex 執行</h2>
+  <h3>每件工作怎麼跑</h3>
+  <p class="prose">crew 用參數陣列開 Codex，不經過 shell；工作內容從 stdin 給，不放在參數裡（參數會出現在 <code>ps</code>）。第一次是全新執行，之後同一個角色的工作用 <code>resume</code> 接續同一條對話，跟 Claude 角色的「喚醒」一樣；輪替時開新的對話。</p>
+<pre class="mono"><code>codex exec [resume &lt;thread&gt;] --json --ignore-user-config --ignore-rules --skip-git-repo-check \
+  -m &lt;模型&gt; -c model_reasoning_effort="&lt;effort&gt;" \
+  -c sandbox_mode="read-only" | "workspace-write"     # 工作目錄是子程序的 cwd
+  [-c sandbox_workspace_write.network_access=true]   # 只有全端
+  -c approval_policy="never" -c shell_environment_policy.inherit="core" \
+  -c web_search="disabled" \
+  -c developer_instructions="&lt;角色卡：優先於 AGENTS.md&gt;" \
+  -c 'skills.config=[…每個 SKILL.md 停用…]' \
+  --disable plugins --disable apps --disable image_generation --disable goals --disable memories --disable chronicle \
+  --disable browser_use --disable browser_use_external --disable browser_use_full_cdp_access \
+  --disable computer_use --disable in_app_browser --disable tool_suggest --disable skill_search \
+  --disable hooks --disable sleep_tool --disable realtime_conversation \
+  --disable multi_agent --disable multi_agent_v2 \
+  --output-schema &lt;crew 的 schema 檔&gt;  -</code></pre>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>角色</th><th>沙箱</th><th>工作目錄</th><th>能交回的動作</th></tr></thead>
+      <tbody>
+        <tr><td>PM、QA、UI/UX</td><td><code>read-only</code></td><td>你的 repo</td><td>board_write、thread_post、ask_person、memory_save</td></tr>
+        <tr><td>Tech lead</td><td><code>read-only</code></td><td>你的 repo</td><td>上面四個加 review_submit</td></tr>
+        <tr><td>全端</td><td><code>workspace-write</code>，可上網</td><td>crew 的 worktree</td><td>thread_post、ask_person、memory_save（跟 Claude 的全端一樣不能寫看板）</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">沙箱一律由 crew 在參數裡指定，所以會蓋過任何設定檔裡的 <code>danger-full-access</code>；<code>approval_policy="never"</code> 讓超出沙箱的指令直接失敗，不會卡著等人按。<code>shell_environment_policy.inherit="core"</code> 讓 Codex 跑的指令只拿到基本環境變數，拿不到你的 API key。</p>
+  <p class="prose"><code>--ignore-user-config</code> 讓你的 <code>config.toml</code> 整份不載入，crew 不必讀 MCP 名稱，也不碰任何帶 env 原值的輸出。<code>--ignore-rules</code> 讓你 <code>~/.codex/rules</code> 裡的指令規則不載入：規則允許的指令會跑在沙箱外，沒加這個參數時，read-only 的角色也能 <code>git commit</code>（實測見上表）。技能清單在每個 session 第一次用到時掃一次技能根目錄（<code>~/.codex/skills</code>、<code>~/.agents/skills</code>、<code>~/.codex/plugins/cache</code>、repo 的 <code>.codex/skills</code> 和 <code>.agents/skills</code>）。功能開關是 0.162.1 實測過的名稱；Codex 改版後不認得的名稱會被忽略，crew 記下測過的版本，版本變了就在模型分頁標出來。</p>
+
+  <h3>角色讀資料、交回動作</h3>
+  <p class="prose">讀：crew 先把這件工作需要的東西放進工作內容，跟 Claude 角色開工時一樣（相關的看板項目、討論串、記憶包）。要看更多時，crew 每次執行前在 repo 的 <code>.crew/codex/</code> 重寫整理好的文字檔：<code>board.md</code>（整份看板）、<code>threads.md</code>（所有討論串），記憶直接讀 <code>.crew/memory/</code>；角色的輸出 schema 也放這裡（<code>&lt;角色&gt;.schema.json</code>）。角色卡寫明路徑，Codex 用 <code>rg</code>、<code>sed</code> 去讀；read-only 沙箱可以讀檔。這個資料夾在 <code>.crew/.gitignore</code> 裡，不進 git；每次都重寫，留在裡面的舊檔撐不過下一次執行。不放 <code>.crew/work/</code>，因為那裡是全端的 worktree，PRD 叫 codex 時會撞名。</p>
+  <p class="prose">寫：Codex 最後交回 <code>{ report, actions }</code>。每個動作是 <code>{ tool, input }</code>，<code>input</code> 是 JSON 字串，格式跟同名的 crew 工具參數一樣，crew 用現有的解析和檢查函式處理。被退回的動作（例如編號錯了）會用 <code>resume</code> 把錯誤原文送回去，請它改正，最多兩次；兩次都不行就把角色標成卡住，在面板告訴你。</p>
+<pre class="mono"><code>type CodexOutput = { report: string; actions: { tool: string; input: string }[] }   // tool 由 schema 限定成該角色能交回的
+type CodexEnd = {
+  thread?: string; output?: CodexOutput
+  usage?: { input: number; cached: number; output: number; reasoning: number }   // Codex 回報的累計；crew 減掉上一輪的累計
+  failed?: string; error?: string                                                // turn.failed 的訊息；最後一個 error 事件
+  spawned: number                                                                 // 派子代理的次數（角色卡禁止，有就記下並提醒）
+  commands: { command: string; chars: number }[]                                  // 只記指令開頭和輸出大小
+}</code></pre>
+  <p class="prose">跟 Claude 角色的差別：Codex 做到一半不能停下來問你，它的問題、討論串留言和看板更新要等這一輪結束才一起出現。設計稿上已經寫了這點。</p>
+
+  <h3>登入、額度和失敗</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>狀況</th><th>怎麼知道</th><th>crew 做什麼</th></tr></thead>
+      <tbody>
+        <tr><td>沒裝 Codex</td><td>找不到 <code>codex</code> 指令</td><td>模型分頁寫「沒有安裝」，Codex 選項不能選</td></tr>
+        <tr><td>沒登入</td><td>開工前 <code>codex login status</code> 回 1（實測印「Not logged in」）；萬一跑到一半才失效，<code>turn.failed</code> 的訊息含 <code>401 Unauthorized</code></td><td>系統預設的角色改用 Claude（開關開著就先問）；自己挑選 Codex 的角色停著，在「模型的事」問你。登入後按［重新檢查］，或下一次心跳自己發現</td></tr>
+        <tr><td>額度用完</td><td><code>turn.failed</code> 的訊息含「hit your usage limit」；或這一輪 rollout 的 <code>rate_limits.rate_limit_reached_type</code> 不是 null</td><td>同上；訊息裡有「Try again at」或 <code>resets_at</code> 就顯示重置時間，到時自動再試。「usage limit for &lt;模型&gt;」只是那個模型用完：系統預設的角色先換同引擎的下一個模型</td></tr>
+        <tr><td>快用完</td><td>每輪讀 rollout 的 <code>rate_limits.primary.used_percent</code></td><td>模型分頁顯示 Codex 本週已用多少；超過 90% 時，系統預設的角色新工作先排 Claude（開關開著就先問）</td></tr>
+        <tr><td>角色派子代理</td><td>事件流出現 <code>collaboration.spawn_agent</code> 的工具呼叫</td><td>角色卡禁止；真的出現就在 Token 分頁記一筆，並告訴大腦是哪個角色、哪件工作</td></tr>
+        <tr><td>同一件失敗</td><td>這一輪沒交回結果、測試失敗、review 被退回</td><td>系統預設：照難易度往上一格（開關開著就先問）；自己挑選：失敗 3 次問「這件升一格／照舊」</td></tr>
+        <tr><td>你按停止</td><td>—</td><td>結束讀取迴圈，子程序被結束，這一輪不套用任何動作</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">沒登入的事件已經實測過。額度用完不能故意製造，判斷用的文字是從 0.162.1 執行檔取出的；其他看不懂的錯誤一律當「失敗」，並把原文給你看。</p>
+</section>
+
+<section id="engine">
+  <h2>引擎和模型</h2>
+<pre class="mono"><code>type EngineChoice =
+  | { mode: 'auto'; floors: { claude: { model: string; effort: Effort }; codex: { model: string; effort: Effort } }; limit: 'tier' | number }
+  | { mode: 'fixed'; engine: 'claude' | 'codex'; model: string; effort: Effort; limit: 'tier' | number }
+type CrewSettings = { …現有的…; askBeforeSwitch: boolean; roles: Record&lt;CrewRole, EngineChoice&gt;; web: { openOnStart: boolean; tailnet: boolean } }</code></pre>
+  <p class="prose">設定存在 <code>$.store</code>，跟現有設定一樣以 repo 為單位，不進 git。Tech lead 和全端在 Codex 上的下限是 6.1 Sol・xhigh，crew 在程式裡擋，選單裡選不到更低的。</p>
+  <ul class="prose">
+    <li><strong>系統預設</strong>：引擎由大腦決定。crew 提供每個角色今天在兩個引擎的用量、Codex 能不能用，大腦用 crew 工具的 <code>tune</code> 提出換引擎。模型和 effort 從下限開始，依項目的難易度往右一格，失敗兩次再往右一格。</li>
+    <li><strong>自己挑選</strong>：引擎、模型、effort 固定，crew 不換。卡住時（Codex 不能用、失敗 3 次）不管開關都問你。</li>
+    <li><strong>換模型前詢問</strong>：開著時，任何換引擎、模型或 effort（包括依難易度往上、失敗後升級、Codex 不能用時改用 Claude）都先建一則「模型的事」（M-xx），角色停著等你回答。關掉時直接換，事後記成決定（DEC）。</li>
+    <li>換了以後從下一件工作開始生效，做到一半的那件不換。</li>
+  </ul>
+</section>
+
+<section id="difficulty">
+  <h2>難易度與加權進度</h2>
+<pre class="mono"><code>type Level = 'S' | 'M' | 'L' | 'XL'          // 畫面上是 易／中／難／極難
+type Difficulty = {
+  level: Level; why: string; by: 'techlead' | 'crew'
+  history: { from: Level; to: Level; why: string; at: string; before: number; after: number }[]   // 進度百分比的前後
+}
+// 看板項目多一個 difficulty?: Difficulty
+// 新操作：{ op: 'rate', id, level, why }（只有 Tech lead）
+// add_task 多 difficulty、why；舊的 size 照樣接受，讀成難易度、理由寫「舊的大小」</code></pre>
+  <ul class="prose">
+    <li><strong>誰評</strong>：Tech lead 拆任務時評，每件寫一句理由（未知多寡、牽涉金錢或權限、跨幾個模組、有沒有現成寫法、好不好測）。驗收條件、test case 沒有自己的評等時，取它底下任務裡最難的；都沒有就算中。</li>
+    <li><strong>自動往上調</strong>：測試失敗 2 次、review 被退回 2 次、同一項的 PM 和 QA 來回超過 6 則、這件的 token 超過同級平均 2 倍，各往上一級，理由由 crew 寫。Tech lead 用 <code>rate</code> 重評時可以往下。</li>
+    <li><strong>加權進度</strong>：現在的進度是各關卡完成數加總（<code>live.ts</code> 的 <code>progress</code>）。改成每一筆乘上它那一項的權重：易 1、中 2、難 4、極難 8。做完的照最後的難易度算，所以調高時百分比會往下掉；每次調整記在 history，進度分頁顯示「最近調整」。</li>
+    <li><strong>選模型和門檻</strong>：一件工作的層級取它處理的項目裡最難的，取代現在用大小、關鍵字和失敗次數推算的 <code>tierFor</code>。</li>
+  </ul>
+</section>
+
+<section id="audit">
+  <h2>Token 稽核</h2>
+  <h3>記什麼</h3>
+<pre class="mono"><code>type RunRecord = {
+  at: number; end: number; who: CrewRole | 'brain'; engine: 'claude' | 'codex'; model: string; effort: string
+  items: string[]; level?: Level
+  trigger: 'start' | 'wake' | 'rotate' | 'heartbeat' | 'button' | 'brain' | 'retry'; gapMs?: number   // 距上一次被叫醒多久（影響快取）
+  outcome: 'done' | 'failed' | 'rejected' | 'stopped' | 'quota'
+  usage: { input: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number }
+  parts: { role: number; task: number; board: number; memory: number; threads: number; tools: number; fixed: number }   // 估計的 token
+  tools: { name: string; resultTokens: number; path?: string }[]                        // 不存內容
+  memories: { given: string[]; used: string[] }                                          // used：回報或動作裡有引用到的編號
+}</code></pre>
+  <ul class="prose">
+    <li><strong>來源</strong>：Claude 角色和大腦用 <code>turn.step</code> 每次請求的 usage（現在就有）；工具結果大小用 <code>tool.call</code> 的結果；送進去的各部分在 crew 組工作內容時就知道；大腦每一輪的組成用 <code>$.session.usage({ breakdown })</code>。Codex 用 JSON 事件，每一輪用量用累計相減。</li>
+    <li><strong>存放</strong>：<code>.crew/usage/runs-YYYY-MM-DD.jsonl</code>，已經在 <code>.crew/.gitignore</code> 裡；保留 30 天。只存大小、編號、指令名稱和檔案路徑，不存內容；文字欄位寫入前先遮罩（沿用 <code>redact</code>）。</li>
+    <li><strong>現有計數已修好（2026-10-29）</strong>：原因是大腦的用量只在角色跑完時寫檔，重載時還會被舊檔蓋掉（見實測結果）。現在大腦每一輪結束就寫檔，只寫在已經有 <code>.crew/</code> 的 repo。重載時每一項取記憶和檔案中較大的那個。兩個回歸測試先寫、先看到失敗，修好後 887 個測試全過。</li>
+  </ul>
+  <h3>瓶頸怎麼找、什麼時候告訴大腦</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>偵測（程式算，不花 token）</th><th>條件</th></tr></thead>
+      <tbody>
+        <tr><td>單次執行超標（馬上提醒）</td><td>一個工具結果超過 10K；context 超過門檻的 85%；快取命中率低於 60%（這一輪有兩次以上請求時）</td></tr>
+        <tr><td>重複讀大檔</td><td>同一個路徑在兩輪以上被讀，每次超過 8K</td></tr>
+        <tr><td>記憶包沒用到</td><td>給了的記憶編號，回報和動作裡引用不到三成</td></tr>
+        <tr><td>固定開銷</td><td>每個角色開工時固定送進去的部分 × 開工次數</td></tr>
+        <tr><td>大腦自己的 context</td><td>大腦每一輪 context 裡最大的一部分（MCP 工具說明、對話等）× 輪數</td></tr>
+        <tr><td>某個角色用量過高</td><td>超過今天全部的 40%（現有的提醒）</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">每件工作做完，crew 重算一次。只有兩種情況告訴大腦，而且只說那一條：出現新的瓶頸，或處置過的瓶頸在下一個 session 每件工作的平均沒有下降（處置沒效）。每個 session 開始時，還沒處置完的再說一次。處置照設定「先問你」或「自動」。依據是 hunterest 10/28 的紀錄：大腦佔全部 token 的 86%，任何放進大腦 context 的東西都會被重讀到壓縮為止。</p>
+</section>
+
+<section id="web">
+  <h2>網頁</h2>
+  <p class="prose">crew 啟動時用 <code>$.process.spawn</code> 開 <code>node web/bridge.mjs</code>。Node 18 以上，不用任何套件；找不到 node 時，網頁那一段寫「需要 Node.js 18 以上」，其他功能照常。</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>通道</th><th>誰對誰</th><th>內容</th></tr></thead>
+      <tbody>
+        <tr><td>unix socket <code>~/.crew/run/&lt;session&gt;/bridge.sock</code>（目錄 0700）</td><td>crew → 橋接，用 <code>$.http.fetch({ socketPath })</code></td><td>畫面資料（跟面板同一份 Snapshot）、對話新增的一則、一次性鑰匙、配對碼的雜湊、已配對裝置的雜湊、tailnet 擁有者</td></tr>
+        <tr><td>橋接的 stdout，一行一個 JSON</td><td>橋接 → crew</td><td><code>{kind:'act', key, value}</code>、<code>{kind:'say', text}</code>、<code>{kind:'paired', id, name, hash}</code>、<code>{kind:'ready', port}</code></td></tr>
+        <tr><td>TCP <code>127.0.0.1:47321</code>（被占用就換）</td><td>瀏覽器 → 橋接</td><td><code>GET /</code>、靜態檔、<code>GET /api/snapshot</code>、<code>GET /api/events</code>（SSE）、<code>POST /api/act</code>、<code>POST /api/say</code>、<code>POST /api/pair</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul class="prose">
+    <li><strong>按鈕</strong>：<code>/api/act</code> 的 key 和 value 走面板同一個 <code>actOn</code>，不認得的 key 一律拒絕，所以網頁能做的事不會比面板多。</li>
+    <li><strong>對話</strong>：網頁送出的訊息由 crew 用 <code>$.prompt.submit</code> 送進主對話，前面標「（從網頁）」，終端機也看得到。對話紀錄由三個來源組成：你在終端機打的（<code>prompt.submit</code> hook）、大腦每一輪的回答（主對話的 <code>turn.complete</code>）、crew 送給大腦的通知；保留最近 200 則。</li>
+    <li><strong>打開</strong>：設定開著時，crew 啟動後用 <code>open</code>（macOS）或 <code>xdg-open</code> 打開帶一次性鑰匙的網址；面板的［打開］每次產生新的鑰匙。</li>
+  </ul>
+</section>
+
+<section id="phone">
+  <h2>手機（Tailscale）</h2>
+  <ul class="prose">
+    <li><strong>找 Tailscale</strong>：先用 <code>/Applications/Tailscale.app/Contents/MacOS/Tailscale</code>（跟背景服務同版本），沒有才用 PATH 上的 <code>tailscale</code>。你的 Homebrew CLI 是 1.94.1，背景服務是 1.104.2，用 Homebrew 那支會跳版本不符的警告。</li>
+    <li><strong>開放</strong>：設定開著時，crew 開子程序 <code>tailscale serve --http=47322 http://127.0.0.1:47321</code>（前景）。照你的決定用 http，不開 HTTPS 憑證；tailnet 內的流量本來就由 WireGuard 加密。從不用 <code>--bg</code>、從不用 <code>funnel</code>。開之前先讀 <code>serve status --json</code>，那個 port 已經被你自己的設定用了就不開，並告訴你。</li>
+    <li><strong>擁有者</strong>：從 <code>status --json</code> 讀這台機器的 DNS 名稱和擁有者的登入帳號，只放在記憶體，不寫進任何檔案、紀錄或給大腦的通知。</li>
+    <li><strong>配對</strong>：面板按［配對新裝置］，crew 產生 6 位數配對碼，10 分鐘內有效，錯 5 次就作廢。手機打開 tailnet 網址、輸入配對碼後，橋接發一個裝置憑證（32 bytes 隨機值，cookie，HttpOnly、SameSite=Strict，90 天）。crew 只存它的 SHA-256，放在 <code>$.store</code>。［移除］刪掉雜湊，那支手機要重新配對。</li>
+  </ul>
+</section>
+
+<section id="design-artifact">
+  <h2>設計稿 artifact（2026-10-30 確認）</h2>
+  <p class="prose">你要確認的東西都要有 artifact。設計稿的做法照提案第 2 版（<a href="https://claude.ai/artifact/Sfo8Vq89Fo96z5pgdnq1b5">claude.ai/artifact/Sfo8Vq89Fo96z5pgdnq1b5</a>）：一個 PRD 一個 artifact，裡面放這個 PRD 的所有設計稿；有畫面的可以點，沒有畫面的顯示文字；核准和退回都在 artifact 裡按；artifact 由大腦發佈；決定由大腦轉給 crew。</p>
+  <h3>資料</h3>
+  <ul class="prose">
+    <li><strong>mockup 不放看板</strong>：每個角色都會讀看板，所以看板上的設計稿只多一個 <code>crew_mockup: { version, mark, bytes }</code>。HTML 放在 <code>.crew/designs/&lt;PRD 代號&gt;/SCR-001.json</code>（<code>{ id, version, html }</code>），PRD 代號由 PRD 的路徑轉成。</li>
+    <li><strong>UI/UX 怎麼交</strong>：<code>add_design</code> 多一個 <code>html</code>，有畫面（screen）的必填，沒有畫面（none）的不能填。新的 <code>add_mockup { id, html }</code> 用來替已經有的設計稿補上或換掉 mockup，版次加 1。設計稿的指紋（<code>designMark</code>）把 mockup 也算進去，所以換了 mockup，原本的決定就不算數了。</li>
+    <li><strong>檢查</strong>：mockup 不能是空的，最多 200,000 字。不能引用外部資源，也就是 <code>src</code>、<code>href</code>、<code>url()</code>、<code>@import</code> 指到 <code>http(s)://</code> 或 <code>//</code> 開頭的網址。不能用 <code>fetch</code>、<code>XMLHttpRequest</code>、<code>WebSocket</code>、<code>EventSource</code>、<code>sendBeacon</code>。和看板上其他文字一樣，先遮蔽秘密。</li>
+  </ul>
+  <h3>審核頁</h3>
+  <ul class="prose">
+    <li><code>review.ts</code> 是純函式，由看板、決定和 mockup 清單產生 <code>.crew/designs/&lt;PRD 代號&gt;/index.html</code>。
+      <ul>
+        <li>左邊是清單：每份設計稿的狀態、有沒有畫面、第幾版。</li>
+        <li>右邊是打開的那份：有畫面的，讀 <code>SCR-xxx.json</code>，放進 <code>sandbox="allow-scripts"</code> 的 srcdoc iframe（不加 allow-same-origin），可以切換桌面和 360px 寬；原本的文字說明收在「看文字說明」裡。沒有畫面的直接顯示文字。</li>
+      </ul>
+    </li>
+    <li><strong>核准、退回</strong>：用 <code>comments.sendToClaude</code>，在那份設計稿下面留一則「crew 設計稿決定：核准 SCR-001（第 1 版）」，最後附「代碼」，也就是這一版的 6 碼指紋。<code>canSendToClaude</code> 不是 available 時，按鈕變灰並寫出原因；送不出去時（沒有允許留言、沒有 session），頁面請你到面板按［改在面板決定］，改回一份一份核准。宣告的 capabilities 只有 <code>{ comments: {} }</code>。</li>
+  </ul>
+  <h3>大腦和 crew 之間</h3>
+  <ol class="prose">
+    <li>有新的或改過的設計稿時，crew 請大腦發佈。這則通知用同一個 key，排隊時多則會合成一則。通知裡寫好 Artifact 工具要的 <code>file_path</code>、<code>files</code>（只列有變的檔案）、<code>capabilities</code>，已經有連結時也附上 <code>url</code>。</li>
+    <li>大腦發佈後，用 crew 工具的 <code>published</code> 回報連結。發不了也用 <code>published</code> 回報原因，crew 就改回在面板核准。</li>
+    <li>你按了核准或退回，大腦會收到那則留言，用 crew 工具的 <code>decide</code> 把留言全文和 thread 編號轉給 crew。</li>
+    <li>crew 檢查三件事：格式對、設計稿還在等核准、代碼等於目前這一版。通過才記下決定：記錄來源是 artifact，附上 thread 編號；討論串和團隊記憶跟在面板核准時一樣。</li>
+    <li>crew 重新產生審核頁，請大腦只重發 <code>index.html</code>；大腦在那則留言下回覆 crew 的結果。</li>
+    <li>大腦的 session 重開時，crew 請大腦用 ArtifactComments 重新看著已經發佈的審核頁，你在裡面按的決定才收得到。</li>
+  </ol>
+  <h3>面板和流程</h3>
+  <ul class="prose">
+    <li><strong>待你決定</strong>：同一個 PRD 的設計稿合成一行「設計稿：&lt;PRD&gt; 有 n 份等你核准」，旁邊是［開設計稿 ↗］（<code>Link</code>）。還沒發佈時寫「大腦發佈中，好了才能看和決定」。發不了時，退回原本每份一行、在面板核准的做法。</li>
+    <li><strong>補 mockup</strong>：有畫面、但還沒有 mockup 的設計稿不拿去問你。設計階段多一種「補 mockup」的工作交給 UI/UX，補好才問你。ARTOGO internal system 的 SCR-001～006、hunterest 的 10 份：下次打開那個 repo 的 crew，面板會出現［接續］（照重開後先問再花 token 的規則），按了 UI/UX 就補；補好之前這些設計稿不能核准。</li>
+  </ul>
+  <h3>資安</h3>
+  <ul class="prose">
+    <li><strong>mockup 是角色寫的，不可信</strong>，所以放進沒有 allow-same-origin 的 sandbox srcdoc iframe。測試頁 <a href="https://claude.ai/artifact/KhvPhDFedUyNopWkL22ZDc">KhvPhDFedUyNopWkL22ZDc</a> 實測：
+      <ul>
+        <li>srcdoc 裡沒有 <code>window.claude</code>，碰不到外層頁面，也不能用 storage。</li>
+        <li>就算是同一個 artifact 裡的 HTML 檔，放進 sandbox iframe 之後，<code>claude.use('comments')</code> 也是 null。</li>
+        <li>結論：mockup 沒辦法替你送出決定。</li>
+      </ul>
+    </li>
+    <li><strong>大腦轉達決定是信任邊界</strong>，你同意了。crew 只收格式正確、代碼對得上這一版、還在等核准的決定，每個決定都記下 thread 編號，事後可以追查。舊版頁面上按的決定，因為代碼不同會被拒絕。</li>
+    <li>審核頁和 mockup 都是私人 artifact，只有你看得到。大腦依 Artifact 工具的規則，發佈前會先讀過要發佈的檔案。</li>
+  </ul>
+  <p class="prose"><strong>Token</strong>：第一次發佈時，大腦要讀過每份 mockup，每份大約 3–8K token；之後只讀有變的檔案。每個決定讓大腦多跑一輪，要讀大約 3–5K token 的 <code>index.html</code> 再重發。</p>
+</section>
+
+<section id="decide-page">
+  <h2>待你決定頁（2026-10-30 確認）</h2>
+  <p class="prose">設計稿 artifact 擴大成「待你決定頁」。做法照提案（<a href="https://claude.ai/artifact/8weFeTBvRZ76sjmYbRChpV">claude.ai/artifact/8weFeTBvRZ76sjmYbRChpV</a>），你確認的三件事：一個 PRD 一頁、分三個分頁；模型的事和大腦的建議留在面板；角色問問題時可以附選項。</p>
+  <h3>頁面</h3>
+  <ul class="prose">
+    <li><strong>一個 PRD 一頁</strong>：分成「PRD 草稿」「設計稿」「問題」三個分頁，有等你決定的分頁標出件數。這一頁跟著 PRD 的路徑走：草稿在等你確認時就發佈；確認開始之後，同一個連結繼續放設計稿和問題。</li>
+    <li><strong>PRD 草稿</strong>：顯示草稿全文（純文字排版，不執行任何 HTML）、PM 和 UI/UX 的審查結果、大腦的摘要。按鈕：［確認，開始］和「要改的地方」。</li>
+    <li><strong>問題</strong>：只放角色和 crew 問的問題。每題附上它問的項目和標題；角色給了選項就變成按鈕，另外一定可以自己寫。設計稿的核准在「設計稿」分頁；大腦自己的問題、大腦的建議（tune）和模型的事（M-xx）不放進來。</li>
+    <li><strong>設計稿</strong>：就是原本的設計稿頁。</li>
+  </ul>
+  <h3>檔案（省 token）</h3>
+  <ul class="prose">
+    <li><code>.crew/designs/&lt;PRD 代號&gt;/index.html</code> 是固定的外框，只有標題跟著 PRD 變。內容由頁面自己讀：<code>data.json</code> 放清單、狀態、問題和審查結果，<code>prd.json</code> 放草稿全文，<code>SCR-xxx.json</code> 放 mockup。</li>
+    <li>Artifact 工具每次發佈都要帶 <code>file_path</code>（實測：只帶 <code>files</code> 會被拒），所以外框每次都會送，但內容不變；大腦讀過一次就好，之後只讀有變的 <code>data.json</code>、<code>prd.json</code> 或 mockup。新增的 <code>data.json</code> 和 <code>prd.json</code> 是產生的檔案，加進 <code>.crew/.gitignore</code>。</li>
+  </ul>
+  <h3>留言格式（都以「代碼」結尾）</h3>
+  <ul class="prose">
+    <li>設計稿：「crew 設計稿決定：核准／退回 SCR-xxx」，和原本一樣。</li>
+    <li>問題：「crew 回答：Q-xx」，下一行是回答。代碼是問題的指紋，所以 reset 之後重複的編號不會對到舊的問題。</li>
+    <li>草稿：「crew PRD 確認：開始 &lt;路徑&gt;」或「crew PRD 要改：&lt;路徑&gt;」，下一行是要改的地方。代碼是草稿檔內容的指紋，草稿改過之後，舊頁面上按的就不算數。</li>
+    <li>大腦收到開頭是「crew 」的留言，一律用 crew 工具的 <code>decide</code> 轉達，crew 再依開頭分派。</li>
+  </ul>
+  <h3>大腦和 crew 之間</h3>
+  <ul class="prose">
+    <li>有東西等你決定時，crew 請大腦發佈或更新：草稿進入「等你確認」、有新問題、問題回答了、設計稿等核准或決定了，還有 Claude Code 重開時。多則通知會合成一則。發佈好之後，大腦把連結和新問題告訴你。</li>
+    <li>問題的回答和在對話裡由大腦轉達的回答，規則一樣：流程暫停中不收，要你在面板按［接續］；記錄寫明是在待你決定頁、哪一則留言。</li>
+    <li>［確認，開始］：草稿要在等你確認、你沒有提出要改的地方、代碼對得上，才開始。「要改的地方」：crew 記在草稿上，頁面和面板都顯示「大腦修改中」，然後把原話交給大腦（當成資料，不是指令）。大腦改好之後，小改用 <code>ready</code> 再請你確認，大改用 <code>draft</code> 重新送審。改完之前，大腦不能直接開始。</li>
+  </ul>
+  <h3>面板</h3>
+  <ul class="prose">
+    <li>頁面在用的時候，設計稿和問題合成「待你決定」的一行，附［開待你決定頁 ↗］和［改在面板決定］。草稿卡片多一個［開待你決定頁 ↗］，［確認，開始］留著。</li>
+    <li>你選了在面板決定，或大腦發佈不了，就退回原本每件一行的做法。問題附的選項在面板上也會列出來。</li>
+  </ul>
+  <h3>資安</h3>
+  <ul class="prose">
+    <li>大腦能做的事沒有變多：問題的回答和草稿確認，大腦本來就能照你在對話裡說的轉達；大腦自己提出的事（tune、M-xx）不放進頁面。</li>
+    <li>頁面上所有文字都用 <code>textContent</code> 放進畫面，草稿全文也一樣，不經過 HTML。草稿和問題在寫進 <code>data.json</code>、<code>prd.json</code> 之前，先遮蔽秘密。</li>
+    <li>你寫的回答和要改的地方，crew 會截短、遮蔽秘密，交給角色和大腦時都標明是資料。</li>
+  </ul>
+</section>
+
+<section id="security">
+  <h2>資安規劃</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>入口或資產</th><th>威脅</th><th>做法</th></tr></thead>
+      <tbody>
+        <tr><td>本機網頁 127.0.0.1</td><td>這台電腦的其他使用者；瀏覽器裡的惡意網站（CSRF、DNS rebinding）</td><td>網址帶一次性鑰匙（2 分鐘內有效，用過即失效），換成 session cookie 後轉址把鑰匙從網址拿掉。Host 只接受 <code>127.0.0.1:port</code>、<code>localhost:port</code> 和 tailnet 名稱。所有 POST 要 JSON、自訂 header <code>X-Crew: 1</code>、Origin 跟 Host 相符。cookie 設 SameSite=Strict、HttpOnly</td></tr>
+        <tr><td>tailnet 上的網頁</td><td>tailnet 裡別人的裝置（共享的 tailnet、分享出去的機器）；本機程式偽造 Tailscale header</td><td>Host 是 tailnet 名稱時，<code>Tailscale-User-Login</code> 要等於擁有者，<strong>而且</strong>要有配對過的裝置憑證。header 只當過濾，真正的驗證是裝置憑證</td></tr>
+        <tr><td>網頁對話</td><td>能送訊息給大腦就等於能叫 Claude Code 做事</td><td>只有通過上面驗證的連線能送；一則最多 4,000 字；每則在終端機標明來自網頁；大腦照常受 Claude Code 的權限規則管</td></tr>
+        <tr><td>網頁內容</td><td>看板和討論串裡的文字帶有 HTML 或指令</td><td>網頁只用 <code>textContent</code> 放資料，不用 innerHTML；CSP <code>default-src 'self'</code>，不載入外部資源；<code>frame-ancestors 'none'</code>、<code>Referrer-Policy: no-referrer</code>、<code>Cache-Control: no-store</code></td></tr>
+        <tr><td>設計稿 mockup</td><td>角色寫的 HTML 夾帶程式，替你送出核准，或把資料傳出去</td><td>放在沒有 allow-same-origin 的 sandbox srcdoc iframe 裡（實測沒有 <code>window.claude</code>，也碰不到外層）；寫進來時就擋掉外部資源和網路呼叫；決定要帶這一版的代碼，大腦轉來的才算數</td></tr>
+        <tr><td>Codex 執行</td><td>角色改到不該改的檔、讀到秘密、跑危險指令；repo 內容夾帶指令（prompt injection）</td><td>四個角色 read-only；全端只能寫 crew 的 worktree；沙箱由參數指定；approval never；指令只拿基本環境變數；不載入你的技能和 plugins；你的 <code>config.toml</code> 整份不載入（MCP server 也就不在），你的指令規則也不載入（<code>--ignore-rules</code>），上網搜尋、產圖、瀏覽器、computer use 都關掉；AGENTS.md 拿不掉，角色卡用開發者指令壓過它。動作清單走跟 Claude 角色相同的權限和檢查，全端交回 board_write 會被拒絕；一輪最多套用 50 個動作</td></tr>
+        <tr><td>Codex 登入憑證和 MCP 的 env</td><td>外洩或被 crew 讀到</td><td>crew 從不讀 <code>auth.json</code>。<code>codex login status</code> 看結束碼判斷有沒有登入，它印的那行只拿來分辨 ChatGPT 帳號或 API key，文字本身不存、不顯示、不寫進紀錄；登入由你在終端機做。不讀 <code>mcp list</code> 和 <code>config.toml</code>（都帶 env 原值），<code>--ignore-user-config</code> 也讓 Codex 不載入它。rollout 只讀 <code>token_count</code> 那幾行</td></tr>
+        <tr><td>稽核紀錄</td><td>紀錄裡出現秘密或個資</td><td>只存大小、編號、指令名稱、路徑；文字先遮罩；不進 git；保留 30 天</td></tr>
+        <tr><td>子程序</td><td>殘留在背景、被別人連上</td><td>都用 <code>$.process.spawn</code> 開，模組卸載就結束；不經過 shell；socket 在 0700 目錄；tailscale serve 用前景模式，實測結束後不留設定</td></tr>
+        <tr><td>供應鏈</td><td>套件被換掉</td><td>橋接和網頁不用任何外部套件，也不連 CDN</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose"><strong>輸入檢查</strong>：橋接收到的 body 最多 64KB，必須是 JSON；配對碼只收 6 位數字；按鈕只收面板認得的 key；難易度只收四個值，理由最多 200 字；Codex 的動作用現有的 <code>parseOps</code> 等函式檢查。</p>
+</section>
+
+<section id="phases">
+  <h2>開發順序</h2>
+  <p class="prose">一次做一條能用的端到端流程，每一段做完：自己實跑一遍、看 log → 請沒參與實作的 agent 對照設計稿 review → 給你驗收。驗收通過的段落才補測試和做資安、架構審查。實作完成的畫面直接取代對應的設計稿，還沒接上的區塊在畫面上標明。</p>
+  <div class="phases">
+    <div class="phase"><span class="pn">6a</span><div class="body"><h3>Codex 跑一個角色</h3>
+      <p class="meta">① crew 工具的實作抽成 register.tsx 最上層的具名函式，<code>tool.call</code> hook 和 Codex 動作都叫它們，行為不變（887 個測試照樣通過）。② <code>hooks/codex.ts</code>：<code>codexArgv</code>、<code>readEvents</code>、<code>usageDelta</code>、<code>failureOf</code>、<code>outputSchema</code>。③ <code>hooks/actions.ts</code>：角色能交回的動作、Codex 角色卡、退回後接續的訊息。④ <code>engineFor</code> 決定引擎；<code>startRole</code> 和 <code>deliver</code> 依引擎分開，Codex 角色的 agentId 是 <code>codex:&lt;角色&gt;:&lt;時間&gt;</code>，thread 和累計用量存在角色上；Codex 跑一輪時送來的訊息排隊，跑完再接著跑。⑤ 模型分頁接上真的設定和 Codex 狀態：系統預設／自己挑選、引擎、固定的模型和 effort、換模型前詢問、重新檢查（發現可用時接續被擋下的角色）。下限、輪替門檻和模型的事留到 6b。</p>
+      <p class="meta">冒煙驗證（2026-10-29 已跑）：小 PRD、PM 固定 Codex 6.1 Terra・high，按開始；14 秒後看板出現 2 個功能、2 條驗收條件（以 PM 的身分寫入），G0 通過。模型分頁的每個按鈕和下拉選單都在終端機實際按過，設定讀回正確。</p>
+      <p class="meta">驗收前 review（同一個獨立 agent，共四輪加收尾確認）：第一輪 1 個 critical、9 個 important、13 個 minor，修了 1＋9＋9 個，駁回 2 個，4 個移到 6b；第二輪 2 個 important（登入失效會每 5 分鐘重試、重新載入後沒清排隊的工作）；第三輪 1 個 important（額度第二次重置後不再自動接續）；第四輪 0 個 critical、0 個 important。之後的 minor 也修了，只剩一條面板文案留給 6b 的「模型的事」。修完重跑：① PM 在 Codex 做完後，QA 排著等 Claude Code 下一個動作（toast 會說），送一個 <code>/crew status</code> 之後 8 秒 QA 寫進 7 個 test case，re-entry 跳過 0 次；② 問 PM 兩次，第二次接續同一條 thread；③ 空的 <code>CODEX_HOME</code>：PM 標成卡住，提示去模型分頁，Codex 沒有執行；④ Codex 的 token 另外記，狀態列是「今日 14K tok · Codex 37K」，Claude 的依難易度統計只算 Claude；⑤ PM 在 Codex 上跑到一半時重新載入 crew：那一輪以「被 crew 重新載入打斷」結束，PM 標成卡住，Codex 子程序跟著結束。Codex 做完後由 crew 叫醒一個已經在的 Claude agent，這條沒有在 smoke 裡跑到，依據是先前用 probe mod 實測過的「timer 裡的 <code>$.session.send</code> 可以用」。</p>
+      <p class="meta">6a 還沒做（移到 6b）：Codex 執行的逾時、重設時結束子程序、永遠不會成功的退回不重送、版本跟測過的不同時標出來；額度真的用完沒辦法故意製造，只驗了重置時間的解析。</p>
+      <p class="meta"><b>6a 加做：系統預設也能跑在 Codex（2026-10-29 使用者選擇提前）。</b>從 6b 移過來：大腦用 <code>tune</code> 換引擎，下限可以調，換模型前詢問和模型的事（M-xx）。實作時定下的幾件事：</p>
+      <ul class="meta">
+        <li><b>大腦換引擎：</b><code>tune</code> 多一個 <code>engine</code>（claude／codex），<code>model</code> 也接受 Codex 的模型。系統預設的角色才換得動；自己挑選的角色，大腦只能調輪替門檻。Codex 找不到或沒登入時，大腦提不出換到 Codex。</li>
+        <li><b>兩個開關分工：</b>換引擎、模型或 effort 看「模型」分頁的「大腦換模型前」；只調輪替門檻看「設定」分頁的「大腦處置 token 用量」。</li>
+        <li><b>系統預設怎麼挑：</b>引擎是大腦選的，沒選過就用 Claude。模型和 effort 從你設的下限起跳，越難往右一格，詳見「引擎和模型」。大腦調過模型或 effort，就用它調的；但不會低於下限，最難那一級失敗後照樣往上升。</li>
+        <li><b>往上升什麼時候問：</b>跟角色上一件在同一個引擎用的比。模型比較強，或同一個模型但 effort 比較高，才算往上升。在這個引擎還沒跑過時，跟下限比。回到比較省的設定不問。大腦調過的模型或 effort 不再問一次，只有依難易度往上的部分才問。</li>
+        <li><b>Codex 不能用時：</b>系統預設、大腦選了 Codex 的角色，開關開著就建一則模型的事，選項是「改用 Claude」或「等 Codex」。改用 Claude：清掉大腦選的引擎，角色回到系統預設的 Claude，記成決定。等 Codex：角色停著，Codex 恢復後由心跳接續。開關關著就直接換回 Claude，事後記成決定。</li>
+        <li><b>等你回答時：</b>角色標成卡住，那件工作先放著；同一個角色後來的工作排在後面。心跳不叫醒它，也不說流程停住。模型的事存在 crew 的狀態裡，重開 Claude Code 之後還在。模型的事只能由你在面板回答，大腦不能代答。</li>
+        <li><b>大腦看得到的：</b><code>status</code> 多一行：每個角色在哪個引擎、哪個模型和 effort，以及 Codex 能不能用。</li>
+        <li><b>還是留在 6b：</b>自己挑選的角色卡住時的模型的事（沒登入、額度、失敗 3 次）、輪替門檻的設定、「某個模型用完」換同引擎的下一個模型、Codex 用到 90% 先排 Claude。</li>
+      </ul>
+      <p class="meta">冒煙驗證（2026-10-29 已跑）：① 請大腦呼叫 <code>tune</code>，把 PM 換到 Codex，面板出現 M-01「大腦想把 PM 換到 Codex（從 6.1 Terra・high 起，越難往上）」；<code>/crew approve M-01</code> 之後，PM 改成 Codex。② 開始一份寫到付款的 PRD，PM 這件要從 6.1 Terra・high 升到 Sol・high，出現 M-02，回答之前 PM 沒有開工；回答照舊，PM 在 Codex 上拆完，Codex 的紀錄寫的是 gpt-6.1-terra・high。③ Codex 沒登入、開關開著：出現 M-01；回答等 Codex，PM 停著；按接續又問一次（M-02）；回答改用 Claude，PM 在 Claude 上拆完，Codex 執行 0 次，記成一條決定。④ 同樣的情況、開關關著：PM 直接改回 Claude 拆完，記成一條決定。⑤ 面板：重開 Claude Code 之後讀回大腦的 M-01，UI/UX 那列寫「大腦想換」；按［好］之後變成「現在 Codex：大腦選的」；把 PM 的 Claude 下限改成 Opus，存進設定，階梯跟著變。</p>
+      <p class="meta">驗收前 code review 第一輪（2026-10-29，獨立 agent）：0 critical、3 important、7 minor，全部修了。① 工作擱在模型的事時，crew 說「流程停住了」，按接續會讓同一件跑兩次：改成擱著時不算停住，接續也不重發。② 問角色、送審草稿時工作被擱著，被當成沒送到，回覆會遺失：改成算已問；修這條時冒煙另外找到，角色等待期間做完的別件工作被當成這個問題的回覆，改成問題跟著工作一起等。③ 大腦只給 Codex 的模型、沒給引擎時，題目是空的：補上引擎。另外：同一題答兩次只算一次；回答時 Codex 已經不能用就重新決定；擱著的開工不會變成留言；重開後角色顯示「停著」；題目文字照設計稿改。修完重跑冒煙：接續和問角色的回覆正確，PM 只拆一次，ASK-01 收到回覆；大腦換 Astra 的題目在重開後讀得回來，核准後生效；Codex 沒登入的情況照舊。</p>
+      <p class="meta">第二輪：0 critical、3 important、3 minor。① 忙著的 Codex 角色收到別人的問題時，排隊沒帶問題，結果流程的報告被貼成回覆：改成每一種排隊都帶著問題。② 答「升級」之後，那一則訊息如果改成重新開工，同一題又問一次：改成重新開工時沿用已經決定的模型。③ 角色這一輪失敗時，排在後面的問題直接消失：改成每一題都貼「沒有回覆」，草稿審查記成沒完成，大腦問的會通知大腦。另外：擱著的工作沒能開始時，問題不會留著被別件的報告當成回覆；只調模型不會蓋掉當初換引擎的原因。「失敗後升級」的題目目前不會出現（流程還沒接上失敗升級），設計稿的「測試失敗 2 次」留到 6b 接上時照次數寫。修完冒煙：答升級後 PM 換到 Opus 重新開工，沒有再問，ASK-01 收到回覆。</p>
+      <p class="meta">第三輪：0 critical、0 important，第二輪的修法全部確認正確。另有 3 個 minor，都在「計時器交出的工作要等 Claude Code 下一個動作才能開始」這條路上（問題沒跟著等、agent 不在了沒通知大腦、等待期間被擱著還照樣開始），修了，收尾確認也正確。收尾確認又列出 3 個要好幾個少見條件同時成立才會碰到的 minor（從開工路徑進來的工作沒帶題號；等待時收走的問題沒有比對題號；PRD 換了時，被跳過的問題沒有通知），不影響驗收，排進驗收後的強化，和補測試一起做。</p>
+      <p class="meta">驗收回報（2026-10-29）：① Token 分頁按［自動］後畫面還停在「先問你」：設定其實存了，只是寫完設定沒重畫面板（0.5 就有，「開啟時打開面板」也一樣）；改成每次寫設定都重畫，實機按［自動］和［先問你］都會跟著變。② 系統預設的角色沒地方自己設成 Codex：使用者選「每個角色各自選」，系統預設那一列下面加「預設引擎: [ Claude ] [ Codex ]」。角色用的引擎：大腦換過的優先，再來是你選的，都沒有就是 Claude；你按的會蓋過大腦先前換的引擎。你選了 Codex、Codex 卻不能用時，開關開著問「這件改用 Claude／等 Codex」，關著就這一件改用 Claude 並跳通知；兩種都只影響這一件，設定不變，也不記成決定。實機：按 PM 的［Codex］之後，那一列寫「現在 Codex：你選的」，開始 PRD 後 PM 直接在 6.1 Terra・high 上跑，沒有問；Codex 沒登入時這一件改在 Claude 上跑，設定還是 Codex。</p>
+      <p class="meta">驗收回報 ③（2026-10-29）：Claude 的下限只有 Haiku／Sonnet／Opus，看不到代數，也沒有 Fable。使用者確認：系統預設的下限列每一族最新的一代（Haiku 5.5、Sonnet 5.5、Opus 5.5、Fable 5.1）；「自己挑選」列出所有還在提供的代數（Fable 5.1／5、Opus 5.5／5／4.8／4.7／4.6、Sonnet 5.5／5／4.6、Haiku 5.5／4.5；Haiku 4.5 沒有 effort，4.6 那一代沒有 xhigh）；「再失敗」那一格改用 Fable 5.1・xhigh，對應 Codex 的 Astra。實作時發現 Agent tool 的 model 只接受 sonnet、opus、haiku、fable 四個別名，傳完整 id 會被拒絕，所以舊代沒辦法直接指定。做法：crew 用那一族的別名開 agent，再由自己的 agent.spawn hook 換成完整 id；面板上的模型名稱用引擎實際解析出來的 id。effort 照原本的做法，在 turn.step 每次請求時套用；沒有 effort 的模型（Haiku 4.5）不加 effort。（中途一度以為 effort 沒有生效，後來確認 turn.step 本來就有套用，已撤回多註冊 effort 類型的改法。）實機：PM 固定 Fable 5.1・low、QA 固定 Haiku 4.5，對話紀錄的模型是 claude-fable-5-1 和 claude-haiku-4-5，兩個角色都完成並回報；對話紀錄裡 PM 每一次請求的 effort 都是 low（角色卡預設是 high，代表 turn.step 有改寫成功），QA 的 effort 是空的。大腦的 tune 也可以提議 fable。獨立 review 兩輪加上收尾，0 critical／0 important；剩下的 minor（同一角色同時兩次 spawn、Codex 失敗時提示文字不準）也修了。上一輪的 4 個 minor（d-1 你按的預設引擎蓋過大腦先前換的、d-2 等 Codex 時改成 Claude 會接著走、d-3 回答時才判斷大腦的移動還在不在、d-4 沒有 codex 指令時不能選 Codex，只有說了等 Codex 的角色才算在等）一起修了。</p>
+      <p class="meta">驗收回報 ④（2026-10-30）：討論串和記憶的文字在一行結尾被截斷；PM 在 Codex 上花了 token 也在工作，總覽卻是待命、今日 0。修法：所有表格的文字改成換行，不再截斷（只有進度長條維持一行）；總覽每個角色加［詳情］，看完整的這次／上次的工作和上次回報（保留換行，最多 12000 字，和討論串一樣先遮蔽秘密）；「正在做」被切掉時加「…」；討論超過 50 則時寫出實際則數，打開時說明較早的在 .crew/threads/ 的檔案；記憶超過 40 條時在清單上方說明，較早的用搜尋找；上方提示列維持一行摘要。總覽的「今日」加上 Codex 的 token，Codex 角色的 context 顯示「—」（Codex 不回報 context 大小），開始畫面有角色在工作時不再寫「五個角色都在待命」。使用者 repo 的紀錄顯示 PM 三輪之間確實是待命，其中一輪因為 Codex 回「model is at capacity」失敗。實機：PM 固定 Codex Terra low，工作時是進行中、context「—」，跑完今日 39K，［詳情］有完整的工作和回報；長討論、55 則討論、45 條記憶都正確。獨立 review 一輪加收尾，0 critical／0 important，兩個 minor（reset 後則數、［詳情］沒遮蔽）已修。</p>
+      <p class="meta">改的檔案：<code>router.ts</code>（<code>autoPick</code> 依下限、難易度和大腦的調整算出這一件的引擎、模型和 effort，另外判斷是不是往上升），<code>register.tsx</code>（設定裡的下限、<code>engineFor</code>、<code>tune</code>、模型的事的建立和回答、心跳、狀態存檔），<code>live.ts</code>（面板的模型的事、流程停住的判斷），<code>roles.ts</code>（crew 工具的參數），<code>types/index.d.ts</code>。</p></div></div>
+    <div class="phase"><span class="pn">6a′</span><div class="body"><h3>設計稿 artifact</h3>
+      <p class="meta"><code>board.ts</code>（<code>html</code>、<code>add_mockup</code>、<code>crew_mockup</code>、檢查），<code>designs.ts</code>（指紋算進 mockup），<code>review.ts</code>（審核頁），<code>register.tsx</code>（寫檔、請大腦發佈、<code>published</code>、<code>decide</code>、面板的一行和連結），<code>flow.ts</code>（補 mockup 的工作、UI/UX 的說明），<code>roles.ts</code>（工具參數）。</p>
+      <p class="meta">冒煙驗證：用 ARTOGO 看板的副本，讓 UI/UX 補 mockup，大腦發佈；在 artifact 裡核准一份、退回一份；看板、討論串和記憶都要記下，審核頁也要更新。</p></div></div>
+    <div class="phase"><span class="pn">6a″</span><div class="body"><h3>待你決定頁</h3>
+      <p class="meta"><code>review.ts</code>（外框、<code>data.json</code>、留言格式），<code>register.tsx</code>（頁面跟著 PRD 或草稿走、分派 <code>decide</code>、回答和草稿確認、要改的地方、選項），<code>live.ts</code>／<code>views.tsx</code>（面板合成一行、草稿卡片的連結、選項），<code>draft.ts</code>（要改的地方），<code>roles.ts</code>（<code>ask_person</code> 的選項）。</p>
+      <p class="meta">冒煙驗證：發佈一頁有草稿、設計稿和問題的範例；在頁面上回答一題、確認草稿，看 crew 記下並更新頁面。</p></div></div>
+    <div class="phase"><span class="pn">6b</span><div class="body"><h3>全部角色、失敗和額度</h3>
+      <p class="meta">每個角色的沙箱和動作權限；全端在 worktree、可上網；錯誤分類；自己挑選的角色卡住時的模型的事（M-xx）。換模型前詢問和大腦用 <code>tune</code> 換引擎已經提前到 6a。</p>
+      <p class="meta">冒煙驗證：五個角色各在 Codex 上跑一件；把 Codex 指向一個沒登入的目錄，看到 M-01；開關開和關各走一次升級。額度用完沒辦法故意製造，用錄下來的事件跑一次，真的用完標「沒覆蓋」。</p></div></div>
+    <div class="phase"><span class="pn">6c</span><div class="body"><h3>難易度與加權進度</h3>
+      <p class="meta"><code>board.ts</code> 的欄位和 <code>rate</code>；<code>difficulty.ts</code> 的四個訊號和權重；<code>live.ts</code> 的進度改加權；路由改讀難易度；看板、進度分頁接上。</p>
+      <p class="meta">冒煙驗證：用 hunterest 看板的副本，讓 Tech lead 評等；讓一件測試失敗兩次，看它往上一級、進度往下掉、「最近調整」出現。</p></div></div>
+    <div class="phase"><span class="pn">6d</span><div class="body"><h3>Token 稽核</h3>
+      <p class="meta"><code>audit.ts</code> 記錄、存檔、30 天清理；瓶頸偵測；什麼時候告訴大腦；Token 分頁接上。大腦計數少算已經先修好（見 Token 稽核）。</p>
+      <p class="meta">冒煙驗證：跑半天的工作，紀錄加總和 transcript 逐筆加總相差 0；製造一次超過 10K 的工具結果，看到馬上提醒。</p></div></div>
+    <div class="phase"><span class="pn">6e</span><div class="body"><h3>網頁（本機）</h3>
+      <p class="meta">先驗證 <code>$.process.spawn</code> 開 node、<code>$.http.fetch</code> 走 socket 都能用；<code>web/bridge.mjs</code>；真的網頁；一次性鑰匙；對話雙向；啟動時打開。</p>
+      <p class="meta">冒煙驗證：打開網頁、按幾個按鈕、從網頁問大腦並看到回答；不帶鑰匙、換 Host、跨站 POST 都被拒絕；關掉 Claude Code 後網頁連不到。</p></div></div>
+    <div class="phase"><span class="pn">6f</span><div class="body"><h3>手機</h3>
+      <p class="meta"><code>tailnet.ts</code>：找 Tailscale、擁有者、serve 子程序、配對、裝置清單和移除。</p>
+      <p class="meta">冒煙驗證：你用手機配對、看畫面、跟大腦說話；配對碼錯 5 次作廢；移除後連不到。tailnet 裡沒有別人的帳號，「別人被擋」標「沒覆蓋」。</p></div></div>
+    <div class="phase"><span class="pn">上架</span><div class="body"><h3>強化、QA 複驗、0.7.0</h3>
+      <p class="meta">你驗收後才做：補測試、獨立的資安和架構審查、critical 和 important 清零、重走一次你驗收過的路徑。</p></div></div>
+  </div>
+</section>
+
+<section id="verify">
+  <h2>驗證方式</h2>
+  <h3>驗收前（每一段）</h3>
+  <p class="prose">自己在真的 Claude Code 裡跑，看 debug log 和 transcript，附截圖或指令輸出；面板和網頁都要實際操作。沒跑過的流程標「沒覆蓋」，不算完成。</p>
+  <h3>驗收後補的測試</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>對象</th><th>測什麼</th></tr></thead>
+      <tbody>
+        <tr><td><code>codexArgv</code></td><td>每個角色的沙箱、網路、effort；從不出現 danger-full-access；工作內容不在參數裡</td></tr>
+        <tr><td>Codex 事件解析</td><td>全新和接續的用量（累計相減）、錯誤分類、半途結束</td></tr>
+        <tr><td><code>applyActions</code></td><td>每種動作的成功和退回；全端寫看板被拒；兩次退回後標卡住</td></tr>
+        <tr><td>引擎選擇</td><td>開關開／關 × 系統預設／自己挑選 × Codex 可用／不可用；Tech lead 和全端的下限</td></tr>
+        <tr><td>難易度</td><td>四個訊號各自往上調、重評往下、沒評等時的繼承、加權進度的數字</td></tr>
+        <tr><td>稽核</td><td>紀錄加總對得上 usage、30 天清理、每個偵測的條件和邊界、只在新瓶頸或處置沒效時通知</td></tr>
+        <tr><td>橋接</td><td>鑰匙一次性、Host 白名單、Origin 和自訂 header、cookie 屬性、body 上限、配對碼次數和期限、移除裝置</td></tr>
+        <tr><td>Tailscale</td><td>port 被占用不開、子程序結束後 serve 設定消失、擁有者帳號不出現在任何輸出</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="risks">
+  <h2>風險與限制</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>風險或限制</th><th>處理</th></tr></thead>
+      <tbody>
+        <tr><td>Codex 的設定鍵和事件格式隨版本變（這次就有好幾個設定鍵無效）</td><td>crew 記下測過的版本；開工前先用 <code>debug prompt-input</code> 確認技能真的停用了，沒停用就照常跑並在 Token 分頁標出來</td></tr>
+        <tr><td>額度真的用完的事件沒實際看過</td><td>文字取自 0.162.1 執行檔，另外讀 rollout 的 <code>rate_limits</code>；看不懂的錯誤當失敗並給你原文</td></tr>
+        <tr><td>Codex 角色拿得到派子代理的工具（0.162.1 關不掉）</td><td>子代理沿用同一個沙箱；角色卡禁止；事件流一出現就記下並告訴大腦。Codex 出了開關就加上</td></tr>
+        <tr><td>你的 AGENTS.md 一直會被讀到，每次全新執行多約 1 萬字</td><td>你選了沿用 <code>~/.codex</code>；角色卡用開發者指令壓過它；喚醒用接續，快取命中 98.5%，所以只有每個角色的第一輪付全價</td></tr>
+        <tr><td>Codex 角色做到一半不能問你</td><td>設計稿已經寫明；問題在這一輪結束時出現</td></tr>
+        <tr><td>手機上不能回答 Claude Code 的權限詢問</td><td>權限詢問只出現在終端機；大腦停在那裡時，網頁對話會顯示「大腦在等終端機的確認」</td></tr>
+        <tr><td>網頁需要 Node.js 18 以上</td><td>找不到就只有網頁不能用，其他照常</td></tr>
+        <tr><td>電腦睡眠或 Claude Code 關掉時手機連不到</td><td>預期行為，跟現在的常駐方式一樣</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="decided">
+  <div class="decide">
+    <h2>已確認的決定（設計稿第 1–4 版）</h2>
+    <ol>
+      <li>crew 直接跑 <code>codex exec</code>；五個角色都可以換引擎，預設 Claude；每個角色各自選 effort。</li>
+      <li>每個角色可選系統預設（大腦挑引擎，從你定的下限依難易度往上）或自己挑選（固定，不往上）；Claude 和 Codex 都可以設下限。</li>
+      <li>Codex 沿用角色在 Claude 上的權限；全端可以上網；Tech lead 和全端在 Codex 上至少 6.1 Sol・xhigh；PM 預設 Terra・high，UI/UX 和 QA 預設 Terra・medium。</li>
+      <li>「換模型前詢問」開著時，任何換引擎、模型、effort 都先問，角色停著等；關掉都不問。自己挑選的角色卡住時不管開關都問；失敗 3 次問「這件升一格／照舊」。</li>
+      <li>模型的事跟其他問題分開問；換了從下一件工作開始。</li>
+      <li>難易度看難不難，不看範圍大小；Tech lead 評並寫理由，四個訊號自動往上；同一個難易度拿來選模型、門檻和算進度（易 1、中 2、難 4、極難 8）。</li>
+      <li>輪替門檻：依難易度由大腦調，或你固定、大腦不動。</li>
+      <li>Token：每次執行都記下來，跨 session 保留；每件做完由程式算瓶頸，有新的或處置沒效才告訴大腦；session 開始時再說還沒處置完的；單次超標馬上提醒。</li>
+      <li>啟動 crew 時開網頁，可以跟大腦對話；網頁只綁 127.0.0.1、網址帶一次性鑰匙。</li>
+      <li>手機用 Tailscale，走 http，只放行你的帳號和配對過的裝置，不用 funnel。</li>
+      <li>Codex 角色沿用你的 <code>~/.codex</code>，不另外登入；crew 用 <code>--ignore-user-config</code> 不載入你的 config.toml（MCP 也就不在），再關掉上網搜尋和其他越權的功能，角色卡用開發者指令放（2026-10-29）。</li>
+    </ol>
+  </div>
+</section>
+
+<footer>依據：Claude Code 2.1.312 的 mod 型別定義（<code>$.process.spawn</code>、<code>$.http.fetch</code>、<code>$.prompt.submit</code>、<code>turn.complete</code>、<code>$.env</code>、<code>$.store</code>）、codex-cli 0.162.1 實測、Tailscale 1.104.2 實測、hunterest 2026-10-28 的 crew 紀錄與 transcript、crew 0.6.0 原始碼（<code>roles.ts</code> 的 <code>omitClaudeMd</code>、<code>live.ts</code> 的進度、<code>router.ts</code> 的 <code>tierFor</code>）。</footer>
+
+</div>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs'
+const dark = document.documentElement.dataset.theme === 'dark' || (document.documentElement.dataset.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'neutral', fontFamily: 'Noto Sans TC, PingFang TC, sans-serif' })
+</script>

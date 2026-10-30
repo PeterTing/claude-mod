@@ -3,19 +3,23 @@ import {
   barCells,
   hitRate,
   percent,
+  ENGINE_NAMES,
   ITEM_STATUS_NAMES,
+  CODEX_WAIT,
   MEMORY_TYPE_NAMES,
   ROLE_NAMES,
   ROLE_STATE_NAMES,
   tokens,
 } from './model'
-import type { Decision, Feature, Gate, Item, ItemStatus, LayerState, Progress, RequirementRow, RoleId, RoleRow, Route, Snapshot, StageCell, Takeover, Tuning } from './model'
+import type { Audit, Decision, Engine, Engines, Feature, Gate, Item, ItemStatus, LayerState, ModelAsk, Pick, Progress, RequirementRow, RoleId, RoleModels, RoleRow, Route, Snapshot, StageCell, Takeover, Tuning } from './model'
 import { failedOf, MAX_SENDS, pendingOf, reviewMark, reviewWord, sentOut } from './draft'
 import { redact } from './memory'
 import { cut } from './prd'
+import { CLAUDE_EFFORTS, CLAUDE_FIXED_MODELS, CLAUDE_MODELS, claudeEfforts, codexChoices, codexLabel, CODEX_MINIMUM, fitEffort, labelOf, ladderOf, limitsByTier, pickSaid, TIER_NAMES } from './router'
+import type { Model } from './router'
 
 /** The elements a surface draws with, as `$.ui.resolve(e)` hands them over; a phone's has no text field or picker. */
-export type Elements = { Box: any; Text: any; Button: any; Input?: any; Select?: any }
+export type Elements = { Box: any; Text: any; Button: any; Input?: any; Select?: any; Link?: any }
 
 /** What the person can do in the pane: everything crew does on their word, with no command. Each may take time: it resolves once done. */
 export type Actions = {
@@ -37,8 +41,14 @@ export type Actions = {
   reject: (question: string, reason?: string) => void | Promise<void>
   /** Opens a design to read in the pane, or closes it with null. */
   viewDesign: (design: string | null) => void | Promise<void>
+  /** The designs decided in the pane, one by one, rather than on the review page. */
+  reviewInPane: () => void | Promise<void>
+  /** The person decided on the page: the brain reads its comments, which may not have woken it. */
+  readPage: () => void | Promise<void>
   /** Opens a role's question field, or closes it with null; asks it; rotates it. */
   openAsk: (role: RoleId | null) => void | Promise<void>
+  /** Shows a role's work and last report in full under its row, or hides them with null. */
+  openDetail: (role: RoleId | null) => void | Promise<void>
   ask: (role: RoleId, text: string) => void | Promise<void>
   rotate: (role: RoleId) => void | Promise<void>
   testCommand: (text: string) => void | Promise<void>
@@ -55,9 +65,30 @@ export type Actions = {
   takeover: (on: boolean) => void | Promise<void>
   /** The person's yes to the brain's draft PRD: the flow starts on it. */
   confirmDraft: () => void | Promise<void>
+  /**
+   * A role's models from its next piece of work: crew's default or the
+   * person's own; an engine's floor; the model it is fixed on; its rotation
+   * threshold. Whether the brain asks before it moves a role to another model.
+   */
+  roleMode: (role: RoleId, mode: RoleModels['mode']) => void | Promise<void>
+  roleFloor: (role: RoleId, engine: Engine, pick: Partial<Pick>) => void | Promise<void>
+  roleEngine: (role: RoleId, engine: Engine) => void | Promise<void>
+  roleFixed: (role: RoleId, change: Partial<RoleModels['fixed']>) => void | Promise<void>
+  roleLimit: (role: RoleId, limit: RoleModels['limit']) => void | Promise<void>
+  askBeforeSwitch: (ask: boolean) => void | Promise<void>
+  /** A question on a role's model, settled by one of its two answers. */
+  modelAnswer: (id: string, yes: boolean) => void | Promise<void>
+  checkCodex: () => void | Promise<void>
+  /** crew's web page: opened in the browser now, or each time crew starts; open to the person's tailnet, and the phones paired with it. */
+  openWeb: () => void | Promise<void>
+  webOnStart: (open: boolean) => void | Promise<void>
+  tailnet: (open: boolean) => void | Promise<void>
+  pairDevice: () => void | Promise<void>
+  unpairDevice: (id: string) => void | Promise<void>
+  /** How many pieces of work the brain lets go by between looks at the token bottlenecks. */
 }
 
-export type View = { tab: CrewTab; scenario: CrewScenario; thread: string | null; gate: string | null; asking: string | null; confirming: boolean }
+export type View = { tab: CrewTab; scenario: CrewScenario; thread: string | null; gate: string | null; asking: string | null; detail: string | null; confirming: boolean }
 
 const ROLE_IDS: readonly RoleId[] = ['pm', 'uiux', 'fullstack', 'qa', 'techlead']
 
@@ -78,6 +109,14 @@ export async function actOn(act: Actions, view: View, snap: Snapshot, key: strin
     if (key === 'prd-path') return did(act.start(value))
     if (key === 'prd-pick' || key === 'prd-switch') return did(act.pick(value))
     if (key === 'test-command') return did(act.testCommand(value))
+    const floored = key.match(/^floor-(\w+)-(claude|codex)-(model|effort)$/)
+    const floorRole = role(floored?.[1])
+    if (floored !== null && floorRole !== undefined) return did(act.roleFloor(floorRole, floored[2] as Engine, { [floored[3] as 'model' | 'effort']: value }))
+    const fixedPick = key.match(/^fixed-(\w+)-(model|effort)$/)
+    const fixedRole = role(fixedPick?.[1])
+    if (fixedPick !== null && fixedRole !== undefined) return did(act.roleFixed(fixedRole, { [fixedPick[2] as 'model' | 'effort']: value }))
+    const limited = role(id('limit-'))
+    if (limited !== undefined) return did(act.roleLimit(limited, value === 'tier' ? 'tier' : Number(value)))
     if (key === 'recall') return did(act.recall(value))
     if (key === 'remember') return did(act.remember(value))
     const answer = id('answer-')
@@ -105,6 +144,17 @@ export async function actOn(act: Actions, view: View, snap: Snapshot, key: strin
     'takeover-on': () => act.takeover(true),
     'takeover-off': () => act.takeover(false),
     'confirm-draft': () => act.confirmDraft(),
+    'review-in-pane': () => act.reviewInPane(),
+    'read-page': () => act.readPage(),
+    'codex-check': () => act.checkCodex(),
+    'ask-switch-on': () => act.askBeforeSwitch(true),
+    'ask-switch-off': () => act.askBeforeSwitch(false),
+    'web-open': () => act.openWeb(),
+    'web-on-start': () => act.webOnStart(true),
+    'web-not-on-start': () => act.webOnStart(false),
+    'tailnet-on': () => act.tailnet(true),
+    'tailnet-off': () => act.tailnet(false),
+    'pair-device': () => act.pairDevice(),
   }
   const run = simple[key]
   if (run !== undefined) return did(run())
@@ -114,13 +164,32 @@ export async function actOn(act: Actions, view: View, snap: Snapshot, key: strin
   if (reject !== undefined) return did(act.reject(reject))
   const design = id('view-')
   if (design !== undefined) return did(act.viewDesign(design))
+  const moded = key.match(/^mode-(\w+)-(auto|fixed)$/)
+  const modeRole = role(moded?.[1])
+  if (moded !== null && modeRole !== undefined) return did(act.roleMode(modeRole, moded[2] as RoleModels['mode']))
+  const fixedOn = key.match(/^fixed-(\w+)-(claude|codex)$/)
+  const fixedOnRole = role(fixedOn?.[1])
+  if (fixedOn !== null && fixedOnRole !== undefined) return did(act.roleFixed(fixedOnRole, { engine: fixedOn[2] as Engine }))
+  const defaulted = key.match(/^engine-(\w+)-(claude|codex)$/)
+  const defaultRole = role(defaulted?.[1])
+  if (defaulted !== null && defaultRole !== undefined) return did(act.roleEngine(defaultRole, defaulted[2] as Engine))
+  const unpaired = id('unpair-')
+  if (unpaired !== undefined && snap.web?.tailnet?.devices.some(d => d.id === unpaired) === true) return did(act.unpairDevice(unpaired))
+  const answered = key.match(/^model-(yes|no)-(.+)$/)
+  if (answered !== null && snap.modelAsks?.some(a => a.id === answered[2]) === true) return did(act.modelAnswer(answered[2] ?? '', answered[1] === 'yes'))
   const rotated = role(id('rotate-'))
   if (rotated !== undefined) return did(act.rotate(rotated))
   const opened = role(id('ask-'))
   if (opened !== undefined) return did(act.openAsk(view.asking === opened ? null : opened))
+  const detailed = role(id('detail-'))
+  if (detailed !== undefined) return did(act.openDetail(view.detail === detailed ? null : detailed))
   const option = id('prd-option-')
   const prd = option === undefined ? undefined : snap.start?.prds[Number(option)]
   if (prd !== undefined) return did(act.pick(prd.path))
+  // A question's option answers with its words, as the decision on screen lists them.
+  const picked = key.match(/^option-(.+)-(\d)$/)
+  const chosen = picked === null ? undefined : snap.decisions.find(d => d.id === picked[1] && d.kind === undefined)?.options?.[Number(picked[2])]
+  if (picked !== null && chosen !== undefined) return did(act.answer(picked[1] ?? '', chosen))
   return false
 }
 
@@ -131,6 +200,7 @@ const TABS: readonly [CrewTab, string][] = [
   ['threads', '討論'],
   ['memory', '記憶'],
   ['tokens', 'Token'],
+  ['models', '模型'],
   ['settings', '設定'],
 ]
 
@@ -145,6 +215,8 @@ const SCENARIOS: readonly [CrewScenario, string][] = [
   ['leading', '大腦接手'],
   ['drafting', 'PRD 草稿審查中'],
   ['confirm', 'PRD 草稿待確認'],
+  ['codex', 'Codex 沒登入'],
+  ['quota', 'Codex 額度用完'],
 ]
 
 /** A text field where the surface has one; where it has none (a phone), where to type instead. */
@@ -175,7 +247,8 @@ export const bar = (percent: number, width = 20): string => {
   return `${'█'.repeat(filled)}${'░'.repeat(width - filled)}`
 }
 
-const percentOf = (p: Progress): number => percent(p.done, p.total)
+/** The percentage done, each item weighed by its size where the board says it. */
+const percentOf = (p: Progress): number => (p.weighted === undefined ? percent(p.done, p.total) : percent(p.weighted.done, p.weighted.total))
 
 const STAGE_COLORS = { done: 'success', active: 'suggestion', pending: 'subtle' } as const
 
@@ -198,6 +271,7 @@ function ProgressSummary({ el, p }: { el: Elements; p: Progress }) {
         <Text color="success">{bar(pct)}</Text>
         <Text bold>{pct}%</Text>
         <Text dimColor>
+          {p.weighted === undefined ? '' : '依難易度加權 · '}
           {p.done}/{p.total} 項
         </Text>
       </Box>
@@ -269,7 +343,27 @@ function ProgressTab({ el, snap }: { el: Elements; snap: Snapshot }) {
   const most = Math.max(1, ...p.daily.map(d => d.done))
   return (
     <Box flexDirection="column" gap={1}>
-      {ProgressSummary({ el, p })}
+      <Box flexDirection="column">
+        {ProgressSummary({ el, p })}
+        {p.weighted !== undefined && (
+          <Box flexDirection="column">
+            <Text dimColor>加權：每一項照它的難易度算，易 1・中 2・難 4・極難 8；Tech lead 還沒評的算中。</Text>
+            <Text dimColor>難易度看難不難，不看範圍大小：Tech lead 拆單時評，寫一句理由，</Text>
+            <Text dimColor>例如哪裡不確定、碰不碰金流或權限、跨幾個模組、有沒有現成做法、好不好測。</Text>
+            <Text dimColor>測試失敗 2 次、review 被退回 2 次、PM 和 QA 來回超過 6 次、</Text>
+            <Text dimColor>用掉的 token 超過同級平均 2 倍，各往上調一級。做完的照最後的難易度算，</Text>
+            <Text dimColor>
+              所以調高時百分比可能往下掉。不加權是 {p.done}/{p.total} 項。
+            </Text>
+            {p.rated !== undefined &&
+              p.rated.map(r => (
+                <Text color="warning">
+                  最近調整：{r.id} {TIER_NAMES[r.from]} → {TIER_NAMES[r.to]}：{r.why} · 進度 {r.before}% → {r.after}%
+                </Text>
+              ))}
+          </Box>
+        )}
+      </Box>
       {snap.requirements !== undefined && snap.requirements.length > 0 && RequirementList({ el, rows: snap.requirements })}
       <Box flexDirection="column">
         <Text bold>各功能</Text>
@@ -280,7 +374,7 @@ function ProgressTab({ el, snap }: { el: Elements; snap: Snapshot }) {
                 el,
                 cells: [
                   ['26%', `${f.id} ${f.title}`],
-                  ['26%', bar(f.percent, 16), { color: f.percent === 100 ? 'success' : 'suggestion' }],
+                  ['26%', bar(f.percent, 16), { color: f.percent === 100 ? 'success' : 'suggestion', wrap: 'truncate-end' }],
                   ['8%', `${f.percent}%`],
                   ['40%', layers(f), { dimColor: true }],
                 ],
@@ -289,7 +383,7 @@ function ProgressTab({ el, snap }: { el: Elements; snap: Snapshot }) {
       </Box>
       <Box flexDirection="column">
         <Text bold>每天完成</Text>
-        {p.daily.map(d => Row({ el, cells: [['10%', d.day, { dimColor: true }], ['50%', bar((d.done / most) * 100, 14)], ['40%', `${d.done} 項`]] }))}
+        {p.daily.map(d => Row({ el, cells: [['10%', d.day, { dimColor: true }], ['50%', bar((d.done / most) * 100, 14), { wrap: 'truncate-end' }], ['40%', `${d.done} 項`]] }))}
       </Box>
       <Box flexDirection="column">
         <Text bold>最近完成</Text>
@@ -345,16 +439,22 @@ function GateDetail({ el, g, act, board }: { el: Elements; g: Gate; act: Actions
   )
 }
 
-const route = (r: Route | undefined): string => (r === undefined ? '—' : `${r.tier} ${r.model}・${r.effort}`)
+/** A route in a table cell: a Codex model without its generation, `XL Sol・xhigh`; the whole name is in 設定. */
+const route = (r: Route | undefined): string => (r === undefined ? '—' : `${TIER_NAMES[r.tier]} ${r.engine === 'codex' ? codexLabel(r.model, true) : r.model}・${r.effort}`)
 
-/** One table row: each cell a width and a text, and what follows the cells (a row's buttons). */
+/**
+ * One table row: each cell a width and a text, and what follows the cells (a
+ * row's buttons). A text longer than its cell wraps, the row as tall as its
+ * longest cell: nothing a table shows is cut. A bar, drawn to a width, says
+ * `wrap: 'truncate-end'`.
+ */
 function Row({ el, cells, tail }: { el: Elements; cells: readonly [string, string, Record<string, unknown>?][]; tail?: unknown }) {
   const { Box, Text } = el
   return (
     <Box flexDirection="row">
       {cells.map(([width, text, props]) => (
         <Box width={width}>
-          <Text wrap="truncate-end" {...(props ?? {})}>
+          <Text wrap="wrap" {...(props ?? {})}>
             {text}
           </Text>
         </Box>
@@ -374,7 +474,7 @@ function Header({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapshot;
       : waitsForWord(snap)
         ? '大腦接手中 · 還沒有 PRD'
         : snap.prd !== null
-          ? `${snap.prd.id} ${snap.prd.title} · 進度 ${snap.prd.progress}% · 今日 ${tokens(snap.today)} tok`
+          ? `${snap.prd.id} ${snap.prd.title} · 進度 ${snap.prd.progress}% · 今日 ${tokens(snap.today)} tok${snap.codexToday === undefined ? '' : ` · Codex ${tokens(snap.codexToday)}`}`
           : '還沒有 PRD'
   return (
     <Box flexDirection="column">
@@ -388,7 +488,7 @@ function Header({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapshot;
       {snap.alignment !== undefined && Alignment({ el, a: snap.alignment })}
       {snap.resident !== undefined && ResidentLine({ el, r: snap.resident })}
       {isDemo && (
-        <Box flexDirection="row" gap={1}>
+        <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
           <Text dimColor>示意情境</Text>
           {SCENARIOS.map(([id, label]) => (
             <Button key={`scenario-${id}`} label={label} variant={view.scenario === id ? 'primary' : 'secondary'} onPress={() => act.scenario(id)} />
@@ -467,23 +567,29 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
         </Text>
       )}
       {snap.prd === null && snap.boardProblem?.prd === undefined && StartScreen({ el, snap, act })}
+      {snap.modelAsks !== undefined && snap.modelAsks.length > 0 && ModelAsks({ el, asks: snap.modelAsks, act })}
       <Box flexDirection="column">
-        {Row({ el, cells: [['11%', '角色', { dimColor: true }], ['9%', '狀態', { dimColor: true }], ['28%', '正在做', { dimColor: true }], ['17%', '模型', { dimColor: true }], ['11%', 'context', { dimColor: true }], ['8%', '今日', { dimColor: true }]] })}
+        {Row({ el, cells: [['11%', '角色', { dimColor: true }], ['9%', '狀態', { dimColor: true }], ['25%', '正在做', { dimColor: true }], ['20%', '模型', { dimColor: true }], ['11%', 'context', { dimColor: true }], ['8%', '今日', { dimColor: true }]] })}
         {snap.roles.map(r => (
           <Box flexDirection="column">
             {Row({ el, cells: [
                 ['11%', ROLE_NAMES[r.id]],
                 ['9%', ROLE_STATE_NAMES[r.state], { color: STATE_COLORS[r.state] }],
-                ['28%', r.doing],
-                ['17%', route(r.route), { dimColor: r.route === undefined }],
-                ['11%', `${tokens(r.context)}/${tokens(r.limit)}`, { color: r.context / r.limit > 0.85 ? 'warning' : undefined }],
+                ['25%', r.doing],
+                ['20%', route(r.route), { dimColor: r.route === undefined }],
+                // Codex tells no context size: its thread's is not crew's to count.
+                r.engine === 'codex' ? ['11%', '—', { dimColor: true }] : ['11%', `${tokens(r.context)}/${tokens(r.limit)}`, { color: r.context / r.limit > 0.85 ? 'warning' : undefined }],
                 ['8%', tokens(r.today)],
-              ], tail: snap.prd === null ? undefined : (
+              ], tail: (
                 <Box flexDirection="row" gap={1}>
-                  <Button key={`ask-${r.id}`} label="問" onPress={() => act.openAsk(view.asking === r.id ? null : r.id)} />
-                  <Button key={`rotate-${r.id}`} label="輪替" onPress={() => act.rotate(r.id)} />
+                  {(r.task !== undefined || r.report !== undefined) && (
+                    <Button key={`detail-${r.id}`} label="詳情" variant={view.detail === r.id ? 'primary' : 'secondary'} onPress={() => act.openDetail(view.detail === r.id ? null : r.id)} />
+                  )}
+                  {snap.prd !== null && <Button key={`ask-${r.id}`} label="問" onPress={() => act.openAsk(view.asking === r.id ? null : r.id)} />}
+                  {snap.prd !== null && <Button key={`rotate-${r.id}`} label="輪替" onPress={() => act.rotate(r.id)} />}
                 </Box>
               ) })}
+            {view.detail === r.id && RoleDetail({ el, r })}
             {view.asking === r.id && Field({ el, id: `ask-${r.id}-text`, label: `問 ${ROLE_NAMES[r.id]}`, placeholder: '你的問題', submit: '送出', what: '問題', onSubmit: text => act.ask(r.id, text) })}
           </Box>
         ))}
@@ -508,7 +614,7 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
       {snap.alerts.length > 0 && Alerts({ el, alerts: snap.alerts })}
       {snap.decisions.length > 0 && (
         <Box flexDirection="column">
-          <Text color="warning">待你決定（{snap.decisions.length}）</Text>
+          <Text color="warning">待你決定（{waitingCount(snap)}）</Text>
           {snap.decisions.map(d => DecisionRow({ el, d, act }))}
         </Box>
       )}
@@ -527,27 +633,61 @@ function Overview({ el, snap, view, act }: { el: Elements; snap: Snapshot; view:
   )
 }
 
+/** A role's work and last report in full, under its row: the table shows the work's first line. */
+function RoleDetail({ el, r }: { el: Elements; r: RoleRow }) {
+  const { Box, Text } = el
+  return (
+    <Box flexDirection="column" paddingLeft={2}>
+      <Text dimColor>{r.state === 'working' ? '這次的工作' : '上次的工作'}</Text>
+      <Text>{r.task ?? '—'}</Text>
+      {r.report !== undefined && r.report !== '' && <Text dimColor>上次回報</Text>}
+      {r.report !== undefined && r.report !== '' && <Text>{r.report}</Text>}
+    </Box>
+  )
+}
+
+/** How many things wait for the person: a row for the decide page counts each it holds. */
+const waitingCount = (snap: Snapshot): number => snap.decisions.reduce((n, d) => n + (d.count ?? 1), 0)
+
 /** One thing that waits for the person, with what settles it: an answer, a press, or a reason to send a design back. */
 function DecisionRow({ el, d, act }: { el: Elements; d: Decision; act: Actions }) {
   const { Box, Text, Button } = el
   const who = d.from === 'crew' ? 'crew' : d.from === 'brain' ? '大腦' : ROLE_NAMES[d.from]
+  // A question with buttons has them on a row of their own, so a long question wraps across the pane and not beside them.
+  // The review row is one line for many designs: its question says what it is, with no number of its own.
+  const head = <Text>{d.kind === 'review' ? d.question : `${d.id} ${d.question}`}</Text>
   return (
     <Box flexDirection="column">
+      {d.kind !== undefined && head}
       <Box flexDirection="row" gap={1}>
-        <Text>
-          {d.id} {d.question}
-        </Text>
+        {d.kind === undefined && head}
         <Text dimColor>
           {who} · {d.age}
         </Text>
         {d.kind === 'design' && d.design !== undefined && <Button key={`view-${d.design}`} label="看設計稿" onPress={() => act.viewDesign(d.design ?? null)} />}
-        {d.kind !== undefined && <Button key={`approve-${d.id}`} label="核准" variant="primary" onPress={() => act.approve(d.id)} />}
+        {(d.kind === 'review' || d.kind === 'design') && d.url !== undefined && ReviewLink({ el, url: d.url })}
+        {d.kind === 'review' && d.url !== undefined && <Button key="read-page" label="我在頁面上決定好了" onPress={() => act.readPage()} />}
+        {d.kind === 'review' && d.inPane === true && <Button key="review-in-pane" label="改在面板決定" onPress={() => act.reviewInPane()} />}
+        {(d.kind === 'design' || d.kind === 'proposal') && <Button key={`approve-${d.id}`} label="核准" variant="primary" onPress={() => act.approve(d.id)} />}
         {d.kind === 'proposal' && <Button key={`reject-${d.id}`} label="不要" onPress={() => act.reject(d.id)} />}
       </Box>
-      {d.kind === undefined && Field({ el, id: `answer-${d.id}`, label: '回答', placeholder: '你的回答', submit: '送出', what: '回答', onSubmit: text => act.answer(d.id, text) })}
+      {d.kind === undefined && d.options !== undefined && (
+        <Box flexDirection="column">
+          {d.options.map((o, i) => (
+            <Button key={`option-${d.id}-${i}`} label={`${'ABCD'.charAt(i)} ${o}`} onPress={() => act.answer(d.id, o)} />
+          ))}
+        </Box>
+      )}
+      {d.kind === undefined && Field({ el, id: `answer-${d.id}`, label: '回答', placeholder: d.options === undefined ? '你的回答' : '或自己寫', submit: '送出', what: '回答', onSubmit: text => act.answer(d.id, text) })}
       {d.kind === 'design' && Field({ el, id: `reject-${d.id}`, label: '退回原因', placeholder: '要改什麼', submit: '退回', what: '退回原因', onSubmit: text => act.reject(d.id, text) })}
     </Box>
   )
+}
+
+/** The decide page's link: a link where the surface draws one, else the address to open. */
+function ReviewLink({ el, url }: { el: Elements; url: string }) {
+  const { Text, Link } = el
+  return <Text key="review-url">{Link === undefined ? `開待你決定頁：${url}` : <Link href={url} label="［開待你決定頁 ↗］" />}</Text>
 }
 
 /**
@@ -599,7 +739,10 @@ function TakeoverScreen({ el, snap, act }: { el: Elements; snap: Snapshot; act: 
       </Text>
       <Text>審查：{reviewsLine(draft)}</Text>
       {draft.stage === 'confirm' && draft.note !== undefined && <Text>大腦：{draft.note}</Text>}
-      {draft.stage === 'confirm' ? (
+      {draft.url !== undefined && ReviewLink({ el, url: draft.url })}
+      {draft.stage === 'confirm' && draft.change !== undefined ? (
+        <Text>你要改：{draft.change}（大腦修改中，改好會再請你確認）</Text>
+      ) : draft.stage === 'confirm' ? (
         <Box flexDirection="row" gap={1}>
           <Button key="confirm-draft" label="確認，開始" variant="primary" onPress={() => act.confirmDraft()} />
           <Text dimColor>在主對話回覆大腦也可以。開始後 PM 先把它拆成功能和驗收條件。</Text>
@@ -620,6 +763,8 @@ function StartScreen({ el, snap, act }: { el: Elements; snap: Snapshot; act: Act
   const { Box, Text, Button } = el
   const takenOver = snap.takeover?.on === true
   const drafting = takenOver && snap.takeover?.draft !== undefined
+  // A question asked with no PRD under way still has a role at work.
+  const working = snap.roles.filter(r => r.state === 'working').map(r => ROLE_NAMES[r.id])
   return (
     <Box flexDirection="column" gap={1}>
       {!takenOver && <Text bold>crew 已載入，還沒有開始的 PRD。</Text>}
@@ -642,9 +787,337 @@ function StartScreen({ el, snap, act }: { el: Elements; snap: Snapshot; act: Act
             <Button key="start" label="開始" variant={takenOver ? 'secondary' : 'primary'} onPress={() => act.start()} />
             {!takenOver && <Button key="not-now" label="這次不用" onPress={() => act.notNow()} />}
           </Box>
-          <Text dimColor>PM 會先把 PRD 拆成功能和驗收條件。五個角色都在待命，沒有工作時不花 token。</Text>
+          <Text dimColor>
+            PM 會先把 PRD 拆成功能和驗收條件。
+            {working.length === 0 ? '五個角色都在待命，沒有工作時不花 token。' : `${working.join('、')} 正在工作，其他角色待命，沒有工作時不花 token。`}
+          </Text>
         </Box>
       )}
+    </Box>
+  )
+}
+
+/** Codex as crew last found it: what the line says, and its color. */
+const codexLine = (codex: Engines['codex']): [string, string] => {
+  if (codex.state === 'ready' && codex.limited !== undefined) return [`Codex ⚠ 額度用完，${codex.limited} · 已登入（${codex.login === 'chatgpt' ? 'ChatGPT 帳號' : 'API key'}）`, 'warning']
+  if (codex.state === 'ready') return [`Codex ✓ 已登入（${codex.login === 'chatgpt' ? 'ChatGPT 帳號' : 'API key'}）· codex-cli ${codex.version} · ${codex.checked}檢查`, 'success']
+  if (codex.state === 'logged-out') return [`Codex ✗ 還沒登入 · codex-cli ${codex.version} · ${codex.checked}檢查`, 'warning']
+  return [`Codex ✗ 這台電腦找不到 codex 指令 · ${codex.checked}檢查`, 'warning']
+}
+
+/** Whether Codex can take work now: found, logged in, with quota left. */
+const codexOpen = (codex: Engines['codex']): boolean => codex.state === 'ready' && codex.limited === undefined
+
+/** A model's name as the pane says it, on its engine. */
+const modelName = (engine: Engine, model: string): string => (engine === 'claude' ? labelOf(model) : codexLabel(model))
+
+/** The rotation thresholds a person may fix a role at; `tier` follows how hard the work is, and the brain may tune it. */
+const LIMITS = ['tier', '60000', '100000', '160000', '200000', '256000'] as const
+
+/**
+ * Two picks, a model and an effort, on one engine: a role's floor there, or
+ * the model it is fixed on. A floor on Claude is the newest of each family; a
+ * fixed one, any generation still served, each with the efforts it takes.
+ */
+function Picks({ el, role, engine, pick, prefix, label, models, fixed, act }: { el: Elements; role: RoleId; engine: Engine; pick: Pick; prefix: string; label: string; models: readonly string[]; fixed: boolean; act: (change: Partial<Pick>) => void | Promise<void> }) {
+  const { Box, Text, Select } = el
+  const choices = engine === 'claude' ? { models: fixed ? CLAUDE_FIXED_MODELS : (CLAUDE_MODELS as readonly string[]), efforts: fixed ? claudeEfforts(pick.model) : CLAUDE_EFFORTS } : { models: codexChoices(role).models.filter(m => models.includes(m)), efforts: codexChoices(role).efforts }
+  const effort = engine === 'claude' ? (fitEffort(pick.model, pick.effort) ?? pick.effort) : pick.effort
+  if (Select === undefined) return <Text>{label} {pickSaid(engine, pick)}</Text>
+  return (
+    <Box flexDirection="row" gap={1}>
+      <Select key={`${prefix}-model`} label={label} value={pick.model} options={choices.models.map(m => ({ value: m, label: modelName(engine, m) }))} onSelect={(m: string) => act({ model: m })} />
+      {choices.efforts.length === 0 ? (
+        <Text dimColor>這個模型沒有 effort</Text>
+      ) : (
+        <Select key={`${prefix}-effort`} label="effort" value={effort} options={choices.efforts.map(e => ({ value: e, label: e }))} onSelect={(e: string) => act({ effort: e })} />
+      )}
+    </Box>
+  )
+}
+
+/** What a role fixed on Codex waits for while Codex cannot take it, as the heartbeat says it: what comes back by itself, and what is the person's. */
+const codexWait = (codex: Engines['codex']): string =>
+  codex.state === 'missing' ? '這台電腦找不到 codex 指令，裝好之後按上面的［重新檢查］' : codex.state === 'logged-out' ? 'Codex 還沒登入，登入後 crew 會自己接續一次' : `Codex 額度用完（${codex.limited ?? ''}），時間到了 crew 會自己接續一次`
+
+/** What a role is on now, in a few words: its engine, and who picked it; and what it waits for, when it does. */
+const nowWords = (r: RoleModels, engines: Engines, ask: ModelAsk | undefined, blocked: boolean): [string, string | undefined] => {
+  const codex = engines.codex
+  // Where to decide: the question on its model when crew asked one, else Codex's own check above.
+  if (r.mode === 'fixed' && r.fixed.engine === 'codex' && !codexOpen(codex)) return [ask !== undefined ? '停著：Codex 現在不能用，在「模型的事」決定' : `停著：${codexWait(codex)}`, 'warning']
+  if (r.mode === 'fixed') return [`現在 ${ENGINE_NAMES[r.fixed.engine]}：你選的`, undefined]
+  // Crew's question holds the role's work; the brain's leaves it at work meanwhile.
+  if (ask !== undefined && ask.from === 'crew') return [`停著：等你在「模型的事」決定（${ask.id}）`, 'warning']
+  // No why: nobody picked, the role is on crew's default.
+  const now = `現在 ${ENGINE_NAMES[r.now]}：${r.why !== undefined ? `大腦選的，${r.why}` : r.chose === 'codex' && r.now === 'codex' ? '你選的' : '系統預設'}`
+  if (ask !== undefined) return [`${now}；大腦想換，在「模型的事」決定（${ask.id}）`, undefined]
+  // Told to wait for Codex, the role is stopped till it comes back.
+  if (r.now === 'codex' && !codexOpen(codex) && blocked) return [`停著：${codexWait(codex)}`, 'warning']
+  // On Codex by the person's own pick, Claude takes a piece only; by the brain's, the role goes back.
+  if (r.now === 'codex' && !codexOpen(codex)) return [`${now}；Codex 現在不能用，下一件${engines.askBeforeSwitch ? '會先問你要不要改用 Claude' : r.why === undefined ? '會改用 Claude' : '會改回 Claude'}`, 'warning']
+  return [now, undefined]
+}
+
+/** One role's models: how it picks them, each engine's floor and the steps from it, or the one it is fixed on; and its rotation threshold. */
+function RoleModelsRow({ el, role, r, engines, ask, blocked, act }: { el: Elements; role: RoleId; r: RoleModels; engines: Engines; ask: ModelAsk | undefined; blocked: boolean; act: Actions }) {
+  const { Box, Text, Button, Select } = el
+  const [now, color] = nowWords(r, engines, ask, blocked)
+  const limitValue = r.limit === 'tier' ? 'tier' : String(r.limit)
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row" gap={1}>
+        <Box width="11%" flexShrink={0}>
+          <Text>{ROLE_NAMES[role]}</Text>
+        </Box>
+        <Button key={`mode-${role}-auto`} label="系統預設" variant={r.mode === 'auto' ? 'primary' : 'secondary'} onPress={() => act.roleMode(role, 'auto')} />
+        <Button key={`mode-${role}-fixed`} label="自己挑選" variant={r.mode === 'fixed' ? 'primary' : 'secondary'} onPress={() => act.roleMode(role, 'fixed')} />
+        <Text dimColor={color === undefined} color={color}>
+          {now}
+        </Text>
+      </Box>
+      <Box flexDirection="row">
+        <Box width="11%" flexShrink={0} />
+        <Box flexDirection="column">
+          {r.mode === 'auto' && (
+            <Box flexDirection="row" gap={1}>
+              <Text>預設引擎:</Text>
+              <Button key={`engine-${role}-claude`} label="Claude" variant={(r.chose ?? 'claude') === 'claude' ? 'primary' : 'secondary'} onPress={() => act.roleEngine(role, 'claude')} />
+              <Button key={`engine-${role}-codex`} label="Codex" variant={r.chose === 'codex' ? 'primary' : 'secondary'} onPress={() => act.roleEngine(role, 'codex')} />
+            </Box>
+          )}
+          {r.mode === 'auto' &&
+            (['claude', 'codex'] as const).map(engine => (
+              <Box flexDirection="column">
+                {Picks({ el, role, engine, pick: r.floors[engine], prefix: `floor-${role}-${engine}`, label: `${ENGINE_NAMES[engine]} 下限`, models: engines.models, fixed: false, act: pick => act.roleFloor(role, engine, pick) })}
+                <Text dimColor>
+                  {'  '}
+                  {ladderOf(role, engine, r.floors[engine])}
+                </Text>
+              </Box>
+            ))}
+          {r.mode === 'fixed' && (
+            <Box flexDirection="column">
+              <Box flexDirection="row" gap={1}>
+                <Text>引擎</Text>
+                {(['claude', 'codex'] as const).map(e =>
+                  // Codex not on this machine cannot be picked: a role fixed on it would only stop.
+                  e === 'codex' && engines.codex.state === 'missing' && r.fixed.engine !== 'codex' ? (
+                    <Text key={`fixed-${role}-${e}`} dimColor>
+                      Codex（這台電腦找不到）
+                    </Text>
+                  ) : (
+                    <Button key={`fixed-${role}-${e}`} label={ENGINE_NAMES[e]} variant={r.fixed.engine === e ? 'primary' : 'secondary'} onPress={() => act.roleFixed(role, { engine: e })} />
+                  ),
+                )}
+              </Box>
+              {Picks({ el, role, engine: r.fixed.engine, pick: r.fixed, prefix: `fixed-${role}`, label: '模型', models: engines.models, fixed: true, act: change => act.roleFixed(role, change) })}
+              <Text dimColor>
+                {'  '}固定用 {pickSaid(r.fixed.engine, r.fixed)}：不升級，大腦也不換；一直失敗時 crew 會問你
+              </Text>
+            </Box>
+          )}
+          <Box flexDirection="row" gap={1}>
+            {Select !== undefined ? (
+              <Select key={`limit-${role}`} label="輪替門檻" value={limitValue} options={LIMITS.map(v => ({ value: v, label: v === 'tier' ? '依難易度' : `${Number(v) / 1000}K` }))} onSelect={(v: string) => act.roleLimit(role, v === 'tier' ? 'tier' : Number(v))} />
+            ) : (
+              <Text>輪替門檻 {r.limit === 'tier' ? '依難易度' : `${r.limit / 1000}K`}</Text>
+            )}
+            {r.limit === 'tier' && <Text dimColor>{r.tuned === undefined ? limitsByTier() : `大腦調成 ${r.tuned.limit / 1000}K（${r.tuned.by}）`}</Text>}
+          </Box>
+        </Box>
+      </Box>
+    </Box>
+  )
+}
+
+/** The questions on a role's model, apart from what else waits for the person: each with its two answers. */
+function ModelAsks({ el, asks, act, hints = true }: { el: Elements; asks: readonly ModelAsk[]; act: Actions; hints?: boolean }) {
+  const { Box, Text, Button } = el
+  return (
+    <Box flexDirection="column">
+      <Text color="warning" bold>
+        模型的事（{asks.length}）
+      </Text>
+      {asks.map(a => (
+        <Box flexDirection="column">
+          <Text>
+            {a.id} {a.text}
+          </Text>
+          <Box flexDirection="row" gap={1}>
+            <Text dimColor>
+              {a.from === 'brain' ? '大腦' : 'crew'} · {a.age}
+            </Text>
+            <Button key={`model-yes-${a.id}`} label={a.yes} variant="primary" onPress={() => act.modelAnswer(a.id, true)} />
+            <Button key={`model-no-${a.id}`} label={a.no} onPress={() => act.modelAnswer(a.id, false)} />
+          </Box>
+          {hints && a.kind === 'login' && <Text dimColor>在你自己的終端機執行 codex login，登入後 crew 會自己發現，不用重開。</Text>}
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+/** Each role's models, Codex as crew last found it, and whether the brain asks before it moves a role to another model. */
+function ModelsTab({ el, snap, act }: { el: Elements; snap: Snapshot; act: Actions }) {
+  const { Box, Text, Button } = el
+  const engines = snap.engines
+  if (engines === undefined) return <Text dimColor>crew 還沒讀到角色的模型設定。</Text>
+  const [line, color] = codexLine(engines.codex)
+  const least = Object.keys(CODEX_MINIMUM).map(r => ROLE_NAMES[r as RoleId]).join(' 和 ')
+  return (
+    <Box flexDirection="column" gap={1}>
+      {snap.modelAsks !== undefined && snap.modelAsks.length > 0 && ModelAsks({ el, asks: snap.modelAsks, act, hints: false })}
+      <Box flexDirection="column">
+        <Box flexDirection="row" gap={1}>
+          <Text color={color}>{line}</Text>
+          <Button key="codex-check" label="重新檢查" onPress={() => act.checkCodex()} />
+        </Box>
+        {engines.codex.state === 'logged-out' && (
+          <Box flexDirection="column">
+            <Text dimColor>在你自己的終端機執行 codex login，用 ChatGPT 帳號登入；</Text>
+            <Text dimColor>用 API key 就執行 codex login --with-api-key。key 只交給 Codex，不要貼進對話。</Text>
+          </Box>
+        )}
+        {engines.codex.state === 'missing' && <Text dimColor>在終端機執行 npm install -g @openai/codex 安裝並登入。</Text>}
+        <Text dimColor>登入或額度恢復後，crew 會自己發現，不用重開 Claude Code。</Text>
+      </Box>
+      <Box flexDirection="column">
+        <Box flexDirection="row" gap={1}>
+          <Text>大腦換模型前</Text>
+          <Button key="ask-switch-on" label="先問你" variant={engines.askBeforeSwitch ? 'primary' : 'secondary'} onPress={() => act.askBeforeSwitch(true)} />
+          <Button key="ask-switch-off" label="不用問" variant={engines.askBeforeSwitch ? 'secondary' : 'primary'} onPress={() => act.askBeforeSwitch(false)} />
+        </Box>
+        {engines.askBeforeSwitch ? (
+          <Box flexDirection="column">
+            <Text dimColor>換引擎、模型或 effort，Claude 和 Codex 都先在「模型的事」問你：</Text>
+            <Text dimColor>依難易度往上升、失敗後升級、Codex 不能用時改用 Claude，都算。</Text>
+            <Text dimColor>等你回答的時候，那個角色停著。</Text>
+          </Box>
+        ) : (
+          <Text dimColor>不用問：大腦自己換引擎、模型或 effort，事後記成決定。</Text>
+        )}
+        <Text dimColor>自己挑選的角色不會被換；它卡住時，不管開關都會問你。</Text>
+      </Box>
+      <Box flexDirection="column" gap={1}>
+        {ROLE_IDS.map(r =>
+          RoleModelsRow({
+            el,
+            role: r,
+            r: engines.roles[r],
+            engines,
+            // Crew's question, which holds the role's work, before the brain's.
+            ask: snap.modelAsks?.find(a => a.role === r && a.from === 'crew') ?? snap.modelAsks?.find(a => a.role === r),
+            // Stopped because the person said to wait for Codex, not for another reason.
+            blocked: snap.roles.some(x => x.id === r && x.state === 'blocked' && x.doing.startsWith(CODEX_WAIT)),
+            act,
+          }),
+        )}
+      </Box>
+      {/* Each line short enough for the pane: the terminal wraps only at spaces, and a long run of Chinese breaks early. */}
+      <Box flexDirection="column">
+        <Text dimColor>系統預設：用你設的預設引擎，大腦可以提議換；每件工作從下限開始，越難往右一格，</Text>
+        <Text dimColor>失敗兩次再往右一格。自己挑選：固定用你選的模型。</Text>
+        <Text dimColor>換了以後，角色從下一件工作開始用；正在做的這一輪照舊。</Text>
+        <Text dimColor>6.1 Sol：寫程式和 review 的主力。6 Astra：最強也最貴，留給失敗過的難題。</Text>
+        <Text dimColor>6.1 Terra：快，擅長寫規格、文案和看畫面。6 Luna：最省，只適合抽取和分類。</Text>
+        <Text dimColor>{least}在 Codex 上至少 6.1 Sol・xhigh。</Text>
+        <Text dimColor>輪替門檻依難易度時，大腦可以調；你固定了，大腦就不動。</Text>
+        <Text dimColor>輪替門檻不會超過模型的 context：6.1 Sol、6.1 Terra 500K，6 Astra、6 Luna 272K。</Text>
+        <Text dimColor>權限跟 Claude 一樣：PM、QA、UI/UX、Tech lead 只讀 repo；</Text>
+        <Text dimColor>全端只在 crew 的工作目錄改檔，可以跑指令、上網裝套件。</Text>
+        <Text dimColor>Codex 做到一半不能停下來問你，所以由沙箱守住這條線，</Text>
+        <Text dimColor>蓋過你 Codex 設定裡的 danger-full-access。</Text>
+        <Text dimColor>Codex 用你在這台電腦的登入，額度另外算，crew 不經手金鑰。</Text>
+      </Box>
+    </Box>
+  )
+}
+
+/** The phone's way in: the web page on the person's tailnet, through `tailscale serve`, and the devices paired with it. */
+function TailnetSection({ el, tailnet, act }: { el: Elements; tailnet: NonNullable<NonNullable<Snapshot['web']>['tailnet']>; act: Actions }) {
+  const { Box, Text, Button } = el
+  const open = tailnet.state === 'on'
+  const STATES = {
+    on: [`Tailscale ✓ 已連上 · 這台電腦 ${tailnet.machine ?? ''}`, 'success'],
+    off: [`Tailscale ✓ 已連上 · 這台電腦 ${tailnet.machine ?? ''} · 還沒開放給手機`, undefined],
+    stopped: ['Tailscale ✗ 沒在執行：打開 Tailscale app 並登入', 'warning'],
+    missing: ['Tailscale ✗ 這台電腦沒有裝 Tailscale', 'warning'],
+  } as const
+  const [line, color] = STATES[tailnet.state]
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row" gap={1}>
+        <Text>手機</Text>
+        <Button key="tailnet-on" label="用 Tailscale 開放" variant={open ? 'primary' : 'secondary'} onPress={() => act.tailnet(true)} />
+        <Button key="tailnet-off" label="只限這台電腦" variant={open ? 'secondary' : 'primary'} onPress={() => act.tailnet(false)} />
+      </Box>
+      <Text color={color}>{line}</Text>
+      {open && tailnet.url !== undefined && (
+        <Box flexDirection="row" gap={1}>
+          <Text>{tailnet.url}</Text>
+          <Button key="pair-device" label="配對新裝置" onPress={() => act.pairDevice()} />
+        </Box>
+      )}
+      {open &&
+        tailnet.devices.map(d => (
+          <Box flexDirection="row" gap={1}>
+            <Text>
+              已配對：{d.name} · {d.paired}配對
+            </Text>
+            <Button key={`unpair-${d.id}`} label="移除" onPress={() => act.unpairDevice(d.id)} />
+          </Box>
+        ))}
+      <Text dimColor>只有你 tailnet 裡、用你的帳號登入的裝置連得到。crew 用 tailscale serve，</Text>
+      <Text dimColor>不用 funnel，不會公開到網路上。第一次在手機打開要輸入配對碼，之後這支手機就記住了。</Text>
+      <Text dimColor>關掉 Claude Code，手機也連不到。</Text>
+    </Box>
+  )
+}
+
+/** Where the day's tokens went, and what costs the most over the days crew recorded, with what is done about each. */
+function AuditSection({ el, audit }: { el: Elements; audit: Audit }) {
+  const { Box, Text } = el
+  const MARKS = { done: ['✓ 已處置', 'success'], acting: ['◐ 處置中', 'suggestion'], person: ['! 要你處理', 'warning'] } as const
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Box flexDirection="column">
+        <Text bold>去向（今天）</Text>
+        {/* Four parts a line: the terminal wraps only at spaces, and would part a name from its number. */}
+        {Array.from({ length: Math.ceil(audit.parts.length / 4) }, (_, i) => (
+          <Text>{audit.parts.slice(i * 4, i * 4 + 4).map(p => `${p.part} ${tokens(p.tokens)}`).join(' · ')}</Text>
+        ))}
+        {audit.brain !== undefined && <Text dimColor>大腦每一輪：{audit.brain.map(p => `${p.part} ${tokens(p.tokens)}`).join(' · ')}</Text>}
+      </Box>
+      <Box flexDirection="column">
+        <Text bold>
+          瓶頸（{audit.since}，{audit.sessions} 個 session，依 token 排）
+        </Text>
+        {audit.bottlenecks.map((b, i) => (
+          <Box flexDirection="column">
+            <Text>
+              {i + 1} {b.title}
+            </Text>
+            <Text dimColor>
+              {'  '}
+              {tokens(b.tokens)} · {b.share}
+            </Text>
+            <Text color={MARKS[b.state][1]}>
+              {'  '}
+              {MARKS[b.state][0]}：{b.fix}
+            </Text>
+          </Box>
+        ))}
+      </Box>
+      <Box flexDirection="column">
+        <Text dimColor>每一次執行都記在 .crew/usage/，不進 git，跨 session 留著：</Text>
+        <Text dimColor>token、模型、工具和結果大小、技能、記憶、怎麼被叫起來。</Text>
+        <Text dimColor>每件工作做完，crew 用程式重算一次瓶頸，不花 token。</Text>
+        <Text dimColor>只有出現新的瓶頸，或處置過的又變大，才把那一條告訴大腦；</Text>
+        <Text dimColor>每個 session 開始時，還沒處置完的再說一次。整份排行大腦和你隨時可以看。</Text>
+        <Text dimColor>單次執行超標馬上提醒：工具結果超過 10K、context 超過門檻的 85%、快取命中率低於 60%。</Text>
+        {audit.told !== undefined && <Text dimColor>上次告訴大腦：{audit.told}</Text>}
+        <Text dimColor>處置照「大腦處置 token 用量」先問你或自動。</Text>
+      </Box>
     </Box>
   )
 }
@@ -698,7 +1171,26 @@ function Settings({ el, snap, view, act, isDemo }: { el: Elements; snap: Snapsho
           <Button key="tuning-ask" label="先問你" variant={tuning === 'ask' ? 'primary' : 'secondary'} onPress={() => act.tuning('ask')} />
           <Text dimColor>{tuning === 'auto' ? '大腦自己處置，事後記成決定' : '大腦提出建議，你核准才執行'}</Text>
         </Box>
+        <Text dimColor>瓶頸每件工作做完就重算，有新的才告訴大腦，沒有頻率要設。</Text>
+        <Text dimColor>換模型另外由「模型」分頁的「大腦換模型前」管。</Text>
       </Box>
+      {snap.web !== undefined && (
+        <Box flexDirection="column">
+          <Text bold>網頁</Text>
+          <Box flexDirection="row" gap={1}>
+            <Text>{snap.web.url}</Text>
+            <Button key="web-open" label="在瀏覽器打開" onPress={() => act.openWeb()} />
+          </Box>
+          <Box flexDirection="row" gap={1}>
+            <Text>crew 啟動時</Text>
+            <Button key="web-on-start" label="自動打開" variant={snap.web.openOnStart ? 'primary' : 'secondary'} onPress={() => act.webOnStart(true)} />
+            <Button key="web-not-on-start" label="不要" variant={snap.web.openOnStart ? 'secondary' : 'primary'} onPress={() => act.webOnStart(false)} />
+          </Box>
+          <Text dimColor>這個網址只有這台電腦打得開，帶一次性的鑰匙；關掉 Claude Code，網頁就停。</Text>
+          <Text dimColor>在網頁上可以看全部內容、核准和回答，也可以直接跟大腦對話。</Text>
+          {snap.web.tailnet !== undefined && TailnetSection({ el, tailnet: snap.web.tailnet, act })}
+        </Box>
+      )}
       <Box flexDirection="column">
         <Text bold>Claude Code 開啟時</Text>
         <Box flexDirection="row" gap={1}>
@@ -755,16 +1247,23 @@ function Board({ el, snap }: { el: Elements; snap: Snapshot }) {
                     ['14%', ROLE_NAMES[i.owner]],
                     ['26%', route(i.route), { color: i.route.tier === 'XL' ? 'claude' : undefined }],
                   ] })}
+                {i.hard !== undefined && <Text dimColor>　　{TIER_NAMES[i.route.tier]}：{i.hard}</Text>}
                 {i.note !== undefined && <Text dimColor>　　{i.note}</Text>}
               </Box>
             ))}
           </Box>
         )
       })}
-      <Text dimColor>模型和 context 門檻依項目複雜度決定：S Sonnet・medium 60K · M Sonnet・high 100K · L Opus・high 160K · XL Opus・xhigh 256K</Text>
+      <Box flexDirection="column">
+        <Text dimColor>模型和 context 門檻依項目的難易度：難易度看難不難，不看範圍大小，</Text>
+        <Text dimColor>Tech lead 拆單時評，失敗、被退回就往上調。每個角色的模型在「模型」分頁。</Text>
+      </Box>
     </Box>
   )
 }
+
+/** A thread's name: its item and the item's title, the id once where the title is the id (a question to a role). */
+const titled = (t: { item: string; title: string }): string => (t.title === t.item ? t.item : `${t.item} ${t.title}`)
 
 function Threads({ el, snap, view, act }: { el: Elements; snap: Snapshot; view: View; act: Actions }) {
   const { Box, Text, Button } = el
@@ -774,7 +1273,7 @@ function Threads({ el, snap, view, act }: { el: Elements; snap: Snapshot; view: 
     return (
       <Box flexDirection="column">
         {snap.threads.map(t => (
-          <Button key={`thread-${t.item}`} label={`${t.item} ${t.title} · ${t.messages.length} 則`} onPress={() => act.thread(t.item)} />
+          <Button key={`thread-${t.item}`} label={`${titled(t)} · ${t.total ?? t.messages.length} 則`} onPress={() => act.thread(t.item)} />
         ))}
       </Box>
     )
@@ -783,10 +1282,13 @@ function Threads({ el, snap, view, act }: { el: Elements; snap: Snapshot; view: 
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="row" gap={1}>
         <Button key="thread-back" label="← 所有討論" onPress={() => act.thread(null)} />
-        <Text bold>
-          {open.item} {open.title}
-        </Text>
+        <Text bold>{titled(open)}</Text>
       </Box>
+      {open.total !== undefined && (
+        <Text dimColor>
+          只顯示最近 {open.messages.length} 則（共 {open.total} 則），較早的在 .crew/threads/{open.item}.jsonl。
+        </Text>
+      )}
       <Box flexDirection="column">
         {open.messages.map(m => Row({ el, cells: [
               ['18%', m.from, { color: m.kind === undefined || m.kind === 'message' ? 'suggestion' : 'subtle' }],
@@ -822,6 +1324,11 @@ function MemoryList({ el, snap, act }: { el: Elements; snap: Snapshot; act: Acti
   return (
     <Box flexDirection="column" gap={1}>
       {fields}
+      {snap.memoryTotal !== undefined && (
+        <Text dimColor>
+          只列最新的 {snap.memories.length} 條（共 {snap.memoryTotal} 條），較早的用上面的「搜尋」找。
+        </Text>
+      )}
       <Box flexDirection="column">
         {snap.memories.map(m => {
           const isOld = m.supersededBy !== undefined
@@ -868,11 +1375,12 @@ function Tokens({ el, snap, act }: { el: Elements; snap: Snapshot; act: Actions 
           {snap.usage.map(u => {
             const rate = hitRate(u)
             return Row({ el, cells: [
-                  ['14%', ROLE_NAMES[u.role]],
+                  ['14%', `${ROLE_NAMES[u.role]}${u.engine === 'codex' ? '・Codex' : ''}`],
                   ['12%', tokens(u.input)],
                   ['12%', tokens(u.output)],
                   ['13%', tokens(u.cacheRead)],
-                  ['13%', tokens(u.cacheWrite)],
+                  // Codex tells no cache writes.
+                  ['13%', u.engine === 'codex' ? '—' : tokens(u.cacheWrite)],
                   ['12%', `${rate}%`, { color: rate < 60 ? 'warning' : undefined }],
                   ['12%', String(u.wakes)],
                   ['12%', String(u.rotations)],
@@ -881,8 +1389,10 @@ function Tokens({ el, snap, act }: { el: Elements; snap: Snapshot; act: Actions 
         </Box>
         <Text dimColor>
           今日 {tokens(snap.today)} tok · 大腦協調佔 {Math.round(snap.brainShare * 100)}%
+          {snap.codexToday === undefined ? '' : ` · Codex ${tokens(snap.codexToday)} tok，走你的 Codex 額度，不算進前面的數字`}
         </Text>
-        <Text dimColor>依複雜度：{snap.tiers.map(t => `${t.tier} ${tokens(t.tokens)}`).join(' · ')}</Text>
+        <Text dimColor>依難易度：{snap.tiers.map(t => `${TIER_NAMES[t.tier]} ${tokens(t.tokens)}`).join(' · ')}</Text>
+        {snap.audit !== undefined && AuditSection({ el, audit: snap.audit })}
         {snap.injected !== undefined && snap.injected.count > 0 && (
           <Text dimColor>
             每次附上的記憶平均 {tokens(snap.injected.average)} tok（{snap.injected.count} 次）
@@ -964,6 +1474,7 @@ export function CrewPane({ el, snap, view, act, isDemo = true }: { el: Elements;
       {view.tab === 'threads' && Threads({ el, snap, view, act })}
       {view.tab === 'memory' && MemoryList({ el, snap, act })}
       {view.tab === 'tokens' && Tokens({ el, snap, act })}
+      {view.tab === 'models' && ModelsTab({ el, snap, act })}
       {view.tab === 'settings' && Settings({ el, snap, view, act, isDemo })}
     </Box>
   )
@@ -992,11 +1503,12 @@ export function bandText(snap: Snapshot, label = 'crew（設計稿）'): string 
     // With no PRD under way, the progress of a board an earlier one left is history, as in the pane's head.
     ...(snap.progress !== null && !waitsForWord(snap) ? [`進度 ${percentOf(snap.progress)}%（${snap.progress.done}/${snap.progress.total}）`] : []),
     ...(snap.alignment === undefined ? [] : [alignmentWord(snap.alignment)]),
-    `待你決定 ${snap.decisions.length}`,
+    ...(snap.modelAsks !== undefined && snap.modelAsks.length > 0 ? [`⚠ 模型 ${snap.modelAsks.length}`] : []),
+    `待你決定 ${waitingCount(snap)}`,
     // A flow held for the person is said here too, for when the pane is closed.
     ...(snap.start?.resumable !== undefined ? ['⏸ 等你接續'] : []),
     ...(snap.alerts.length > 0 ? [`⚠ ${snap.alerts.length} 則提醒`] : []),
-    `今日 ${tokens(snap.today)} tok`,
+    `今日 ${tokens(snap.today)} tok${snap.codexToday === undefined ? '' : ` · Codex ${tokens(snap.codexToday)}`}`,
     roles,
   ]
   return parts.join(' │ ')

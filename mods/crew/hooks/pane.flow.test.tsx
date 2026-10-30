@@ -23,6 +23,8 @@ const planned = async ($: Engine) => {
 describe('crew from its pane', () => {
   test('opens when Claude Code starts, offers the PRDs in the repo, and starts the one picked', async ($, on) => {
     const w = world($, on)
+    // The climb this work takes is not what the test is about: crew does not ask before it here.
+    w.store.set(`settings:${ROOT}`, { askBeforeSwitch: false })
     w.disk.set(`${ROOT}/docs/specs/checkout.md`, '# 結帳流程\n\n- 可以用信用卡付款')
     w.disk.set(`${ROOT}/README.md`, '# repo')
     // A hidden folder's file is no PRD to offer, and nothing it holds is read.
@@ -140,6 +142,8 @@ describe('crew from its pane', () => {
     expect(w.spawned).toEqual([])
     const ui = await paneUi($)
     expect(await textOf(ui)).toMatch(/要接續嗎/)
+    // The question waits on the decide page; the person chooses to answer it here.
+    await ui.press({ key: 'review-in-pane' })
     await ui.input({ key: 'answer-Q-01', text: '一萬' })
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:fullstack'])
     // The person's own answer is their word to go on: the flow is held no more.
@@ -157,6 +161,7 @@ describe('crew from its pane', () => {
     await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 'q', agentId: 'a-pm-1', question: '年繳要做嗎？' } as never)
     await done($, 'a-pm-1')
     ui = await paneUi($)
+    await ui.press({ key: 'review-in-pane' })
     await ui.input({ key: 'answer-Q-01', text: '第一版先不做' })
     expect(w.sent.some(m => m.to === 'a-pm-1' && /第一版先不做/.test(m.text))).toBe(true)
     await ui.unmount()
@@ -164,10 +169,12 @@ describe('crew from its pane', () => {
     await done($, 'a-qa-2')
     // The designer's designs wait for the person: read, approve one, send the other back with a reason.
     await write($, 'a-uiux-3', [
-      { op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張方案卡片' },
+      { op: 'add_design', feature: 'PRD-001', title: '方案頁', kind: 'screen', body: '三張方案卡片', html: '<p>mockup</p>' },
       { op: 'add_design', feature: 'PRD-002', title: '取消頁', kind: 'none', body: '後台處理' },
     ])
     await done($, 'a-uiux-3')
+    // Where the brain cannot publish the review page, each design is decided in the pane.
+    await $.tool.call({ tool: 'mcp__crew__crew', tool_use_id: 'p', action: 'published', text: '無法發佈：這個 session 沒有 Artifact 工具' } as never)
     ui = await paneUi($)
     const text = await textOf(ui)
     const asks = [...text.matchAll(/(Q-\d+) 設計稿 (SCR-\d+)/g)].map(m => [m[1], m[2]])

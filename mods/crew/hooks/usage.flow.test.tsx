@@ -43,7 +43,7 @@ describe('token reminders', () => {
     await w.clock.advance(60_000)
     const told = w.prompts.filter(p => /全端今日佔/.test(p)).length
     expect(told).toBe(1)
-    expect(w.prompts.find(p => /全端今日佔/.test(p))).toMatch(/tune[\s\S]*使用者設定先問使用者：你的處置會變成建議，他在面板核准才執行/)
+    expect(w.prompts.find(p => /全端今日佔/.test(p))).toMatch(/tune[\s\S]*調 limit 時，使用者設定先問他：你的處置會變成建議，他在面板核准才執行[\s\S]*換引擎、模型或 effort 照使用者在「模型」分頁的「大腦換模型前」設定/)
     // Still the case at the next look: not told again within the hour, and told again once it is past.
     await w.clock.advance(BEAT)
     await w.clock.advance(60_000)
@@ -104,24 +104,26 @@ describe('the brain’s actions on usage', () => {
     w.disk.set(`${ROOT}/.crew/usage/${DAY}.json`, JSON.stringify({ usage: heavy, tiers: {} }))
     await start($)
     await tested($)
+    // A move of the model asks first, as the models tab has it by default: a question on the role's model.
     const r = String((await crew($, { action: 'tune', role: 'fullstack', model: 'opus', effort: 'xhigh', text: '全端修了三次還沒過' })).result)
-    expect(r).toMatch(/已提出建議，等使用者核准（Q-\d+）/)
+    expect(r).toMatch(/已提出，等使用者在面板的「模型的事」回答（M-\d+）/)
     let ui = await paneUi($)
     const text = await textOf(ui)
-    const id = /(Q-\d+) 大腦建議：全端之後的工作改用 Opus・xhigh/.exec(text)?.[1] ?? ''
+    const id = /(M-\d+) 大腦想把全端改用 Opus 5.5・xhigh：全端修了三次還沒過/.exec(text)?.[1] ?? ''
     expect(id).not.toBe('')
-    expect(await ui.find({ key: `reject-${id}` })).toBeDefined()
+    expect(await ui.find({ key: `model-no-${id}` })).toBeDefined()
     // The brain cannot settle its own proposal by answering it.
-    expect(String((await crew($, { action: 'answer', question: id, text: '核准' })).result)).toMatch(/大腦的建議要使用者自己在右側面板核准/)
-    expect(await textOf(ui)).toMatch(new RegExp(`${id} 大腦建議`))
-    await ui.press({ key: `approve-${id}` })
+    expect(String((await crew($, { action: 'answer', question: id, text: '好' })).result)).toMatch(/要使用者自己在右側面板的「模型的事」回答/)
+    expect(await textOf(ui)).toMatch(new RegExp(`${id} 大腦想把`))
+    await ui.press({ key: `model-yes-${id}` })
     await ui.unmount()
     // Recorded as a decision, and shown with the numbers before it.
     const memories = w.disk.get(`${ROOT}/.crew/memory/memories.jsonl`) ?? ''
-    expect(memories).toMatch(/"type":"DEC"[^\n]*全端之後的工作改用 Opus・xhigh/)
+    // The person approved it: it is their decision, on that question, not the brain's own judgment.
+    expect(memories).toMatch(new RegExp(`"type":"DEC"[^\\n]*大腦換模型（使用者核准 ${id}）：全端之後的工作改用 Opus 5.5・xhigh[^\\n]*"source":"person ${id}"`))
     ui = await paneUi($)
     await ui.press({ key: 'tab-tokens' })
-    expect(await textOf(ui)).toMatch(/DEC-\d+ 全端之後的工作改用 Opus・xhigh[\s\S]*處置前 今日佔 \d+% · 命中率 51% · context 0K → 之後的數字等下一輪/)
+    expect(await textOf(ui)).toMatch(/DEC-\d+ 全端之後的工作改用 Opus 5.5・xhigh[\s\S]*處置前 今日佔 \d+% · 命中率 51% · context 0K → 之後的數字等下一輪/)
     await ui.unmount()
     // The full-stack's next work runs on Opus, though its tasks are small.
     await write($, 'a-techlead-4', PLAN)
@@ -136,7 +138,8 @@ describe('the brain’s actions on usage', () => {
     // Asked first: the person says no.
     await crew($, { action: 'tune', role: 'fullstack', limit: 80_000, text: '全端 context 太大' })
     let ui = await paneUi($)
-    const id = /(Q-\d+) 大腦建議：全端的輪替門檻改成 80K/.exec(await textOf(ui))?.[1] ?? ''
+    // A raise is proposed as a least threshold: work the tier sizes higher keeps the tier's.
+    const id = /(Q-\d+) 大腦建議：全端的輪替門檻至少 80K/.exec(await textOf(ui))?.[1] ?? ''
     await ui.press({ key: `reject-${id}` })
     expect(await textOf(ui)).not.toMatch(/大腦建議/)
     await ui.press({ key: 'tab-settings' })
@@ -144,7 +147,8 @@ describe('the brain’s actions on usage', () => {
     await ui.unmount()
     expect(w.store.get(`settings:${ROOT}`)).toMatchObject({ tuning: 'auto' })
     const r = String((await crew($, { action: 'tune', role: 'fullstack', limit: 80_000, text: '全端 context 太大' })).result)
-    expect(r).toMatch(/已處置（DEC-\d+）：全端的輪替門檻改成 80K/)
+    // Raised on its own, a least threshold: work the tier sizes higher keeps the tier's.
+    expect(r).toMatch(/已處置（DEC-\d+）：全端的輪替門檻至少 80K（難易度給的比較高時照難易度）/)
     ui = await paneUi($)
     expect(await textOf(ui)).not.toMatch(/大腦建議/)
     await ui.unmount()
@@ -157,32 +161,33 @@ describe('the brain’s actions on usage', () => {
     const byRole = String((await $.tool.call({ tool: 'mcp__crew__crew', tool_use_id: 'x', agentId: 'a-pm-1', action: 'tune', role: 'fullstack', model: 'haiku' } as never) as { result: unknown }).result)
     expect(byRole).not.toMatch(/已提出建議|已處置/)
     const bad = String((await crew($, { action: 'tune', role: 'fullstack' })).result)
-    expect(bad).toMatch(/要換的模型、effort 或輪替門檻/)
+    expect(bad).toMatch(/要換的引擎、模型、effort 或輪替門檻/)
     // The person's floors stand, whichever way the brain acts.
     const low = String((await crew($, { action: 'tune', role: 'fullstack', model: 'haiku' })).result)
-    expect(low).toMatch(/低於全端的下限 Sonnet・high/)
+    expect(low).toMatch(/低於全端的下限 Sonnet 5.5・high/)
   })
   test('keep a proposal waiting, and an action once approved, for a restart', async ($, on) => {
     const w = world($, on)
     await start($)
     await tested($)
     await crew($, { action: 'tune', role: 'fullstack', model: 'opus', text: '全端修了三次還沒過' })
-    type Saved = { tunings?: { id: string; pending?: boolean }[]; tuned?: Record<string, unknown>; questions: { id: string; item?: string }[] }
+    type Saved = { modelAsks?: { id: string; change?: unknown }[]; tunings?: { id: string; pending?: boolean }[]; tuned?: Record<string, unknown> }
     let saved = w.store.get(`state:${ROOT}`) as Saved
-    const id = saved.tunings?.find(t => t.pending === true)?.id ?? ''
-    expect(id).toMatch(/^Q-\d+$/)
-    expect(saved.questions.some(q => q.id === id && q.item === 'tune')).toBe(true)
+    const id = saved.modelAsks?.[0]?.id ?? ''
+    expect(id).toMatch(/^M-\d+$/)
+    expect(saved.modelAsks?.[0]?.change).toEqual({ model: 'opus' })
     const ui = await paneUi($)
-    await ui.press({ key: `approve-${id}` })
+    await ui.press({ key: `model-yes-${id}` })
     await ui.unmount()
     saved = w.store.get(`state:${ROOT}`) as Saved
     expect(saved.tuned?.fullstack).toEqual({ model: 'opus' })
-    expect(saved.tunings?.some(t => t.pending === true)).toBe(false)
+    expect(saved.modelAsks).toEqual([])
+    expect(saved.tunings?.map(t => t.id)).toEqual([expect.stringMatching(/^DEC-\d+$/)])
   })
 
   test('keep an action the brain took on its own for a restart, at once', async ($, on) => {
     const w = world($, on)
-    w.store.set(`settings:${ROOT}`, { openOnLoad: true, tuning: 'auto' })
+    w.store.set(`settings:${ROOT}`, { openOnLoad: true, tuning: 'auto', askBeforeSwitch: false })
     await start($)
     expect(String((await crew($, { action: 'tune', role: 'fullstack', effort: 'max', text: 'x' })).result)).toMatch(/已處置（DEC-\d+）/)
     const saved = w.store.get(`state:${ROOT}`) as { tuned?: Record<string, unknown>; tunings?: { id: string }[] }
@@ -205,7 +210,7 @@ describe('the brain’s actions on usage', () => {
         { id: 'Q-01', pending: true, role: 'fullstack', text: '全端之後的工作改用 Opus', change: { model: 'opus' }, reason: 'x', before: '今日佔 80%', wakes: 0, at: NOW },
         // An action whose numbers at the time came back broken: shown without them.
         { id: 'DEC-001', role: 'pm', text: 'PM 之後的工作改用 Opus', change: { model: 'opus' }, reason: 'x', before: '今日佔 50%', wakes: 0, at: NOW, base: { day: DAY, role: { input: 'x' }, total: 'x' } },
-        { id: 'DEC-002', role: 'pm', text: 'PM 之後的工作改用 Opus・high', change: { effort: 'high' }, reason: 'x', before: '今日佔 51%', wakes: 0, at: NOW, base: { day: DAY, role: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, wakes: 0, rotations: 0 }, total: 'x' } },
+        { id: 'DEC-002', role: 'pm', text: 'PM 之後的工作改用 Opus 5.5・high', change: { effort: 'high' }, reason: 'x', before: '今日佔 51%', wakes: 0, at: NOW, base: { day: DAY, role: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, wakes: 0, rotations: 0 }, total: 'x' } },
         { id: 'DEC-003', role: 'pm', text: 'PM 的輪替門檻改成 80K', change: { limit: 80_000 }, reason: 'x', before: '今日佔 52%', wakes: 0, at: NOW, base: { day: DAY, role: { input: 0, output: 0, cacheRead: 0, wakes: 0, rotations: 0 }, total: 1 } },
       ],
     })
@@ -245,8 +250,8 @@ describe('the brain’s actions on usage', () => {
     await tested($)
     await crew($, { action: 'tune', role: 'fullstack', model: 'opus', text: '全端修了三次還沒過' })
     const ui = await paneUi($)
-    const id = /(Q-\d+) 大腦建議/.exec(await textOf(ui))?.[1] ?? ''
-    await ui.press({ key: `reject-${id}` })
+    const id = /(M-\d+) 大腦想把/.exec(await textOf(ui))?.[1] ?? ''
+    await ui.press({ key: `model-no-${id}` })
     await ui.unmount()
     expect(w.disk.get(`${ROOT}/.crew/memory/memories.jsonl`) ?? '').not.toMatch(/全端之後的工作改用 Opus/)
     await write($, 'a-techlead-4', PLAN)
@@ -258,9 +263,9 @@ describe('the brain’s actions on usage', () => {
     const w = world($, on)
     await start($)
     await tested($)
-    const id = /(Q-\d+)/.exec(String((await crew($, { action: 'tune', role: 'fullstack', model: 'opus', text: 'x' })).result))?.[1] ?? ''
+    const id = /(M-\d+)/.exec(String((await crew($, { action: 'tune', role: 'fullstack', model: 'opus', text: 'x' })).result))?.[1] ?? ''
     const peer = (await $.command.run({ ...command(`approve ${id}`), origin: { kind: 'peer' } } as never)) as { text: string }
-    expect(peer.text).toMatch(/大腦的建議要使用者自己在右側面板核准或不要/)
+    expect(peer.text).toMatch(/模型的事要使用者自己在右側面板的「模型的事」回答/)
     await write($, 'a-techlead-4', PLAN)
     await done($, 'a-techlead-4')
     expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:fullstack', model: 'sonnet' })
@@ -268,7 +273,7 @@ describe('the brain’s actions on usage', () => {
 
   test('reach a role whose agent is still alive: its next work runs on the tuned model', async ($, on) => {
     const w = world($, on)
-    w.store.set(`settings:${ROOT}`, { openOnLoad: true, tuning: 'auto' })
+    w.store.set(`settings:${ROOT}`, { openOnLoad: true, tuning: 'auto', askBeforeSwitch: false })
     await start($)
     await tested($)
     await write($, 'a-techlead-4', PLAN)
@@ -282,7 +287,7 @@ describe('the brain’s actions on usage', () => {
   })
   test('show the switch and the brain’s actions on a day with no use yet', async ($, on) => {
     const w = world($, on)
-    w.store.set(`settings:${ROOT}`, { openOnLoad: true, tuning: 'auto' })
+    w.store.set(`settings:${ROOT}`, { openOnLoad: true, tuning: 'auto', askBeforeSwitch: false })
     await start($)
     // No role has run today: the brain still tunes ahead of the work.
     expect(String((await crew($, { action: 'tune', role: 'fullstack', model: 'opus', text: 'x' })).result)).toMatch(/DEC-\d+/)
@@ -300,11 +305,13 @@ describe('the brain’s actions on usage', () => {
     await start($)
     const tune = async (input: Record<string, unknown>) => String((await crew($, { action: 'tune', ...input })).result)
     expect(await tune({ role: 'designer', model: 'opus' })).toMatch(/role 要是 pm、qa、uiux、techlead 或 fullstack/)
-    for (const change of [{ model: 'gpt-5' }, { effort: 'ultra' }, { limit: 19_999 }, { limit: 1_000_001 }, { limit: 50_000.5 }, { limit: '80000' }]) {
-      expect(await tune({ role: 'qa', ...change })).toMatch(/請說要換的模型、effort 或輪替門檻/)
+    expect(await tune({ role: 'qa', model: 'gpt-5' })).toMatch(/Claude 的 model 要是 haiku、sonnet、opus、fable 其中之一/)
+    for (const change of [{ effort: 'ultra' }, { limit: 19_999 }, { limit: 1_000_001 }, { limit: 50_000.5 }, { limit: '80000' }]) {
+      expect(await tune({ role: 'qa', ...change })).toMatch(/請說要換的引擎、模型、effort 或輪替門檻/)
     }
-    expect(await tune({ role: 'qa', limit: 20_000 })).toMatch(/已提出建議/)
-    expect(await tune({ role: 'qa', limit: 1_000_000 })).toMatch(/已提出建議/)
+    expect(await tune({ role: 'qa', limit: 20_000 })).toMatch(/要寫理由/)
+    expect(await tune({ role: 'qa', limit: 20_000, text: 'QA 的工作很小' })).toMatch(/已提出建議/)
+    expect(await tune({ role: 'qa', limit: 1_000_000, text: 'QA 要讀整個 repo' })).toMatch(/已提出建議/)
   })
   test('apply a proposal kept over a restart once the person approves it', async ($, on) => {
     const w = world($, on)
@@ -365,7 +372,7 @@ describe('the brain’s actions on usage', () => {
     await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 'q', agentId: 'a-pm-1', question: '年繳要做嗎？' } as never)
     expect((await $.command.run(command('approve Q-01'))).text).toMatch(/不是等你核准的大腦建議/)
     const ui = await paneUi($)
-    expect(await textOf(ui)).toMatch(/Q-01/)
+    expect(await textOf(ui)).toMatch(/待你決定頁：問題 1 題等你回答/)
     await ui.unmount()
     void w
   })

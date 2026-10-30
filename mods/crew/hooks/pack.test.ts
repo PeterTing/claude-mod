@@ -152,12 +152,12 @@ describe('wakePlan', () => {
   })
 
   test('rotates for a new model, whose cache starts empty anyway', () => {
-    expect(wakePlan(role({}), routeFor('pm', 'L'))).toEqual({ kind: 'rotate', reason: '換模型（Sonnet → Opus），要用新的 context' })
+    expect(wakePlan(role({}), routeFor('pm', 'L'))).toEqual({ kind: 'rotate', reason: '換模型（Sonnet → Opus 5.5），要用新的 context' })
   })
 
   test('names the model by its alias when it has no label', () => {
     const { label: _, ...bare } = role({})
-    expect(wakePlan(bare, routeFor('pm', 'L'))).toEqual({ kind: 'rotate', reason: '換模型（sonnet → Opus），要用新的 context' })
+    expect(wakePlan(bare, routeFor('pm', 'L'))).toEqual({ kind: 'rotate', reason: '換模型（sonnet → Opus 5.5），要用新的 context' })
   })
 
   test('rotates at the context limit', () => {

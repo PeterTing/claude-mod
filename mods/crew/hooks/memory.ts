@@ -236,7 +236,18 @@ export const estimateTokens = (text: string): number => {
   return Math.max(0, Math.ceil((wide * 6) / 5 + (other * 2) / 7 - 1e-9))
 }
 
-const lineOf = (h: Hit): string => `- ${h.entry.id}（${TYPE_NAMES[h.entry.type]}・${h.entry.source}）：${h.entry.text}`
+/**
+ * Who a memory is from, as a role reads it. A decision or preference the brain
+ * wrote with no words of the person's quoted is the brain's own judgment, and
+ * says so: a role does not take it for what the person decided.
+ */
+export const sourceOf = (m: MemoryEntry): string =>
+  m.source === 'brain' && (m.type === 'DEC' || m.type === 'PREF') && !m.text.startsWith(QUOTED) ? '大腦的判斷，使用者沒有明說' : m.source
+
+/** How a decision the brain records for the person begins: their own words. */
+export const QUOTED = '使用者原話：'
+
+const lineOf = (h: Hit): string => `- ${h.entry.id}（${TYPE_NAMES[h.entry.type]}・${sourceOf(h.entry)}）：${h.entry.text}`
 
 /**
  * One line per memory, as many as fit the budget: the person's preferences

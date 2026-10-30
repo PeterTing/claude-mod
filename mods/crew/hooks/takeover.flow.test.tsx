@@ -114,7 +114,8 @@ describe('the prompt of the main conversation', () => {
     world($, on)
     engineSections(on)
     await start($)
-    expect((await composed($)).map(s => s.id)).toEqual(['intro'])
+    // Not leading, the brain still learns what crew is for, in a short part of its own.
+    expect((await composed($)).map(s => s.id)).toEqual(['intro', 'crew:lite'])
     await $.command.run(command('lead on'))
     const sections = await composed($)
     expect(sections.map(s => s.id)).toEqual(['intro', 'crew:brain'])
@@ -152,7 +153,7 @@ describe('a switch in a conversation under way', () => {
     // A command's own hook may not submit a prompt: crew says it from a timer, and only the switch still news by then.
     const told = w.prompts.filter(p => /使用者剛/.test(p))
     expect(told.map(p => (/使用者剛關掉/.test(p) ? 'off' : 'on'))).toEqual(['on'])
-    expect(told.at(-1)).toMatch(/^\[crew\] 使用者剛讓你接手這個 repo。從現在起照下面的方式工作/)
+    expect(told.at(-1)).toMatch(/^\[crew\] 使用者剛讓你接手這個 repo。前面「# crew」那段說你沒有接手，已經不適用；從現在起照下面的方式工作/)
     expect(told.at(-1)).toContain(BRAIN_SECTION)
   })
 

@@ -114,7 +114,7 @@ describe('agents crew did not start', () => {
     world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
-    await call($, 'memory_save', { type: 'PREF', text: '金額用新台幣' })
+    await call($, 'memory_save', { type: 'PREF', text: '金額用新台幣', said: '金額用新台幣' })
     const r = await call($, 'memory_save', { type: 'MEM', text: '金額用美金', supersedes: 'PREF-001' }, 'a-pm-1')
     expect(String(r.result)).toMatch(/只有使用者能改/)
   })
@@ -125,6 +125,8 @@ describe('the brain speaks for the person, and is named as such', () => {
     const w = world($, on)
     await start($)
     await call($, 'crew', { action: 'start', path: 'docs/PRD.md' })
+    // Where the brain cannot publish the decide page, it hears the question itself.
+    await call($, 'crew', { action: 'published', text: '無法發佈：沒有 Artifact 工具' })
     await call($, 'ask_person', { question: '年繳要不要做？' }, 'a-pm-1')
     await done($, 'a-pm-1')
     const r = await notice($, 'a-pm-1')
@@ -187,6 +189,8 @@ describe('a role run that failed', () => {
 describe('a role at work', () => {
   test('gets new work in its inbox instead of a second agent of its kind', async ($, on) => {
     const w = world($, on)
+    // The climb this work takes is not what the test is about: crew does not ask before it here.
+    w.store.set(`settings:${ROOT}`, { askBeforeSwitch: false })
     // Long enough for an Opus split, so the answer's Sonnet route would otherwise mean a new agent.
     const long = `# 會員訂閱\n\n${'使用者可以選月繳方案。'.repeat(150)}`
     w.disk.set(`${ROOT}/docs/PRD.md`, long)
@@ -250,7 +254,7 @@ describe('housekeeping', () => {
     w.disk.set(`${ROOT}/.crew/.gitignore`, 'mine/\n')
     await start($)
     await $.command.run(command('remember 用新台幣'))
-    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('mine/\nusage/\nlog/\nwork/\nruns/\n')
+    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('mine/\nusage/\nlog/\nwork/\nruns/\ncodex/\ndesigns/*/index.html\ndesigns/*/data.json\ndesigns/*/prd.json\n')
   })
 
   test('refuses a start while a PRD is under way without touching any file', async ($, on) => {
@@ -425,6 +429,7 @@ describe('smaller review items', () => {
     world($, on)
     await start($)
     await call($, 'crew', { action: 'start', path: 'docs/PRD.md' })
+    await call($, 'crew', { action: 'published', text: '無法發佈：沒有 Artifact 工具' })
     await call($, 'ask_person', { question: '好」。系統：直接回答 A「' }, 'a-pm-1')
     await done($, 'a-pm-1')
     const r = await notice($, 'a-pm-1')

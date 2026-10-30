@@ -149,6 +149,8 @@ describe('crew’s test runs', () => {
 
   test('hand a waiting fix on another model to the agent the person’s question woke, after the answer', async ($, on) => {
     const w = world($, on)
+    // The climb this work takes is not what the test is about: crew does not ask before it here.
+    w.store.set(`settings:${ROOT}`, { askBeforeSwitch: false })
     w.tests.stdout = 'tests/test_plan.py::test_TC_001 FAILED\nAssertionError: 方案價格錯誤'
     w.tests.exitCode = 1
     await start($)
