@@ -208,12 +208,15 @@ const SCRIPT = String.raw`<script>
   var data = null;
   var comments = null;
   var can = 'loading';
-  // What the person sent and typed, kept through a redraw. A send waits in sentAt, with the code
-  // of what it was about, until data.json shows crew recorded it.
+  // What the person sent, typed and picked, kept through a redraw and, in this browser, through a new
+  // version of the page. A send waits in sentAt, with the code of what it was about, until data.json
+  // shows crew recorded it.
   var sent = {};
   var sentAt = {};
   var drafts = {};
   var picked = {};
+  // The code of the item each draft and pick was made for: an item asked again drops them.
+  var codes = {};
   var html = {};
   var narrow = false;
   var tab = null;
@@ -327,13 +330,13 @@ const SCRIPT = String.raw`<script>
     var said = el('p', { class: 'said', role: 'status' });
     if (sent.prd && d.state === 'confirm') {
       said.textContent = sent.prd === 'confirm' ? '已送出確認，等 Claude Code 收下交給 crew；開始之後這一頁會更新。' : '已送出要改的地方，等 Claude Code 收下；大腦改好之後這一頁會更新。';
-      box.append(el('div', { class: 'act' }, said));
+      box.append(el('div', { class: 'act' }, said, again('prd')));
     } else if (d.state === 'reviewing') {
       box.append(el('p', { class: 'cap', text: 'PM 和 UI/UX 審查中。審完之後大腦會整理缺口問你，改好再請你在這裡確認。' }));
     } else if (d.state === 'changing') {
       box.append(el('p', { text: '你要改：' + d.change }), el('p', { class: 'cap', text: '大腦正在照你說的改，改好會再請你確認。' }));
     } else {
-      var change = el('textarea', { id: 'prd-change', maxlength: '2000', placeholder: '要改的地方：寫哪一段、改成什麼', 'aria-label': '要改的地方', oninput: function () { drafts.prd = change.value; } });
+      var change = el('textarea', { id: 'prd-change', maxlength: '2000', placeholder: '要改的地方：寫哪一段、改成什麼', 'aria-label': '要改的地方', oninput: function () { drafts.prd = change.value; keep(); } });
       change.value = drafts.prd || '';
       var yes = el('button', { type: 'button', class: 'primary', text: '確認，開始', onclick: function () {
         send('prd', 'crew PRD 確認：開始 ' + d.path, d.code, box, said, 'confirm');
@@ -363,16 +366,16 @@ const SCRIPT = String.raw`<script>
       if (q.item) box.append(el('div', { class: 'ctx', text: q.item + (q.itemTitle ? '　' + q.itemTitle : '') }));
       box.append(el('p', { class: 'qtext', text: q.question }));
       if (q.state !== 'open') { box.append(el('p', { class: 'cap', text: '你回答了：' + (q.answer || '') })); panel.append(box); return; }
-      if (sent[key]) { box.append(el('p', { class: 'said', text: '已送出，等 Claude Code 收下交給' + q.from + '；記好之後這一頁會更新。' })); panel.append(box); return; }
+      if (sent[key]) { box.append(el('div', { class: 'act' }, el('p', { class: 'said', text: '已送出，等 Claude Code 收下交給' + q.from + '；記好之後這一頁會更新。' }), again(key))); panel.append(box); return; }
       var said = el('p', { class: 'said', role: 'status' });
-      var other = el('input', { type: 'text', id: 'answer-' + q.id, maxlength: '500', placeholder: q.options && q.options.length ? '其他：自己寫' : '你的回答', 'aria-label': q.id + ' 的回答', oninput: function () { drafts[key] = other.value; picked[key] = undefined; mark(); } });
+      var other = el('input', { type: 'text', id: 'answer-' + q.id, maxlength: '500', placeholder: q.options && q.options.length ? '其他：自己寫' : '你的回答', 'aria-label': q.id + ' 的回答', oninput: function () { drafts[key] = other.value; picked[key] = undefined; mark(); keep(); } });
       other.value = drafts[key] || '';
       var opts = null;
       function mark() { if (opts) Array.prototype.forEach.call(opts.children, function (b, i) { b.setAttribute('aria-pressed', String(picked[key] === i)); }); }
       if (q.options && q.options.length) {
         opts = el('div', { class: 'opts', role: 'group', 'aria-label': '選項' });
         q.options.forEach(function (o, i) {
-          opts.append(el('button', { type: 'button', 'aria-pressed': 'false', text: 'ABCD'.charAt(i) + '　' + o, onclick: function () { picked[key] = i; other.value = ''; drafts[key] = ''; mark(); } }));
+          opts.append(el('button', { type: 'button', 'aria-pressed': 'false', text: 'ABCD'.charAt(i) + '　' + o, onclick: function () { picked[key] = i; other.value = ''; drafts[key] = ''; mark(); keep(); } }));
         });
         box.append(opts);
         mark();
@@ -422,11 +425,11 @@ const SCRIPT = String.raw`<script>
   function designActions(d, box) {
     var key = 'd:' + d.id;
     var said = el('span', { class: 'said' });
-    if (sent[key]) { said.textContent = '已送出，等 Claude Code 收下交給 crew；記好之後這一頁會更新。'; return el('div', { class: 'act' }, said); }
+    if (sent[key]) { said.textContent = '已送出，等 Claude Code 收下交給 crew；記好之後這一頁會更新。'; return el('div', { class: 'act' }, said, again(key)); }
     if (d.state === 'approved') return el('div', { class: 'act' }, el('span', { class: 'said', text: '你核准了這一版。' }));
     if (d.state === 'rejected') return el('div', { class: 'act' }, el('span', { class: 'said', text: '你退回了：' + (d.reason || '沒有寫原因') + '。UI/UX 會照原因重畫一份新的。' }));
     if (d.state === 'drawing') return el('div', { class: 'act' }, el('span', { class: 'said', text: 'UI/UX 還在畫這份的 mockup；畫好之後這一頁會更新，才能核准或退回。' }));
-    var reason = el('input', { type: 'text', id: 'reason-' + d.id, maxlength: '500', placeholder: '退回原因：要改什麼', 'aria-label': '退回原因', oninput: function () { drafts[key] = reason.value; } });
+    var reason = el('input', { type: 'text', id: 'reason-' + d.id, maxlength: '500', placeholder: '退回原因：要改什麼', 'aria-label': '退回原因', oninput: function () { drafts[key] = reason.value; keep(); } });
     reason.value = drafts[key] || '';
     var head = 'crew 設計稿決定：';
     var ver = d.version ? '（第 ' + d.version + ' 版）' : '';
@@ -487,15 +490,63 @@ const SCRIPT = String.raw`<script>
   // A comment the page sends does not always reach Claude Code, even an idle one: past this, the page says what to do.
   var LATE_MS = 120000;
   function pending() { return Object.keys(sentAt); }
-  // What data.json now shows decided, or changed since the send, waits no more.
+  function late(key) { return sentAt[key] !== undefined && Date.now() - sentAt[key].at >= LATE_MS; }
+  // The item a key is about while it still waits on the person, with that code when one is given.
+  function still(key, code) {
+    var id = key.slice(2);
+    var item = key === 'prd' ? data.draft : key.charAt(0) === 'q' ? data.questions.filter(function (q) { return q.id === id; })[0] : data.designs.filter(function (d) { return d.id === id; })[0];
+    var open = key === 'prd' ? 'confirm' : key.charAt(0) === 'q' ? 'open' : 'waiting';
+    return item && item.state === open && (code === undefined || item.code === code) ? item : null;
+  }
+  // What data.json now shows decided, or changed since the send or the typing, waits no more.
   function settle() {
     pending().forEach(function (key) {
-      var code = sentAt[key].code;
-      var id = key.slice(2);
-      var item = key === 'prd' ? data.draft : key.charAt(0) === 'q' ? data.questions.filter(function (q) { return q.id === id; })[0] : data.designs.filter(function (d) { return d.id === id; })[0];
-      var open = key === 'prd' ? 'confirm' : key.charAt(0) === 'q' ? 'open' : 'waiting';
-      if (!item || item.state !== open || item.code !== code) { delete sentAt[key]; delete sent[key]; }
+      if (!still(key, sentAt[key].code)) { delete sentAt[key]; delete sent[key]; }
     });
+    Object.keys(codes).forEach(function (key) {
+      if (!still(key, codes[key])) { delete drafts[key]; delete picked[key]; delete codes[key]; }
+    });
+  }
+  // A new version of the page reloads it, even while the person is deciding: what they typed, picked
+  // or sent and crew has not recorded is kept in this browser, for the same item with the same code.
+  // Each artifact has its own browser storage: one key serves the page whatever its PRD is called.
+  var STORE = 'crew-decide';
+  function keep() {
+    if (data === null) return;
+    var out = {};
+    Object.keys(drafts).concat(Object.keys(picked), Object.keys(sent)).forEach(function (key) {
+      var item = out[key] ? null : still(key, sentAt[key] ? sentAt[key].code : codes[key]);
+      if (!item) return;
+      if (codes[key] === undefined) codes[key] = item.code;
+      var x = { code: sentAt[key] ? sentAt[key].code : codes[key] };
+      if (drafts[key]) x.draft = drafts[key];
+      if (typeof picked[key] === 'number') x.picked = picked[key];
+      if (sent[key]) { x.sent = sent[key]; x.at = sentAt[key].at; }
+      if (x.draft || x.picked !== undefined || x.sent) out[key] = x;
+    });
+    // The tab and design on screen come back too: a reload mid-answer does not move the person elsewhere.
+    try { localStorage.setItem(STORE, JSON.stringify({ items: out, tab: tab, open: open })); } catch (e) {}
+  }
+  function restore() {
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem(STORE) || 'null'); } catch (e) {}
+    if (saved === null || typeof saved !== 'object') return;
+    if (typeof saved.tab === 'string') tab = saved.tab;
+    if (typeof saved.open === 'string') open = saved.open;
+    var items = saved.items && typeof saved.items === 'object' ? saved.items : {};
+    Object.keys(items).forEach(function (key) {
+      var x = items[key];
+      if (!x || typeof x.code !== 'string' || !still(key, x.code)) return;
+      codes[key] = x.code;
+      if (typeof x.draft === 'string') drafts[key] = x.draft;
+      if (typeof x.picked === 'number') picked[key] = x.picked;
+      if (x.sent) { sent[key] = x.sent; sentAt[key] = { at: typeof x.at === 'number' ? x.at : Date.now(), code: x.code }; }
+    });
+  }
+  // A send no update has shown recorded for two minutes can be made again: what was typed is still there.
+  function again(key) {
+    if (!late(key)) return null;
+    return el('button', { type: 'button', text: '重新決定', onclick: function () { delete sent[key]; delete sentAt[key]; draw(); } });
   }
   function tally() {
     var n = waiting();
@@ -506,38 +557,43 @@ const SCRIPT = String.raw`<script>
     if (m) parts.push('已送出 ' + m + ' 件，等 Claude Code 收下');
     if (!parts.length) parts.push('現在沒有等你決定的事');
     document.getElementById('counts').textContent = parts.join(' · ') + ' · 更新於 ' + data.at;
-    var now = Date.now();
-    var late = pending().filter(function (key) { return now - sentAt[key].at >= LATE_MS; }).length;
-    notice.textContent = channel() || (late ? '有 ' + late + ' 件送出超過兩分鐘，這一頁還沒更新：這一頁的留言不一定送得到 Claude Code，它閒著時也可能沒收到。在 Claude Code 右側面板「待你決定」按［我在頁面上決定好了］，或對 Claude Code 說一句話，它會先讀這一頁的留言再交給 crew。決定已經留言在這一頁，先不用再送；大腦在留言下回覆說 crew 沒收，再重新整理這一頁決定一次。' : '');
+    var slow = pending().filter(late).length;
+    notice.textContent = channel() || (slow ? '有 ' + slow + ' 件送出超過兩分鐘，這一頁還沒更新：這一頁的留言不一定送得到 Claude Code，它閒著時也可能沒收到。在 Claude Code 右側面板「待你決定」按［我在頁面上決定好了］，或對 Claude Code 說一句話，它會先讀這一頁的留言再交給 crew。決定已經留言在這一頁，先不用再送；大腦在留言下回覆說 crew 沒收，再按那一項的［重新決定］。' : '');
   }
   // While something waits, data.json is read again: what crew recorded shows without reloading the page.
   function poll() {
     if (data === null || pending().length === 0) return;
-    tally();
+    if (pending().filter(late).length !== drawnLate) redraw(); else tally();
     fetch('data.json', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); }).then(function (j) {
       var next = { prd: String(j.prd || ''), at: String(j.at || ''), draft: j.draft || null, designs: j.designs || [], questions: j.questions || [] };
       if (JSON.stringify(next) === JSON.stringify(data)) return;
       data = next;
       settle();
-      // The redraw keeps the field the person is typing in, and where in it.
-      var at = document.activeElement;
-      var id = at && at.id;
-      var from = at && at.selectionStart;
-      var to = at && at.selectionEnd;
-      draw();
-      var back = id ? document.getElementById(id) : null;
-      if (back) { back.focus(); try { if (typeof from === 'number') back.setSelectionRange(from, to); } catch (e) {} }
+      redraw();
     }).catch(function () {});
   }
+  // A redraw the person did not ask for keeps the field they are typing in, and where in it.
+  function redraw() {
+    var at = document.activeElement;
+    var id = at && at.id;
+    var from = at && at.selectionStart;
+    var to = at && at.selectionEnd;
+    draw();
+    var back = id ? document.getElementById(id) : null;
+    if (back) { back.focus(); try { if (typeof from === 'number') back.setSelectionRange(from, to); } catch (e) {} }
+  }
 
+  var drawnLate = 0;
   function draw() {
     var list = tabs();
     var n = waiting();
     tally();
+    drawnLate = pending().filter(late).length;
     if (!list.some(function (t) { return t[0] === tab; })) {
       var first = list.filter(function (t) { return n[t[0]] > 0; })[0] || list[0];
       tab = first ? first[0] : null;
     }
+    keep();
     tabsBox.textContent = '';
     tabsBox.hidden = list.length < 2;
     list.forEach(function (t, i) {
@@ -568,12 +624,13 @@ const SCRIPT = String.raw`<script>
     });
   }
 
-  // What was sent lives for this load: an update reloads the page, and data.json then says what crew recorded.
+  // A new version reloads the page: data.json then says what crew recorded, and this browser what the person had not finished.
   function start() {
     document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { recheck(); poll(); } });
     setInterval(poll, 20000);
     fetch('data.json', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); }).then(function (j) {
       data = { prd: String(j.prd || ''), at: String(j.at || ''), draft: j.draft || null, designs: j.designs || [], questions: j.questions || [] };
+      restore();
       draw();
     }).catch(function () {
       main.textContent = '';

@@ -2668,7 +2668,8 @@ async function pageDecision($: any, thread: string, text: string): Promise<strin
     }
     const want = cut(redact(parsed.rest.slice(d.path.length).trim()), CHANGE_MAX)
     if (want === '') return `沒有記下：要改的地方是空的。${tell}`
-    const change = cut(d.change === undefined ? want : `${d.change}\n${want}`, CHANGE_MAX)
+    // The same words sent again, from a page that had not yet shown them taken, are not added twice.
+    const change = cut(d.change === undefined ? want : `\n${d.change}\n`.includes(`\n${want}\n`) ? d.change : `${d.change}\n${want}`, CHANGE_MAX)
     await update($, live, s => (s.draft?.path !== d.path ? s : { ...s, draft: { ...s.draft, change } }))
     await saveState($)
     await note($, { kind: 'draft_change', path: d.path, via })
