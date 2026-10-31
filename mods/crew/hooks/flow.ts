@@ -315,7 +315,7 @@ const NOT_AN_ATTEMPT = -1
 const undesigned = (board: Tracker) => board.prd_items.filter(i => i.crew_dropped === undefined && liveDesignsOf(i).length === 0)
 
 /** The designs in play that the person has not decided on and can see: a screen is seen through its mockup. */
-const undecided = (board: Tracker): string[] =>
+export const undecided = (board: Tracker): string[] =>
   board.prd_items.filter(i => i.crew_dropped === undefined).flatMap(i => liveDesignsOf(i).filter(d => decisionOf(d) === undefined && !needsMockup(d)).map(d => d.id))
 
 /** The designs in play the person cannot see yet: screens not decided on, with no mockup. */

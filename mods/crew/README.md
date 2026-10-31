@@ -30,7 +30,7 @@ The team also handles:
 
 - **Gaps:** test gaps go back to the PM, who drops each one with a reason or asks QA to test it. Criteria without a task go back to the tech lead, and then to you.
 - **Questions between roles:** the tech lead and the designer ask the PM through a thread when they need a trade-off, and get the answer back.
-- **Questions:** product questions come to you.
+- **Questions:** product questions come to you, written so you can answer without reading the PRD, the board or the code: the first line says what to decide, any number (R-, PRD-, AC-, SCR-, TASK-) or PRD passage is said in plain words, and the background, the situation and each option follow as short lists under their own headings.
 - **Memory:** the team keeps it in the repo, so a role can start from a clean context without forgetting.
 
 The plan, with what each phase checked, is in [`docs/plans/crew-plan.zh-TW.html`](../../docs/plans/crew-plan.zh-TW.html).
@@ -56,7 +56,7 @@ When Claude Code starts, crew's pane opens on the right (in a terminal 144 colum
 
 - **Start.** Pick a PRD from the repo (files with PRD, spec or 需求 in their path come first) or type its path, then 開始. 這次不用 closes the pane for this session.
 - **After a restart.** A PRD crew left unfinished is held: the pane says where it stopped and asks 接續 or 先不要. Nothing runs, and nothing is spent, until you go on: 接續, or your own answer to a question or 跑測試. While a flow is held, Claude cannot go on for you: it cannot resume it, relay an answer, run the tests or ask a role. A flow is held the same way after 先不要, and when the heartbeat woke it once and it stopped at the same place again.
-- **待你決定.** Answer a role's question in the field under it. Read a design, approve it, or send it back with a reason. Approve the brain's proposals, or not.
+- **待你決定.** Answer a role's question in the field under it. Read a design, approve it, or send it back with a reason. Approve the brain's proposals, or not. A design moved out, on its own or with its feature, leaves 待你決定 by itself, with the reason, and a flow that waited only on it goes on. A design missing from the board altogether stays: that is usually another branch's board, so switch back to decide it, or press approve or send back to close it.
 - **Each role's row.** 問 opens a field to ask that role; 輪替 has it start from a fresh context the next time it is woken.
 - **記憶.** Search the team's memory, and save a preference.
 - **設定.** The PRD to follow; the test command and 跑測試; how the brain acts on usage (先問你 by default, or 自動); whether the pane opens when Claude Code starts; 接續 and 重設流程 (asked twice); 整理今天的記憶.

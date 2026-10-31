@@ -361,6 +361,10 @@ const requirementRows = (board: Tracker, requirements: readonly Requirement[]): 
  * brain could not publish the page, or the person chose the pane, each design
  * stays a row of its own.
  */
+/** What the pane says of a design the person was asked about that the board no longer has. */
+const goneQuestion = (id: string): string =>
+  `設計稿 ${id} 不在目前的看板上（可能切了分支，或看板被改過）。只是切了分支的話，先切回來再決定；按核准或退回會關掉這題，沒有設計稿的功能交給 UI/UX 重畫。`
+
 /** A question the decide page holds: a role's or crew's own; the brain's own and its proposals stay in the pane. */
 const onPage = (d: Decision): boolean => d.kind === 'design' || (d.kind === undefined && d.from !== 'brain')
 
@@ -370,14 +374,17 @@ const onPage = (d: Decision): boolean => d.kind === 'design' || (d.kind === unde
  * person chose the pane or the page could not be published, and before a
  * page is asked for while something can be decided.
  */
-const reviewed = (decisions: Decision[], review: CrewLive['review'], board: Tracker | null): Decision[] => {
+const reviewed = (asked: Decision[], review: CrewLive['review'], board: Tracker | null): Decision[] => {
+  const all = board === null ? [] : board.prd_items.flatMap(i => designsOf(i))
+  // One asked about and gone from the board has nothing to see, on the page or here: it keeps a row of its own, saying so, for the person to close.
+  const gone = (d: Decision) => board !== null && d.kind === 'design' && !all.some(x => x.id === d.design)
+  const decisions = asked.map(d => (gone(d) ? { ...d, question: goneQuestion(d.design ?? '') } : d))
   // Decided in the pane, each design still has the page to see it on, once there is one.
-  if (review?.failed !== undefined) return review.url === undefined ? decisions : decisions.map(d => (d.kind === 'design' ? { ...d, url: review.url as string } : d))
-  const paged = decisions.filter(onPage)
+  if (review?.failed !== undefined) return review.url === undefined ? decisions : decisions.map(d => (d.kind === 'design' && !gone(d) ? { ...d, url: review.url as string } : d))
+  const paged = decisions.filter(d => onPage(d) && !gone(d))
   if (paged.length === 0) return decisions
   const designs = paged.filter(d => d.kind === 'design')
   const questions = paged.length - designs.length
-  const all = board === null ? [] : board.prd_items.flatMap(i => designsOf(i))
   const drawing = designs.filter(d => {
     const found = all.find(x => x.id === d.design)
     return found !== undefined && needsMockup(found)
@@ -405,7 +412,7 @@ const reviewed = (decisions: Decision[], review: CrewLive['review'], board: Trac
     ...(ready > 0 ? { inPane: true as const } : {}),
   }
   const at = decisions.indexOf(paged[0] as Decision)
-  const others = decisions.filter(d => !onPage(d))
+  const others = decisions.filter(d => !paged.includes(d))
   return [...others.slice(0, at), row, ...others.slice(at)]
 }
 

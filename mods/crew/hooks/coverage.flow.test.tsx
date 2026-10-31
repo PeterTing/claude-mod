@@ -174,10 +174,11 @@ describe('third test review', () => {
     const w = world($, on)
     await start($)
     await $.command.run(command('start docs/PRD.md'))
-    await call($, 'ask_person', { question: '問'.repeat(800) }, 'a-pm-1')
+    // A question has room to explain what it is about; an answer stays short.
+    await call($, 'ask_person', { question: '問'.repeat(2500) }, 'a-pm-1')
     await $.command.run(command(`answer Q-01 ${'答'.repeat(800)}`))
     const state = w.store.get(`state:${ROOT}`) as { questions: { question: string; answer?: string }[] }
-    expect([...(state.questions[0]?.question ?? '')].length).toBe(501)
+    expect([...(state.questions[0]?.question ?? '')].length).toBe(2001)
     expect([...(state.questions[0]?.answer ?? '')].length).toBe(501)
   })
 

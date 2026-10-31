@@ -12,7 +12,7 @@ import { CONSOLIDATION_SYSTEM, consolidationPrompt, parseProposals } from './con
 import { DEMO } from './demo'
 import { draftDetail, draftOf, failedOf, MAX_SENDS, outcomeOf, pendingOf, REVIEWERS, reviewPrompt, reviewWord, sentDraft, sentOut, settledNote, takeoverOf, titleIn, withAsk, withOutcome } from './draft'
 import type { Outcome } from './draft'
-import { answeredOf, RUNNING, step, unmocked } from './flow'
+import { answeredOf, RUNNING, step, undecided, unmocked } from './flow'
 import type { FlowAction, FlowEvent, FlowStage } from './flow'
 import { ageOf, clockOf, dayOf, dayTotal, emptyLive, HEARTBEAT_MS, metricsOf, roleSays, snapshotOf, STAGE_OF, STAGE_ROLE, stopKey, usageSignals } from './live'
 import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, QUOTED, redact, searchMemories, serializeMemories } from './memory'
@@ -2241,6 +2241,76 @@ async function askApproval($: any, design: { id: string; title: string; kind: st
 }
 
 /**
+ * A design moved out, itself or with its feature, waits on nobody: its
+ * approval question is closed, saying why, so the pane stops offering it, and
+ * the page is brought up to date. One missing from the board is left waiting:
+ * crew never takes a design's id off the board, so a board without it is
+ * another checkout's (a branch switched, changes stashed), and switching back
+ * finds the question where it was.
+ */
+async function closeDropped($: any) {
+  const board = await loadBoard($)
+  if (board === null) return
+  // Read as decide reads it: a design is out once the field is there, whatever it holds.
+  const why = new Map<string, string>()
+  for (const item of board.prd_items) {
+    for (const d of designsOf(item)) {
+      if (item.crew_dropped !== undefined || d.crew_dropped !== undefined) why.set(d.id, cut(squeeze(String((d.crew_dropped !== undefined ? d.crew_dropped : item.crew_dropped) ?? '')), 120))
+    }
+  }
+  const stale = (await read($, live)).questions.filter(q => q.status === 'open' && q.from === 'crew' && q.item !== undefined && /^SCR-\d+$/.test(q.item) && why.has(q.item))
+  if (stale.length === 0) return
+  const said = (item: string) => {
+    const reason = why.get(item) ?? ''
+    return reason === '' ? '設計稿已移出，不用核准。' : `設計稿已移出，不用核准：${reason}`
+  }
+  const ids = new Set(stale.map(q => q.id))
+  await update($, live, s => ({ ...s, questions: s.questions.map(q => (ids.has(q.id) && q.status === 'open' ? { ...q, status: 'answered' as const, answer: said(q.item ?? '') } : q)) }))
+  await saveState($)
+  await note($, { kind: 'design_questions_closed', ids: [...ids] })
+  await refreshReview($)
+}
+
+/**
+ * Whether a flow waiting for the person on designs waits on nothing they can
+ * decide: none left (the last one moved out), or one never asked about (drawn
+ * again while the flow waited, or back on the board). Designs still to be
+ * drawn are the designer's to finish, not a stuck flow; nor is a board missing
+ * a design the person was asked about, which is another checkout's.
+ */
+function approvingStuck(l: CrewLive, board: Tracker): boolean {
+  if (l.flow.stage !== 'approving' || unmocked(board).length > 0) return false
+  const asked = new Set(l.questions.filter(q => q.status === 'open' && q.from === 'crew' && q.item !== undefined).map(q => q.item))
+  const onBoard = new Set(board.prd_items.flatMap(i => designsOf(i).map(d => d.id)))
+  if ([...asked].some(id => id !== undefined && /^SCR-\d+$/.test(id) && !onBoard.has(id))) return false
+  const left = undecided(board)
+  return left.length === 0 || left.some(id => !asked.has(id))
+}
+
+/**
+ * A stuck flow waiting on designs goes on as after a decision: a design never
+ * asked about is asked, designs a feature lost go back to the designer, and
+ * with all approved the tech lead plans. A flow the person holds, or the
+ * designer still drawing, is left as it is; the board it goes on from carries
+ * only the decisions crew recorded for the person.
+ */
+async function goOnApproving($: any, timed = false) {
+  const l = await read($, live)
+  if (l.flow.stage !== 'approving' || l.paused !== undefined || l.roles.uiux.state === 'working') return
+  const raw = await loadBoard($)
+  if (raw === null || !approvingStuck(l, raw)) return
+  await syncCommits($)
+  const fresh = await loadBoard($)
+  const now = await read($, live)
+  if (fresh === null || now.prdPath === null) return
+  // It goes on with the decisions crew recorded, whether or not writing them back to the board took.
+  const board = withDecisions(fresh, decisionsOf(fresh, await loadDecided($, relativeOf(now.prdPath)))) ?? fresh
+  if (!approvingStuck(now, board)) return
+  const requirements = (await prdView($))?.requirements
+  await feed($, { type: 'designs_decided', board, ...(requirements === undefined ? {} : { requirements }) }, timed)
+}
+
+/**
  * The person's decision on designs: recorded on this machine against the
  * design as it stands, said in the design's thread for the designer, and
  * kept as a decision; the flow that waits for it goes on.
@@ -2253,7 +2323,20 @@ async function decide($: any, ids: readonly string[], verdict: 'approved' | 'rej
   if (board === null) return boardProblem() ?? '找不到看板。'
   const all = new Map(board.prd_items.filter(i => i.crew_dropped === undefined).flatMap(i => designsOf(i).filter(d => d.crew_dropped === undefined).map(d => [d.id, { d, feature: i.id }] as const)))
   const missing = ids.filter(id => !all.has(id))
-  if (missing.length > 0) return `找不到設計稿 ${missing.join('、')}（或它已經移出）。`
+  if (missing.length > 0) {
+    // One asked about and gone from the board altogether (another checkout's board, or taken off by hand) waits on
+    // nothing crew can show: the person's word closes its question, and a board that has it again asks again.
+    const onBoard = new Set(board.prd_items.flatMap(i => designsOf(i).map(d => d.id)))
+    const gone = missing.filter(id => !onBoard.has(id) && l.questions.some(q => q.status === 'open' && q.from === 'crew' && q.item === id))
+    if (gone.length === 0) return `找不到設計稿 ${missing.join('、')}（或它已經移出）。`
+    await update($, live, s => ({ ...s, questions: s.questions.map(q => (q.status === 'open' && q.from === 'crew' && q.item !== undefined && gone.includes(q.item) ? { ...q, status: 'answered' as const, answer: '設計稿不在目前的看板上，使用者關掉了這題。' } : q)) }))
+    await saveState($)
+    await note($, { kind: 'design_questions_closed', ids: gone, via: via ?? 'pane' })
+    await refreshReview($)
+    await goOnApproving($)
+    const rest = ids.filter(id => !gone.includes(id))
+    return `${gone.join('、')} 不在目前的看板上，這題關掉了；沒有設計稿的功能會交給 UI/UX 重畫。看板上再出現它、crew 還在等你核准設計稿時，會再問你。${rest.length === 0 ? '' : `${rest.join('、')} 沒有記下，請再決定一次。`}`
+  }
   // The page's decision is on the design as the person saw it: one changed since is not decided for them.
   if (expected !== undefined && ids.some(id => { const found = all.get(id); return found === undefined || designMark(found.d) !== expected })) return `${ids.join('、')} 在使用者看了之後改過了。`
   // A screen is approved once the person has seen it: one with no mockup yet can be sent back, not approved.
@@ -2701,7 +2784,7 @@ async function answerQuestion($: any, q: CrewLive['questions'][number], answer: 
   if (q.from === 'brain') {
     await update($, live, l => ({ ...l, questions: l.questions.map(x => (x.id === q.id ? { ...x, status: 'answered' as const, answer } : x)) }))
     // The brain's own question: the answer is a decision on record and news for the brain, not the flow's.
-    await remember($, { type: 'DEC', text: `${decided}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `${by} ${q.id}` })
+    await remember($, { type: 'DEC', text: `${decided}（問題：${headline(q.question)}）`, refs: q.item === undefined ? [] : [q.item], source: `${by} ${q.id}` })
     await saveState($)
     if (by === 'person') tellBrain(`使用者回答了你的問題 ${q.id}：${quoted(answer)}`)
     return `已記下 ${q.id} 的回答。`
@@ -2725,8 +2808,8 @@ async function answerQuestion($: any, q: CrewLive['questions'][number], answer: 
         : waiting === 'designing'
           ? 'uiux'
           : 'pm'
-  if (q.item !== undefined && ITEM.test(q.item)) await post($, { item: q.item, from: by, to: askedBy, text: `${q.question} → ${answer}` })
-  await remember($, { type: 'DEC', text: `${decided}（問題：${q.question}）`, refs: q.item === undefined ? [] : [q.item], source: `${by} ${q.id}` }, askedBy)
+  if (q.item !== undefined && ITEM.test(q.item)) await post($, { item: q.item, from: by, to: askedBy, text: `${headline(q.question)} → ${answer}` })
+  await remember($, { type: 'DEC', text: `${decided}（問題：${headline(q.question)}）`, refs: q.item === undefined ? [] : [q.item], source: `${by} ${q.id}` }, askedBy)
   // The page shows it answered before the role it goes to starts.
   await refreshReview($, 'questions')
   await syncCommits($)
@@ -2735,9 +2818,13 @@ async function answerQuestion($: any, q: CrewLive['questions'][number], answer: 
   return `已把 ${q.id} 的回答轉給 ${crewName(askedBy)}。`
 }
 
+/** A question is written out for the person, with what it is about: room for that, and its first line where it is only named. */
+const QUESTION_MAX = 2000
+const headline = (question: string): string => cut(question.split('\n').map(l => l.trim()).find(l => l !== '') ?? '', 160)
+
 async function ask($: any, from: CrewRole | 'crew' | 'brain', asked: string, item?: string, choices?: readonly string[]): Promise<string> {
   const t = await $.clock.now()
-  const question = cut(redact(asked), 500)
+  const question = cut(redact(asked), QUESTION_MAX)
   const options = optionsOf(choices)
   const prd = pagePath(await read($, live))
   const id = await addQuestion($, { question, ...(item === undefined ? {} : { item }), ...(options === undefined ? {} : { options }), ...(prd === undefined ? {} : { prd }), from, t })
@@ -3255,7 +3342,9 @@ async function resumeOnStart($: any) {
   const stopped = RUNNING.includes(l.flow.stage) && Object.keys(l.agents).length === 0
   const reloaded = l.flow.stage === 'testing' && !testsUnderWay()
   // Designs from before mockups wait for UI/UX to draw them: the same offer goes on to that.
-  const owed = l.flow.stage === 'approving' && (await mockupsOwed($))
+  // So does a flow waiting on designs with none the person can decide: it goes on once they say so, not on its own.
+  const board = l.flow.stage === 'approving' ? await loadBoard($) : null
+  const owed = l.flow.stage === 'approving' && ((await mockupsOwed($)) || (board !== null && approvingStuck(l, board)))
   if (stopped || reloaded || owed) await update($, live, s => ({ ...s, paused: 'offer' as const }))
   if (open > 0) $.ui.toast(`crew：有 ${open} 件事等你決定，在右側面板處理`)
   flushBrain($, true)
@@ -3726,7 +3815,9 @@ async function prdCandidates($: any): Promise<{ path: string; title: string }[]>
 /** Starts the roles of a running flow again, fresh, from what the board shows; says what it did. */
 async function resumeFlow($: any, fresh = true, timed = false): Promise<string> {
   const l = await read($, live)
-  if (!(RUNNING.includes(l.flow.stage) || (l.flow.stage === 'approving' && (await mockupsOwed($)))) || l.prdPath === null) {
+  const waiting = l.flow.stage === 'approving' ? await loadBoard($) : null
+  const stuck = l.flow.stage === 'approving' && ((await mockupsOwed($)) || (waiting !== null && approvingStuck(l, waiting)))
+  if (!(RUNNING.includes(l.flow.stage) || stuck) || l.prdPath === null) {
     await update($, live, s => {
       const { paused: _, ...going } = s
       return going
@@ -4160,6 +4251,13 @@ async function watch($: any, timed = false) {
       do {
         watching.again = false
         await lookAtPrd($, timed)
+        // A design moved out by a hand edit, or by a crew from before, stops waiting too; the flow goes on on the clock, not as Claude Code starts.
+        try {
+          await closeDropped($)
+          if (timed) await goOnApproving($, ON_TIMER)
+        } catch (err) {
+          warnOnce($, `檢查等核准的設計稿時出錯：${cut(String(err), 200)}`)
+        }
       } while (watching.again)
     } catch (err) {
       // Said once in a toast; a check that keeps failing also shows in the pane's time of the last check falling behind.
@@ -5140,7 +5238,7 @@ const boardRead: CrewToolRun = async ($, e) => {
   const board = await loadBoard($)
   if (board === null) return { result: boardProblem() ?? '還沒有看板。' }
   const open = (await read($, live)).questions.filter(q => q.status === 'open')
-  const waiting = open.length === 0 ? '' : `\n\n等使用者回答的問題（不要重複問）：\n${open.map(q => `- ${q.id} ${q.question}`).join('\n')}`
+  const waiting = open.length === 0 ? '' : `\n\n等使用者回答的問題（不要重複問）：\n${open.map(q => `- ${q.id} ${headline(q.question)}`).join('\n')}`
   return { result: `${renderBoard(board, typeof e.feature === 'string' ? { feature: e.feature } : {})}${waiting}` }
 }
 
@@ -5173,6 +5271,8 @@ const boardWrite: CrewToolRun = async ($, e) => {
   const { applied: r, before: board } = outcome
   if (!r.ok) return { result: `board_write 沒有生效，看板沒有任何變更：\n- ${r.errors.join('\n- ')}` }
   await writeMockups($, ops, r.results)
+  await closeDropped($)
+  await goOnApproving($)
   // The board's decisions are memories too, under the same ids.
   const had = new Set(decisionIdsOf(board))
   type Decided = { id?: unknown; decision?: unknown; criteria?: unknown; feature?: unknown; task?: unknown; requirements?: unknown; status?: unknown }
@@ -5428,6 +5528,12 @@ export const register: Register = on => {
       }
     } finally {
       booted()
+    }
+    // Before the count of what waits is said: a question about a design moved out is not one.
+    try {
+      await closeDropped($)
+    } catch (err) {
+      $.ui.log(`crew: could not close the questions of designs moved out: ${redact(String(err))}`, { to: 'debug' })
     }
     await resumeOnStart($)
     // The review page goes out again in a new session: a publish is what lets the person's decisions on it reach this conversation.

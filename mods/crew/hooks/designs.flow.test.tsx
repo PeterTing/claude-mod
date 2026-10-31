@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { agentOf, command, done, paneText, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { agentOf, command, done, paneText, paneUi, PLAN, ROOT, SPLIT, start, textOf, world, write } from './world'
 
 /** The UI/UX designer designs each feature; the person, and only the person, approves or sends a design back. */
 
@@ -90,6 +90,192 @@ describe('designs', () => {
     expect(w.toasts.some(t => /設計稿 SCR-003 等你核准/.test(t))).toBe(true)
     await $.command.run(command('approve SCR-003'))
     expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:techlead' })
+  })
+
+  test('stop waiting for the person once moved out, on the board or by hand', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    type Kept = { questions: { item?: string; status: string; answer?: string }[] }
+    const kept = () => (w.store.get(`state:${ROOT}`) as Kept).questions
+    const waiting = () => kept().filter(q => q.status === 'open').map(q => q.item)
+    expect(waiting()).toEqual(['SCR-001', 'SCR-002'])
+    await write($, 'a-uiux-3', [{ op: 'drop_design', id: 'SCR-001', reason: '外框不一致，重畫' }])
+    expect(waiting()).toEqual(['SCR-002'])
+    expect(kept().find(q => q.item === 'SCR-001')?.answer).toBe('設計稿已移出，不用核准：外框不一致，重畫')
+    expect(await paneText($)).not.toMatch(/設計稿 SCR-001/)
+    // Moved out by hand, or by a crew from before: the next look stops the wait too.
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { id: string; crew_dropped?: string }[] }
+    const feature = board.prd_items.find(i => i.id === 'PRD-002')
+    if (feature !== undefined) feature.crew_dropped = '這次不做'
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
+    await w.clock.advance(5 * 60_000 + 1_000)
+    expect(waiting()).toEqual([])
+    expect(kept().find(q => q.item === 'SCR-002')?.answer).toBe('設計稿已移出，不用核准：這次不做')
+  })
+
+  test('go on once the last one waiting is moved out: a feature left with none goes back to the designer', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    await $.command.run(command('approve SCR-002'))
+    const sent = w.sent.length
+    await write($, 'a-uiux-3', [{ op: 'drop_design', id: 'SCR-001', reason: '外框不一致，重畫' }])
+    expect((await $.command.run(command('status'))).text).toMatch(/designing/)
+    expect(w.sent.slice(sent).some(m => m.to === 'a-uiux-3' && /PRD-001/.test(m.text))).toBe(true)
+  })
+
+  test('go on, on the clock, once a hand edit moves the last one out: with all approved the tech lead plans', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    await $.command.run(command('approve SCR-001'))
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { id: string; crew_dropped?: string }[] }
+    const feature = board.prd_items.find(i => i.id === 'PRD-002')
+    if (feature !== undefined) feature.crew_dropped = '這次不做'
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
+    await w.clock.advance(31_000)
+    // On the clock, the tech lead starts in the conversation's next frame: the flow has gone on to planning.
+    expect((await $.command.run(command('status'))).text).toMatch(/planning/)
+  })
+
+  test('go on only from the decisions the person made, not from one written on the board', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { crew_designs?: Record<string, unknown>[] }[] }
+    for (const d of board.prd_items.flatMap(i => i.crew_designs ?? [])) d.crew_decision = { verdict: 'approved' }
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001'], title: 't2', steps: ['s'], expected: 'e' }])
+    await w.clock.advance(31_000)
+    expect((await $.command.run(command('status'))).text).toMatch(/approving[\s\S]*待你決定 2/)
+    expect(w.spawned.some(s => s.subagentType === 'crew:techlead')).toBe(false)
+  })
+
+  test('wait to be told after a restart, when the last one waiting was moved out while Claude Code was off', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    await $.command.run(command('approve SCR-001'))
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { id: string; crew_dropped?: string }[] }
+    const feature = board.prd_items.find(i => i.id === 'PRD-002')
+    if (feature !== undefined) feature.crew_dropped = '這次不做'
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
+    await start($)
+    expect(await paneText($)).toMatch(/要接續嗎/)
+    await w.clock.advance(31_000)
+    // Nothing runs, and nothing is spent, until the person goes on.
+    expect((await $.command.run(command('status'))).text).toMatch(/approving/)
+    expect(w.spawned.some(s => s.subagentType === 'crew:techlead')).toBe(false)
+    await $.command.run(command('resume'))
+    expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:techlead' })
+  })
+
+  test('ask about a design drawn again while the person was deciding', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    await $.command.run(command('approve SCR-002'))
+    await write($, 'a-uiux-3', [
+      { op: 'add_design', feature: 'PRD-001', title: '方案比較表', kind: 'screen', body: '表格比較三個方案。', html: '<p>v2</p>' },
+      { op: 'drop_design', id: 'SCR-001', reason: '改成比較表' },
+    ])
+    type Kept = { questions: { item?: string; status: string }[] }
+    expect((w.store.get(`state:${ROOT}`) as Kept).questions.filter(q => q.status === 'open').map(q => q.item)).toEqual(['SCR-003'])
+    expect(w.toasts.some(t => /設計稿 SCR-003 等你核准/.test(t))).toBe(true)
+    await $.command.run(command('approve SCR-003'))
+    expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:techlead' })
+  })
+
+  test('keep waiting while the board is another checkout\'s, and find the questions where they were on the way back', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    await done($, 'a-pm-1')
+    await write($, 'a-qa-2', [{ op: 'add_test_case', criteria: ['AC-001', 'AC-002'], title: 't', steps: ['s'], expected: 'e' }])
+    const older = w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? ''
+    await done($, 'a-qa-2')
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    const current = w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? ''
+    const spawned = w.spawned.length
+    type Kept = { questions: { item?: string; status: string }[] }
+    const waiting = () => (w.store.get(`state:${ROOT}`) as Kept).questions.filter(q => q.status === 'open').map(q => q.item)
+    // A branch whose board is from before the designs, or the board's changes stashed.
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, older)
+    await w.clock.advance(61_000)
+    expect(waiting()).toEqual(['SCR-001', 'SCR-002'])
+    expect((await $.command.run(command('status'))).text).toMatch(/approving/)
+    expect(w.spawned.length).toBe(spawned)
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, current)
+    await w.clock.advance(61_000)
+    expect(waiting()).toEqual(['SCR-001', 'SCR-002'])
+    expect((await $.command.run(command('status'))).text).toMatch(/approving[\s\S]*待你決定 2/)
+  })
+
+  test('let the person close the question of a design gone from the board, and go on', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    await $.command.run(command('approve SCR-002'))
+    // Taken off the board by hand, not moved out: crew cannot tell it from another checkout's board, so it keeps waiting.
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { id: string; crew_designs?: { id: string }[] }[] }
+    const feature = board.prd_items.find(i => i.id === 'PRD-001')
+    if (feature !== undefined) feature.crew_designs = (feature.crew_designs ?? []).filter(d => d.id !== 'SCR-001')
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
+    await w.clock.advance(61_000)
+    type Kept = { questions: { item?: string; status: string; answer?: string }[] }
+    const kept = () => (w.store.get(`state:${ROOT}`) as Kept).questions
+    expect(kept().filter(q => q.status === 'open').map(q => q.item)).toEqual(['SCR-001'])
+    const sent = w.sent.length
+    expect(await paneText($)).toMatch(/設計稿 SCR-001 不在目前的看板上（可能切了分支，或看板被改過）/)
+    expect((await $.command.run(command('approve SCR-001'))).text).toMatch(/SCR-001 不在目前的看板上，這題關掉了；沒有設計稿的功能會交給 UI\/UX 重畫/)
+    expect(kept().find(q => q.item === 'SCR-001')).toMatchObject({ status: 'answered', answer: '設計稿不在目前的看板上，使用者關掉了這題。' })
+    // PRD-001 is left with no design: it goes back to the designer.
+    expect((await $.command.run(command('status'))).text).toMatch(/designing/)
+    expect(w.sent.slice(sent).some(m => m.to === 'a-uiux-3' && /PRD-001/.test(m.text))).toBe(true)
+    // A design never asked about is still not found.
+    expect((await $.command.run(command('approve SCR-009'))).text).toMatch(/找不到設計稿 SCR-009（或它已經移出）/)
+  })
+
+  test('keep a design gone from the board out of the decide page row, where the person can close it', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    await crew($, { action: 'published', text: 'https://claude.ai/artifact/abc123', path: 'docs/PRD.md' })
+    const board = JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}') as { prd_items: { id: string; crew_designs?: { id: string }[] }[] }
+    const feature = board.prd_items.find(i => i.id === 'PRD-001')
+    if (feature !== undefined) feature.crew_designs = (feature.crew_designs ?? []).filter(d => d.id !== 'SCR-001')
+    w.disk.set(`${ROOT}/.crew/prd-tracker.json`, JSON.stringify(board))
+    await w.clock.advance(11_000)
+    const ui = await paneUi($)
+    const text = await textOf(ui)
+    // The page row counts only what the page shows; the gone one is a row of its own.
+    expect(text).toMatch(/待你決定頁：設計稿 1 份等你核准/)
+    expect(text).toMatch(/設計稿 SCR-001 不在目前的看板上/)
+    type Kept = { questions: { id: string; item?: string; status: string }[] }
+    const q = (w.store.get(`state:${ROOT}`) as Kept).questions.find(x => x.item === 'SCR-001')
+    await ui.press({ key: `approve-${q?.id}` })
+    await ui.unmount()
+    expect((w.store.get(`state:${ROOT}`) as Kept).questions.find(x => x.item === 'SCR-001')?.status).toBe('answered')
+    expect(w.toasts.some(t => /SCR-001 不在目前的看板上，這題關掉了/.test(t))).toBe(true)
   })
 
   test('lose an approval once rewritten', async ($, on) => {
