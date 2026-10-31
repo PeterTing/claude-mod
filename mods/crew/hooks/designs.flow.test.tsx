@@ -278,6 +278,40 @@ describe('designs', () => {
     expect(w.toasts.some(t => /SCR-001 不在目前的看板上，這題關掉了/.test(t))).toBe(true)
   })
 
+  test('send a mockup back, unmasked and unwritten, when it looks like it holds a secret', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    const screen = (html: string) => ({ op: 'add_design', feature: 'PRD-001', title: '方案選擇頁', kind: 'screen', body: '版面：三張方案卡片。', html })
+    // Code the mask would break: sent back, not mangled.
+    const code = String((await write($, 'a-uiux-3', [screen('<button id="b">比較</button><script>let compareSeq = 0; b.onclick = () => { const token=++compareSeq; }</script>'), DESIGNS[1]])).result)
+    expect(code).toMatch(/board_write 沒有生效：mockup 裡有看起來像密鑰的寫法/)
+    expect(code).toMatch(/add_design PRD-001：…[\s\S]*const token=\[已遮罩\]/)
+    expect(w.disk.get(`${ROOT}/.crew/designs/docs-PRD/SCR-001.json`)).toBeUndefined()
+    // A secret in the page's words: sent back without the value.
+    const text = String((await write($, 'a-uiux-3', [screen('<p>測試帳號密碼：!QAZ2wsx</p>')])).result)
+    expect(text).toMatch(/共 1 處[\s\S]*測試帳號密碼：\[已遮罩\]/)
+    expect(text).not.toMatch(/QAZ2wsx/)
+    // A mask the page already had is not listed as the secret.
+    const had = String((await write($, 'a-uiux-3', [screen('<p>範例：密碼：[已遮罩]</p><p>測試帳號密碼：!QAZ2wsx</p>')])).result)
+    expect(had).toMatch(/共 1 處/)
+    expect(had.match(/^- add_design.*$/gm)).toEqual([expect.stringMatching(/測試帳號密碼：\[已遮罩\]$/)])
+    // A secret next to a mask the page had is sent back too, not masked quietly.
+    const next = String((await write($, 'a-uiux-3', [screen('<pre>{"password":"[已遮罩]Hunter2024"}</pre>')])).result)
+    expect(next).toMatch(/board_write 沒有生效[\s\S]*共 1 處/)
+    expect(next).not.toMatch(/Hunter2024/)
+    // Cards alike: the one with the secret is the one counted and listed.
+    const card = (v: string) => `<div class="card"><p>帳號：demo</p><p>密碼：${v}</p></div>`
+    const cards = String((await write($, 'a-uiux-3', [screen(card('abc') + card('[已遮罩]') + card('Hunter2024!'))])).result)
+    expect(cards).toMatch(/共 1 處，用/)
+    expect(cards.match(/^- add_design.*$/gm)).toHaveLength(1)
+    expect(JSON.stringify(JSON.parse(w.disk.get(`${ROOT}/.crew/prd-tracker.json`) ?? '{}'))).not.toMatch(/SCR-001/)
+    // Rewritten, it is written as it stands.
+    const html = '<button id="b">比較</button><p>密碼：********</p><script>let compareSeq = 0; b.onclick = () => { const seq=++compareSeq; }</script>'
+    expect(String((await write($, 'a-uiux-3', [screen(html), DESIGNS[1]])).result)).toMatch(/已寫入：SCR-001、SCR-002/)
+    expect((JSON.parse(w.disk.get(`${ROOT}/.crew/designs/docs-PRD/SCR-001.json`) ?? '{}') as { html?: string }).html).toBe(html)
+  })
+
   test('lose an approval once rewritten', async ($, on) => {
     const w = world($, on)
     await start($)

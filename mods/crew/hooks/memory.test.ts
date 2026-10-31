@@ -89,6 +89,32 @@ describe('redact', () => {
     expect(redact('權杖：abc12345')).toBe('權杖：[已遮罩]')
   })
 
+  test('masks dotted keys whatever surrounds them, and leaves a placeholder alone', () => {
+    expect(redact('<pre>SG.AbCdEfGhIjKlMnOpQrStUv.WxYz0123456789AbCdEfGh</pre>')).toBe('<pre>[已遮罩]</pre>')
+    expect(redact('mapbox sk.eyJ1IjoiZXhhbXBsZSJ9.AbCdEfGhIjKl')).toBe('mapbox [已遮罩]')
+    expect(redact('vault hvs.CAESIAbCdEfGhIjKlMnOpQrSt')).toBe('vault [已遮罩]')
+    expect(redact('doppler dp.st.dev.AbCdEf0123456789AbCdEf')).toBe('doppler [已遮罩]')
+    // A password stuck to a dotted key is masked too.
+    expect(redact('hvs.abcdefghijklmnopqrst_password=Hunter2024')).not.toMatch(/Hunter2024/)
+    expect(redact('dp.st.config.production_api_key=Hunter2024')).not.toMatch(/Hunter2024/)
+    expect(redact('SG.aaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbb_token=Hunter2024')).not.toMatch(/Hunter2024/)
+    expect(redact('<p>密碼：********</p>')).toBe('<p>密碼：********</p>')
+    // A digit over and over is a weak password, not a placeholder.
+    expect(redact('password: 111111')).toBe('password: [已遮罩]')
+    expect(redact('密碼：######')).toBe('密碼：[已遮罩]')
+  })
+
+  test('reads a long run of a scheme\'s letters once', () => {
+    const long = 'a.'.repeat(100_000)
+    const t = Date.now()
+    expect(redact(long)).toBe(long)
+    expect(Date.now() - t).toBeLessThan(1_000)
+    expect(redact('x.https://u:p4ss@h.com')).toBe('x.https://u:[已遮罩]@h.com')
+    // A run that starts with no letter is read from its start, as before.
+    expect(redact('see .postgres://admin:Hunter2024@db')).toBe('see .postgres://admin:[已遮罩]@db')
+    expect(redact('opt -Dpostgres://admin:Hunter2024@db')).toBe('opt -Dpostgres://admin:[已遮罩]@db')
+  })
+
   test('masks private keys and JWTs, even a key cut before its end line', () => {
     expect(redact('-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----')).toBe('[已遮罩]')
     expect(redact('前 -----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\nabc')).toBe('前 [已遮罩]')

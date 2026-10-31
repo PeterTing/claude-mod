@@ -70,10 +70,14 @@ const SECRETS: readonly RegExp[] = [
   /\bAIza[0-9A-Za-z_-]{30,}/g,
 ]
 
+/** Dotted keys, taken last: read first, they would swallow a `_password=…` stuck to them before it is masked. */
+const DOTTED: readonly RegExp[] = [/\bSG\.[\w-]{16,}\.[\w-]{16,}/g, /\bsk\.eyJ[\w-]+\.[\w-]+/g, /\bhvs\.[\w-]{20,}/g, /\bdp\.(?:st|ct|pt|sa)\.[\w.-]{20,}/g]
+
 /** Secrets inside a known shape: the shape stays, the secret goes. */
 const SHAPED: readonly [RegExp, string][] = [
   [/("(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key)"\s*:\s*")(?:[^"\\]|\\.)+(")/gi, `$1${MASK}$2`],
-  [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@/]+(@)/gi, `$1${MASK}$2`],
+  // From the start of a scheme's run of letters, whatever its first: a long run is read once, not once per letter.
+  [/((?<![a-z0-9+.-])[a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@/]+(@)/gi, `$1${MASK}$2`],
   [/(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}/g, `$1${MASK}`],
   [/(https:\/\/hooks\.slack\.com\/services\/)[A-Za-z0-9/]+/g, `$1${MASK}`],
 ]
@@ -82,13 +86,20 @@ const SHAPED: readonly [RegExp, string][] = [
 const ASSIGNED =
   /((?<![A-Za-z])(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret)|密碼|金鑰|密鑰|權杖)(\s*(?:[:=：＝]|是|為)\s*["']?)([\x21\x23-\x26\x28-\x2B\x2D-\x3A\x3D\x3F-\x7E]+)/gi
 
-const looksSecret = (value: string): boolean => value.length >= 6 && /[\d!@#$%^&*_+=-]/.test(value)
+// Stars alone are a placeholder (`********`); a digit over and over (`111111`) is a weak password, still masked.
+const looksSecret = (value: string): boolean => value.length >= 6 && /[\d!@#$%^&*_+=-]/.test(value) && !/^\*+$/.test(value)
+
+/** What stands in for a masked value. */
+export const MASKED = MASK
 
 /** The text with anything that looks like a key, token or password masked. */
 export const redact = (text: string): string =>
-  SHAPED.reduce((s, [re, to]) => s.replace(re, to), SECRETS.reduce((s, re) => s.replace(re, MASK), text)).replace(
-    ASSIGNED,
-    (all: string, key: string, sep: string, value: string) => (looksSecret(value) ? `${key}${sep}${MASK}` : all),
+  DOTTED.reduce(
+    (s, re) => s.replace(re, MASK),
+    SHAPED.reduce((s, [re, to]) => s.replace(re, to), SECRETS.reduce((s, re) => s.replace(re, MASK), text)).replace(
+      ASSIGNED,
+      (all: string, key: string, sep: string, value: string) => (looksSecret(value) ? `${key}${sep}${MASK}` : all),
+    ),
   )
 
 /** The next id of a type after the highest of that type in use. */

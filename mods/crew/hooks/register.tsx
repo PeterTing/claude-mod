@@ -15,7 +15,7 @@ import type { Outcome } from './draft'
 import { answeredOf, RUNNING, step, undecided, unmocked } from './flow'
 import type { FlowAction, FlowEvent, FlowStage } from './flow'
 import { ageOf, clockOf, dayOf, dayTotal, emptyLive, HEARTBEAT_MS, metricsOf, roleSays, snapshotOf, STAGE_OF, STAGE_ROLE, stopKey, usageSignals } from './live'
-import { addMemory, estimateTokens, MEMORY_TYPES, packMemories, parseMemories, QUOTED, redact, searchMemories, serializeMemories } from './memory'
+import { addMemory, estimateTokens, MASKED, MEMORY_TYPES, packMemories, parseMemories, QUOTED, redact, searchMemories, serializeMemories } from './memory'
 import type { AddResult, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { CODEX_WAIT, ROLE_NAMES } from './model'
 import type { Engines, RoleModels, Snapshot, Tier } from './model'
@@ -5242,6 +5242,37 @@ const boardRead: CrewToolRun = async ($, e) => {
   return { result: `${renderBoard(board, typeof e.feature === 'string' ? { feature: e.feature } : {})}${waiting}` }
 }
 
+/**
+ * A mockup with anything that looks like a secret is sent back, not masked:
+ * the mask would break its script (`token=++seq` read as a token), and the
+ * board is in git. Where it is, without the value: the designer wrote it.
+ */
+const mockupSecrets = (ops: readonly { op: string; html?: string; feature?: string; id?: string }[]): string | undefined => {
+  // A mask the page already had is held aside: each mask left is where a secret is.
+  const HELD = '\u0000'
+  const found: string[] = []
+  let total = 0
+  for (const op of ops) {
+    if (typeof op.html !== 'string' || redact(op.html) === op.html) continue
+    const label = `${op.op} ${op.feature ?? op.id ?? ''}`
+    const masked = redact(op.html.split(MASKED).join(HELD))
+    let here = 0
+    for (let at = masked.indexOf(MASKED); at >= 0; at = masked.indexOf(MASKED, at + MASKED.length)) {
+      here++
+      if (found.length < 5) found.push(`- ${label}：…${squeeze(masked.slice(Math.max(0, at - 40), at + MASKED.length).split(HELD).join(MASKED))}`)
+    }
+    // Masking changes it all the same, around a mask it already had.
+    if (here === 0) {
+      here = 1
+      if (found.length < 5) found.push(`- ${label}：原本就有的 ${MASKED} 附近會被遮掉`)
+    }
+    total += here
+  }
+  if (total === 0) return undefined
+  const listed = total > found.length ? `共 ${total} 處，下面列出前 ${found.length} 處` : `共 ${total} 處`
+  return `board_write 沒有生效：mockup 裡有看起來像密鑰的寫法（${listed}，用 ${MASKED} 標出位置）。crew 不會把它寫進看板（看板在 git 裡），也不替你遮掉（遮掉會讓 mockup 的程式壞掉）：\n${found.join('\n')}\n請改寫後整批再送一次：\n- 名字本身可以用（id="password"、for="password" 照常），但不要寫成 token、password、pwd、secret、api_key 這類名字後面接「=」或「:」再接值，例如 token=++seq、精簡寫法的 #password:focus{…}；改個名字（seq、reqId、pw-field），精簡的 CSS 在「{」前面加空格（#password:focus {…}）。\n- 範例值用 ******** 或 <your-key> 代替：在 HTML 文字裡寫成 &lt;your-key&gt;，在 JS 字串裡直接寫 <your-key>。JSON 範例的值留空（""），或換掉 key 的名字。\n- class 不要用 sk- 開頭的長名字，文案不要寫「Bearer 加一個英文字」。\n- 真的密鑰就拿掉。`
+}
+
 const boardWrite: CrewToolRun = async ($, e) => {
   const l = await read($, live)
   const role = callerOf(l, e.agentId)
@@ -5249,6 +5280,8 @@ const boardWrite: CrewToolRun = async ($, e) => {
   if (role !== 'brain' && l.asks[role]?.draft !== undefined) return { result: REVIEWING_DRAFT }
   const parsed = parseOps(e.ops)
   if (!parsed.ok) return { result: `board_write 沒有生效：\n${parsed.error}` }
+  const secretive = mockupSecrets(parsed.ops)
+  if (secretive !== undefined) return { result: secretive }
   // Every string a role writes to the board is masked first: the board is in git.
   const ops = parsed.ops.map(op => Object.fromEntries(Object.entries(op).map(([k, v]) => [k, typeof v === 'string' ? redact(v) : Array.isArray(v) ? v.map(x => (typeof x === 'string' ? redact(x) : x)) : v])) as typeof op)
   const now = await $.clock.now()
