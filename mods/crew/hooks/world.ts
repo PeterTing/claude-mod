@@ -35,7 +35,7 @@ const current: {
   ended?: Set<string>
 } = {}
 
-export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', denySpawnOf = '', stopped = [] as string[] } = {}) => {
+export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', denySpawnOf = '', stopped = [] as string[], web: webOn = false } = {}) => {
   /** The next so many `$.clock.after` dispatches are refused, as another plugin's hook can refuse them. */
   const refuse = { timers: 0 }
   const timed = ((event: string, ...rest: unknown[]) => {
@@ -60,6 +60,12 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     if (broken.storeReads !== '' && key.startsWith(broken.storeReads)) return { deny: `EIO: i/o error, store '${key}'` }
     // Where the board is takes this long to look up, by the test's clock, so work can meet crew still looking.
     if (slow.store > 0 && key.startsWith('board:')) await clock.sleep(slow.store)
+    if (slow.key.ms > 0 && slow.key.prefix !== '' && key.startsWith(slow.key.prefix)) {
+      const ms = slow.key.ms
+      slow.key.ms = 0
+      slow.key.held += 1
+      await clock.sleep(ms)
+    }
     return { value: store.get(key) }
   })
   on('store.set', (_$, e) => {
@@ -73,8 +79,37 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     return { value: undefined }
   })
   on('store.keys', () => ({ value: [...store.keys()] }))
-  /** The environment crew reads: none set unless a test sets them, but for crew's web page, which tests do not start. */
-  const env = new Map<string, string>([['CREW_WEB', 'off']])
+  /** The environment crew reads: none set unless a test sets them, but for crew's web page, which tests do not start unless they ask (`web`). */
+  const env = new Map<string, string>(webOn ? [] : [['CREW_WEB', 'off']])
+  /**
+   * crew's web page, for a test that turns it on: its server (web/server.py)
+   * played by the test, ready at once on a port of its own, saying the lines
+   * the test gives it (a page opened, a decision sent) in turn; and what crew
+   * posted back to it (its answers to decisions, its frames).
+   */
+  const web = {
+    started: 0,
+    lines: [] as string[],
+    wake: undefined as (() => void) | undefined,
+    posts: [] as { url: string; body: string }[],
+    /** The server says a line: crew reads it as its next event. */
+    say: (ev: Record<string, unknown>) => {
+      web.lines.push(JSON.stringify(ev))
+      const wake = web.wake
+      web.wake = undefined
+      wake?.()
+    },
+    /** crew's answers to the decisions the page sent, by the decision's id. */
+    answers: (): { id: string; ok: boolean; text: string; pending?: boolean }[] =>
+      web.posts.filter(p => p.url.endsWith('/_crew/reply')).map(p => JSON.parse(p.body) as { id: string; ok: boolean; text: string; pending?: boolean }),
+  }
+  on('http.fetch', (_$, e, next) => {
+    // Only a test that turns the web page on answers crew's posts to it; the rest go on as they did.
+    if (!webOn) return next(e)
+    const { url, init } = e as { url: string; init?: { body?: unknown } }
+    web.posts.push({ url, body: typeof init?.body === 'string' ? init.body : '' })
+    return { value: { status: 200, ok: true, headers: {}, text: '{}' } }
+  })
   on('env.get', (_$, e) => ({ value: env.get((e as { name: string }).name) }))
   /** When each file was last written, by the test's clock: a file's modified time. */
   const written = new Map<string, number>()
@@ -122,6 +157,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     ports: [] as string[],
     /** The stop commands crew ran, with where. */
     stops: [] as { argv: string[]; cwd?: string; env?: Record<string, string> }[],
+    /** How long after crew starts it the app takes to answer (the clock's ms): 0, at once. */
+    upDelay: 0,
   }
   const replies: string[] = []
   /** A path with every link on the way followed, as the file system resolves it. */
@@ -251,6 +288,12 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     }
     if (['/usr/bin/curl', '/usr/sbin/lsof', '/bin/kill', '/bin/mkdir', '/bin/rm', '/bin/cp', '/bin/ps'].includes(argv[0] ?? '')) {
       app.calls.push([...argv])
+      if (slow.run.ms > 0 && argv[0] === slow.run.argv0) {
+        const ms = slow.run.ms
+        slow.run.ms = 0
+        slow.run.held += 1
+        await clock.sleep(ms)
+      }
       if (argv[0] === '/usr/bin/curl') return app.up ? ok('200') : { value: { exitCode: 7, stdout: '000', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
       // Every listener, for the ports in use; or the ids listening on the app's port.
       if (argv[0] === '/usr/sbin/lsof' && argv.includes('-Fn')) return ok(app.ports.map((port, i) => `p${9000 + i}\nn*:${port}\n`).join(''))
@@ -310,6 +353,12 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     if (argv[at] !== '-C') return fail('no -C')
     const dir = argv[at + 1] ?? ''
     const args = argv.slice(at + 2)
+    if (slow.git.ms > 0 && slow.git.has !== '' && args.join(' ').includes(slow.git.has)) {
+      const ms = slow.git.ms
+      slow.git.ms = 0
+      slow.git.held += 1
+      await clock.sleep(ms)
+    }
     if (!git.repo) return fail('fatal: not a git repository')
     const top = (name: string) => git.branches.get(name)?.[0]?.sha
     if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree') return ok('true\n')
@@ -322,6 +371,11 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
       if (name.startsWith('refs/crew/')) return git.refs.has(name) ? ok(`${git.refs.get(name) ?? ''}\n`) : fail()
       if (name.endsWith('^1') && git.stashedOn.has(name.slice(0, -2))) return ok(`${git.stashedOn.get(name.slice(0, -2)) ?? ''}\n`)
       const branch = name.replace('refs/heads/', '').replace('^{commit}', '')
+      // A commit by its short id, as crew's log keeps it: the one commit it names, in full.
+      if (!git.branches.has(branch) && /^[0-9a-f]{7,39}$/.test(branch)) {
+        const named = [...new Set([...git.branches.values()].flat().map(c => c.sha))].filter(sha => sha.startsWith(branch))
+        return named.length === 1 ? ok(`${named[0] ?? ''}\n`) : fail()
+      }
       return git.branches.has(branch) ? ok(`${top(branch) ?? 'x'}\n`) : fail()
     }
     // A worktree's HEAD is its own branch; detached, a line of its own that is no branch.
@@ -572,8 +626,13 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     }
     return fail(`unknown: ${args.join(' ')}`)
   })
-  /** A read of a Markdown file takes this long, by the test's clock, so two looks at the PRD can meet; `store`, the look-up of where the board is; `stat` and `write`, a look at and a write of one file. */
-  const slow = { ms: 0, store: 0, stat: { path: '', ms: 0 }, write: { path: '', ms: 0 } }
+  /**
+   * A read of a Markdown file takes this long, by the test's clock, so two looks at the PRD can meet; `store`, the look-up
+   * of where the board is; `stat` and `write`, a look at and a write of one file; `writes`, each write under a path. Once each, the next of its kind, `held`
+   * counting those held: `git`, a git command naming `has`; `key`, a store read of a key starting with `prefix`; `run`, a
+   * run of `argv0` (curl, lsof, ps, kill).
+   */
+  const slow = { ms: 0, store: 0, stat: { path: '', ms: 0 }, write: { path: '', ms: 0 }, writes: { prefix: '', ms: 0 }, git: { has: '', ms: 0, held: 0 }, key: { prefix: '', ms: 0, held: 0 }, run: { argv0: '', ms: 0, held: 0 } }
   /** How many times each file was read. */
   const reads = new Map<string, number>()
   on('fs.read', async (_$, e) => {
@@ -585,6 +644,8 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   on('fs.write', async (_$, e) => {
     if (broken.writes !== '' && e.path.startsWith(broken.writes)) return { deny: `${broken.reason}, write '${e.path}'` }
     if (slow.write.ms > 0 && e.path === slow.write.path) await clock.sleep(slow.write.ms)
+    // Every write under a path, by its start: a file named by the time crew writes it.
+    if (slow.writes.ms > 0 && slow.writes.prefix !== '' && e.path.startsWith(slow.writes.prefix)) await clock.sleep(slow.writes.ms)
     // Writes follow links, as a real file system's do.
     disk.set(resolve(e.path), e.text)
     return { value: undefined }
@@ -712,9 +773,25 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
   // The app crew starts: it answers once started, prints a line, and runs till crew stops it.
   on('process.spawn', async function* (_$, e) {
     const req = e as { argv: readonly string[]; cwd?: string; env?: Record<string, string> }
+    // crew's web page's server: ready on its port, then the lines the test gives it, one at a time.
+    if (req.argv[0] === 'python3' && req.argv.some(a => a.endsWith('/server.py'))) {
+      web.started += 1
+      yield { stream: 'stdout' as const, text: `${JSON.stringify({ t: 'ready', port: 18_901, tailnet: false, push: 'p'.repeat(32), key: 'k'.repeat(32), cap: 'c'.repeat(32) })}\n` }
+      for (;;) {
+        const line = web.lines.shift()
+        if (line !== undefined) {
+          yield { stream: 'stdout' as const, text: `${line}\n` }
+          continue
+        }
+        await new Promise<void>(resolve => {
+          web.wake = resolve
+        })
+      }
+    }
     app.starts.push({ argv: [...req.argv], ...(req.cwd === undefined ? {} : { cwd: req.cwd }), ...(req.env === undefined ? {} : { env: req.env }) })
     app.since = clock.now()
     if (app.fails) return { value: { code: 1, signal: null } }
+    if (app.upDelay > 0) await clock.sleep(app.upDelay)
     app.up = true
     if (app.detached) {
       yield { stream: 'stdout' as const, text: 'Container app Started\n' }
@@ -726,7 +803,7 @@ export const world = (engine: Engine, on: On, { deliver = true, denySpawn = '', 
     })
     return { value: { code: null, signal: 'SIGTERM' } }
   })
-  return { disk, env, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, amend, reset, tests, broken, refuse, panes, failSends, session, drops, limits, awake, app }
+  return { disk, env, spawned, sent, toasts, registered, board, completions, replies, order, prompts, logs, shown, clock, links, submitted, store, slow, reads, git, commit, amend, reset, tests, broken, refuse, panes, failSends, session, drops, limits, awake, app, web }
 }
 
 export const start = ($: Engine) => $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as SessionStartInput)

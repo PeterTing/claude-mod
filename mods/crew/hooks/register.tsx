@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { CrewAsking, CrewCarry, CrewVerifyCase, CrewClaudeUsage, CrewHeldWork, CrewLane, CrewLive, CrewLiveRole, CrewLogView, CrewMessage, CrewModelAsk, CrewReloadRedo, CrewScenario, CrewTab, CrewThreadsView, CrewTuning, CrewUsageHold, CrewUsageWindow, CrewWork } from '../types'
+import type { CrewAcceptApp, CrewAsking, CrewCarry, CrewVerifyCase, CrewClaudeUsage, CrewHeldWork, CrewLane, CrewLive, CrewLiveRole, CrewLogView, CrewMessage, CrewModelAsk, CrewReloadRedo, CrewScenario, CrewTab, CrewThreadsView, CrewTuning, CrewUsageHold, CrewUsageWindow, CrewWork } from '../types'
 import { acceptCasesOf, applyOps, approvedNow, checkOf, criteriaOf, featureTips, METHOD_LABEL, methodOf, planTasksOf, proposalOf, decisionOf, designsOf, gateG1, gateG4, gateG6, liveCasesOf, liveTasksOf, madeByCrew, mockupOfDesign, needsMockup, newTracker, parseOps, placeOf, prefixesFrom, renderBoard, reviewOf, tasksOf, tipOf, trackerProblem, unmergedNow, withEmptyLists, withoutMarks, markMockup, type MockupMark } from './board'
 import type { TestCase, Tracker, VerifyMethod } from './board'
 import { declineProposals, methodSetOf, proposalMark, setMethods, VERIFY_ALL, VERIFY_NONE, VERIFY_NOT, VERIFY_ONE, verifyOf, withEvidence, withVerify } from './verify'
@@ -19,11 +19,11 @@ import { draftDetail, draftOf, failedOf, MAX_SENDS, outcomeOf, pendingOf, REVIEW
 import type { Outcome } from './draft'
 import { acceptMark, acceptsOf, answeredOf, blockedChoice, buildPrompt, CHECK_ACCEPT, CHECK_RETRY, checkScope, fixTasksOf, handedTips, MERGE_REFUSED_BY, MERGE_TESTS_REFUSED_BY, normalizeFlow, planFeatures, restoreSaid, retryWhen, RUNNING, SHELF_BUSY, step, TEST_COMMAND, TESTS_REFUSED_BY, undecided, unmocked, waitingOf } from './flow'
 import type { Blocked, Capacity, CrewCommit, FlowAction, FlowEvent, FlowStage, Restore, Restored, ShelfMoved } from './flow'
-import { ageOf, clockOf, dayOf, dayTotal, emptyLive, factsOf, HEARTBEAT_MS, metricsOf, roleSays, slotName, snapshotOf, STAGE_OF, STAGE_ROLE, stampOf, stopKey, TWIN_MS, usageSignals, APP_YES } from './live'
+import { acceptAppRow, ageOf, clockOf, dayOf, dayTotal, emptyLive, factsOf, HEARTBEAT_MS, metricsOf, roleSays, slotName, snapshotOf, STAGE_OF, STAGE_ROLE, stampOf, stopKey, TWIN_MS, usageSignals, APP_YES } from './live'
 import { addMemory, credentialValues, entryLine, estimateTokens, holdsCredential, leaks, MASKED, MEMORY_TYPES, NO_CREDENTIALS, packMemories, parseMemories, pinnedOf, QUOTED, redact, searchMemories, serializeMemories, setPinned } from './memory'
 import type { AddResult, Credentials, MemoryEntry, MemoryInput, MemoryType } from './memory'
 import { CODEX_WAIT, ROLE_NAMES } from './model'
-import type { Engines, Guard, LogEntry, Page, RoleId, RoleModels, RoleRun, RunPage, RunStep, SetupState, Snapshot, Tier } from './model'
+import type { AcceptAppRow, Engines, Guard, LogEntry, Page, RoleId, RoleModels, RoleRun, RunPage, RunStep, SetupState, Snapshot, Tier } from './model'
 import { handedOutOf, logOf, names, reasonWords, runOfMessages, workItem } from './logbook'
 import { baselineFor, baselineOf, changeKey, cut, diffRequirements, earlierFor, fingerprint, gateG0, knownRequirements, MAX_REQUIREMENTS, refsOf, REQUIREMENT_ID, requirementsOf } from './prd'
 import { branchOf, commitsOf, marksOf, nonesOf, recordSeen, resultsMarkOf, reviewsOf, taskMark, withCommits, withNones, withResults, withReviews, withUnmerged, workdirOf } from './git'
@@ -35,10 +35,12 @@ import type { FoundPlan, FoundRow, FoundScan, FoundScanRow } from './found'
 import { decisionsOf, designMark, withDecisions } from './designs'
 import { mentionsOf, onBoard } from './mentions'
 import type { Decided } from './designs'
-import { ASK_HEAD, CHANGE_MAX, PAGE_HEADS, pageShell, parsePage, webShell } from './review'
-import type { PageAccept, PageData, PageDraft, PageQuestion, ReviewDesign } from './review'
+import { ACCEPT_APP_HEAD, ASK_HEAD, CHANGE_MAX, PAGE_HEADS, pageShell, parsePage, webShell } from './review'
+import type { PageAccept, PageAcceptApp, PageData, PageDraft, PageQuestion, ReviewDesign } from './review'
 import { progressOf } from './progress'
 import { overlap } from './schedule'
+import { acceptAppOf, acceptFailed, APP_LOG_MAX, APP_POLL_MS, appDead, appWaitMs, BACKGROUND_LOOK_MS, closingSaid, elapsedMs, inBackground, pageAcceptApp, qaEnv, qaProject, START_SLACK_MS, STOP_WAIT_MS } from './app'
+import type { AppProposal, AppRun, CheckReport, Shot } from './app'
 import { callKey, goneOf, listedVersion, lookupOf, pathsOf, publishedOf, publishInput, refusedOf, resendable, unseenOf } from './publish'
 import type { Requirement } from './prd'
 import { composeStart, relatedOf, threadLines, wakePlan, withMemories, workingSet } from './pack'
@@ -1170,7 +1172,7 @@ function savedTunings(tuned: unknown, tunings: unknown, floors: (role: CrewRole)
 async function restore($: any) {
   const l = await read($, live)
   if (l.prdPath === null) {
-    const saved = (await $.store.get(stateKey())) as Partial<Record<'prdPath' | 'flow' | 'questions' | 'lead' | 'tuned' | 'tunings' | 'draft' | 'modelAsks' | 'modelAskSeq' | 'claude' | 'parked', unknown>> | undefined
+    const saved = (await $.store.get(stateKey())) as Partial<Record<'prdPath' | 'flow' | 'questions' | 'lead' | 'tuned' | 'tunings' | 'draft' | 'modelAsks' | 'modelAskSeq' | 'claude' | 'parked' | 'acceptApp', unknown>> | undefined
     if (saved !== undefined && saved !== null && typeof saved === 'object') {
       // Only what still has the shape crew wrote: anything else starts clean.
       const flow = saved.flow as Partial<CrewLive['flow']> | undefined
@@ -1206,6 +1208,8 @@ async function restore($: any) {
         ...(x.draft !== undefined || draft === undefined ? {} : { draft }),
         // The windows already warned of and let run on: a restart neither warns again nor pauses what the person let run.
         ...(x.claude === undefined ? { claude: guardMarksOf(saved.claude) } : {}),
+        // The app the last session kept up for acceptance: what it left running is stopped as crew starts.
+        ...(x.acceptApp !== undefined ? {} : acceptAppOf(saved.acceptApp)),
       }))
       for (const p of Array.isArray(saved.parked) ? saved.parked : []) if (isParked(p)) restartDropped.push(p)
     }
@@ -1270,6 +1274,7 @@ async function restore($: any) {
 
 /** Questions a restart found waiting with work it no longer has: answered once the threads are back. */
 const restartDropped: { role: CrewRole; ask: CrewAsking }[] = []
+
 
 const isParked = (p: unknown): p is { role: CrewRole; ask: CrewAsking } => {
   const o = p as { role?: unknown; ask?: { id?: unknown; by?: unknown; draft?: unknown } } | null
@@ -4930,6 +4935,7 @@ const laterTests = ($: any, reuse = false) => {
   if (testing.asked !== undefined) return
   const asked = {}
   testing.asked = asked
+  waitsMoved($)
   $.clock.after(0, () => {
     if (testing.asked === asked) testing.asked = undefined
     return runTests($)
@@ -4963,7 +4969,10 @@ function runTests($: any): Promise<string> {
       testing.busy = false
     }
   })
-  if (ahead !== undefined) testing.queued = run
+  if (ahead !== undefined) {
+    testing.queued = run
+    waitsMoved($)
+  }
   testing.running = run.catch(() => '')
   return run
 }
@@ -5356,6 +5365,7 @@ async function afterMerges($: any) {
  */
 function laterMerge($: any, task: string, sha: string): Promise<'stopped' | undefined> {
   merges.busy += 1
+  waitsMoved($)
   return serial('integrate', () => mergeBack($, task, sha))
     .catch((err: unknown) => ({ error: `crew 合回 ${task} 時出錯：${cut(squeeze(String(err)), 200)}` }))
     .then(async (outcome: Merge): Promise<'stopped' | undefined> => {
@@ -5409,7 +5419,10 @@ function laterMerge($: any, task: string, sha: string): Promise<'stopped' | unde
  * may hold what QA's does not (packages a builder installed there).
  */
 function laterTaskTests($: any, task: string, sha: string) {
+  taskTests.queued += 1
+  waitsMoved($)
   void serial('task-tests', async () => {
+    taskTests.queued -= 1
     const l = await read($, live)
     if (l.prdPath === null || !SHA.test(sha)) return
     const path = relativeOf(l.prdPath)
@@ -7332,6 +7345,12 @@ async function acceptDecision($: any, feature: string, verdict: 'passed' | 'chan
   })
   if (!('board' in taken)) return taken
   await progressMoved($)
+  // The app kept for acceptance serves this feature no more: with none left, it closes.
+  try {
+    await acceptTidy($)
+  } catch (err) {
+    $.ui.log(`crew: could not look at the app kept for acceptance: ${redact(String(err))}`, { to: 'debug' })
+  }
   await refreshReview($)
   if (verdict === 'passed') return { text: `已記下：你通過了 ${feature}。`, fed: true }
   // Said as the flow took it: the tech lead has the words now, or once the flow is past what it waits on.
@@ -7396,6 +7415,8 @@ async function pageAccepts($: any, path: string, board: Tracker, l: CrewLive): P
   const [argv, url, accounts, work] = await Promise.all([loadStartCommand($), loadAppUrl($), loadAccounts($), loadWork($, path)])
   // Set for QA: QA's stop command owed counts as not set, as the flow takes it.
   const appSet = (await setupNow($)).app
+  const now: number = await $.clock.now()
+  const kept = l.acceptApp === undefined ? undefined : acceptAppRow(l.acceptApp, now, appWaitsNow())
   const out: PageAccept[] = []
   for (const id of ids) {
     const a = accepts[id]
@@ -7419,6 +7440,8 @@ async function pageAccepts($: any, path: string, board: Tracker, l: CrewLive): P
     const why = unseen ? (check.why ?? '這個功能的 test case 在 app 裡都沒辦法操作') : check?.state === 'skipped' ? `crew 那時沒有讓 QA 實際操作：${check.why ?? '原因不明'}` : report === undefined ? 'QA 這一輪沒有留下紀錄' : read ? 'QA 只讀了程式，那時還沒有設定怎麼開 app' : undefined
     // A shot's name is checked again as read back: only one crew could have written goes on the page.
     const shot = (s: { file: string } | undefined) => (s !== undefined && SHOT_NAME.test(s.file) ? s : undefined)
+    // The commit QA checked it on: the app crew opens for the person runs there.
+    const qaSha = await reportShaOf($, report)
     out.push({
       feature: id,
       title: item.title,
@@ -7450,12 +7473,15 @@ async function pageAccepts($: any, path: string, board: Tracker, l: CrewLive): P
         ...(accounts === undefined ? {} : { accounts }),
         ...(argv === undefined ? {} : { start: commandText(argv) }),
         ...(work?.dir === undefined ? {} : { worktree: work.dir.startsWith(`${files.root}/`) ? work.dir.slice(files.root.length + 1) : work.dir, worktreeAt: work.dir }),
+        ...(kept === undefined ? {} : { app: pageAcceptApp(kept, l.acceptApp?.log === undefined ? undefined : fromRoot(l.acceptApp.log), id) }),
+        ...(qaSha === undefined ? {} : { qaSha: qaSha.slice(0, 7) }),
       },
       code: acceptMark(id, a),
     })
   }
   return out
 }
+
 
 /** The test cases the person confirms as they accept a feature, as its card lists them: what to look at, and whether they ticked it when they passed it. */
 const confirmOf = (board: Tracker, feature: string): { confirm?: NonNullable<PageAccept['confirm']> } => {
@@ -8188,7 +8214,9 @@ async function pageDecision($: any, thread: string, text: string): Promise<strin
  * between. What the page shows back is said to the person; a question back to
  * the brain goes to the brain, who answers in the conversation.
  */
-async function webDecision($: any, text: string): Promise<{ ok: boolean; text: string }> {
+async function webDecision($: any, text: string, via?: 'local' | 'tailnet'): Promise<{ ok: boolean; text: string }> {
+  // The person's ［開 app］ or ［關掉 app］ on a 待你驗收 card: no decision, and nothing the brain relays.
+  if (text.startsWith(ACCEPT_APP_HEAD)) return acceptAppWord($, text, via)
   if (text.startsWith(ASK_HEAD)) {
     const m = /^crew 提問[:：]\s*(Q-\d+)\n([\s\S]*?)(?:\n代碼 \S+)?\s*$/.exec(text)
     const q = m === null ? undefined : (await read($, live)).questions.find(x => x.id === m[1] && x.status === 'open')
@@ -8993,6 +9021,8 @@ async function saveState($: any) {
       ...(l.modelAskSeq === undefined ? {} : { modelAskSeq: l.modelAskSeq }),
       ...(l.draft === undefined ? {} : { draft: l.draft }),
       ...(l.claude === undefined ? {} : { claude: { ...(l.claude.warned === undefined ? {} : { warned: l.claude.warned }), ...(l.claude.goOn === undefined ? {} : { goOn: l.claude.goOn }) } }),
+      // The app kept up for acceptance: what the next start stops, should Claude Code end with it up.
+      ...(l.acceptApp === undefined ? {} : { acceptApp: l.acceptApp }),
       // Questions waiting in an inbox with their work: a restart drops the work, and answers them so.
       parked: CREW_ROLES.flatMap(r => parkedIn(l, r).map(a => ({ role: r, ask: a }))),
     })
@@ -9720,16 +9750,6 @@ async function decideTuning($: any, question: string, approved: boolean): Promis
  * check_report; when its run ends crew stops the app and tells the flow. One
  * check at a time.
  */
-const APP_WAIT_MS = 120_000
-/** How long crew waits for an app its start command leaves running in the background (a stop command set): building its images can take minutes. */
-const APP_WAIT_STOP_MS = 600_000
-const APP_POLL_MS = 2_000
-/** The most of the app's output crew keeps for its log: the end of it. */
-const APP_LOG_MAX = 200_000
-/** How long the stop command may take. */
-const STOP_WAIT_MS = 120_000
-/** A process that started this long before crew's start command is not one it started (the clock and ps count whole seconds). */
-const START_SLACK_MS = 3_000
 
 /** What the settings say when the app's start command or URL is cleared. */
 const NO_APP_SAID = '做完的功能會等 app 設定好、QA 在 app 裡實際操作並截圖，才交給你驗收。'
@@ -9738,47 +9758,107 @@ const NO_APP_SAID = '做完的功能會等 app 設定好、QA 在 app 裡實際�
 /** Where the browser saves QA's screenshots (Playwright's output folder): crew copies each check's into the PRD's designs folder. */
 const shotsDir = (): string => `${files.crew}/qa-shots`
 
-type Shot = { file: string; box?: { x: number; y: number; width: number; height: number } }
-/** What QA reported on a check, as crew keeps it: masked, cut to size, its screenshots copied beside the PRD's designs. */
-type CheckReport = {
-  feature: string
-  round: number
-  at: number
-  ok: boolean
-  /** `shot`: the screenshot of a test case verified by QA in the app, beside the report's (a passed one has one). */
-  cases: { id: string; result: 'passed' | 'failed' | 'blocked'; note?: string; shot?: string }[]
-  items: { criterion: string; ask: string; saw: string; how?: string; desktop?: Shot; phone?: Shot; api?: { request: string; response: string; lit: string[] } }[]
-  console: { errors: number; sample: string[] }
-  failed: { criterion?: string; case?: string; what: string }[]
-  /** Test cases QA could not run for the setup (no test account, a service down), not for what the code does. */
-  blocked?: { case: string; what: string }[]
-  /** QA read the feature, with no app to start (crew did so before every item came with a picture): what it lists comes with how to see each. */
-  read?: true
-  /** Where the feature is in the app: its page's address, the way there from the menu, or why it has none. */
-  where?: { page?: string; menu?: string; none?: string }
-}
 
-/** The app crew started for a check: its stream, when crew started it, whether it ended, and how. */
-type AppRun = { it: AsyncIterator<{ text: string }, { code: number | null; signal: string | null } | undefined>; since: number; ended: boolean; end?: string; code?: number | null; pids?: string[] }
-
-/** What QA found in the repo to start the app with, and where it found each: crew sets it only on the person's own press. */
-type AppProposal = { start: string[]; stop?: string[]; url: string; accounts?: string; found: { start: string; stop?: string; url: string; accounts?: string }; noAccounts?: string }
-
-/** A test run waits while QA has the app up: the person's tests may start a server on the app's port. */
+/**
+ * A test run or a merge's tests wait while crew has the app up (for a check,
+ * or kept for the person's acceptance), or is putting it up again: the
+ * person's tests may start a server on the app's port. One that waits on the
+ * app kept for acceptance is counted, for the card and the pane to say so.
+ */
 async function appGone($: any) {
-  while (checkRun.app !== undefined) await pause($, APP_POLL_MS)
+  const up = (): boolean => checkRun.app !== undefined || appSlot.moving > 0 || appSlot.stopping > 0
+  while (up()) {
+    if (forAcceptance()) await waitingOnApp($, 'gone', () => up() && forAcceptance())
+    else await pause($, APP_POLL_MS)
+  }
 }
 
-/** Who has QA's worktree: a check runs the app there, a task's tests run there with one builder. One at a time. */
-const qaHold: { by?: 'check' | 'tests' } = {}
+/**
+ * What waits now, itself, for the app kept for acceptance: in crew's worktree
+ * (`gone`: a test run, or a merge's tests, at the app's port), in QA's (`qa`:
+ * a task's tests, for the worktree the app runs in). What queues behind them
+ * waits too: appWaitsNow counts it.
+ */
+const appWaits = { gone: 0, qa: 0 }
 
-async function holdQa($: any, by: 'check' | 'tests') {
-  while (qaHold.by !== undefined) await pause($, APP_POLL_MS)
+/** Tasks whose tests wait their turn in QA's worktree, behind the one at work or waiting there. */
+const taskTests = { queued: 0 }
+
+/**
+ * crew's test runs and merges held now by the app kept for acceptance, as the
+ * card and the pane count them. Once one waits at the app in crew's worktree,
+ * every merge under way and each test run asked for waits too (crew's worktree
+ * takes one at a time, the waiting one first); once a task's tests wait for
+ * QA's worktree, so do the tasks' tests queued behind them.
+ */
+const appWaitsNow = (): { tests: number; merges: number } => {
+  const gone = appWaits.gone > 0
+  const runs = gone ? (testing.busy === true || testing.asked !== undefined ? 1 : 0) + (testing.queued !== undefined ? 1 : 0) : 0
+  return { tests: runs + (appWaits.qa > 0 ? appWaits.qa + taskTests.queued : 0), merges: gone ? merges.busy : 0 }
+}
+
+/** A merge or test run asked for while others wait for the app kept for acceptance: it waits behind them, and the count the person sees moves. */
+const waitsMoved = ($: any) => {
+  if (appWaits.gone + appWaits.qa > 0) void acceptAppSaid($)
+}
+
+/** Waits while `still`, counted among those waiting for the app kept for acceptance: the card and the pane say it. */
+async function waitingOnApp($: any, kind: 'gone' | 'qa', still: () => boolean) {
+  appWaits[kind] += 1
+  await acceptAppSaid($)
+  try {
+    while (still()) await pause($, APP_POLL_MS)
+  } finally {
+    appWaits[kind] -= 1
+    await acceptAppSaid($)
+  }
+}
+
+/**
+ * The app slot between one app and the next: crew moving the app kept for
+ * acceptance to another commit (`moving`), or stopping an app (`stopping`),
+ * holds it, so no test run takes the port meanwhile.
+ */
+const appSlot = { moving: 0, stopping: 0 }
+
+/**
+ * The app is up for the person's acceptance, crew is moving it to another
+ * commit, or the person closed it while QA's check uses it (it stops as the
+ * check ends): what waits now waits for them, or for that check.
+ */
+const forAcceptance = (): boolean => checkRun.app?.kept === true || appSlot.moving > 0 || acceptRun.afterCheck
+
+/** The app kept for the person's acceptance, while it answers: what a check uses. */
+const keptUp = (): AppRun | undefined => (checkRun.app?.kept === true && checkRun.app.up === true && !appDead(checkRun.app) ? checkRun.app : undefined)
+
+/**
+ * Who has QA's worktree: a check runs the app there (QA's look for how to
+ * start it reads there), a task's tests run there with one builder, the app
+ * kept up for the person's acceptance runs there. One at a time, but for a
+ * check (`borrow`), which borrows it from the app kept for acceptance once
+ * that app is up, and uses that app; the app has it back when the check lets go.
+ */
+const qaHold: { by?: 'check' | 'tests' | 'accept' } = {}
+
+/** Takes QA's worktree; true when a check borrowed it, and the app up in it, from the app kept for acceptance. */
+async function holdQa($: any, by: 'check' | 'tests', borrow = false): Promise<boolean> {
+  const lent = (): boolean => borrow && qaHold.by === 'accept' && keptUp() !== undefined
+  const taken = (): boolean => qaHold.by !== undefined && !lent()
+  while (taken()) {
+    // A task's tests held back by the app kept for acceptance are among those the person is told wait for it.
+    if (by === 'tests' && (qaHold.by === 'accept' || forAcceptance())) await waitingOnApp($, 'qa', () => taken() && (qaHold.by === 'accept' || forAcceptance()))
+    else await pause($, APP_POLL_MS)
+  }
+  const borrowed = lent()
   qaHold.by = by
+  return borrowed
 }
 
-const letGoQa = (by: 'check' | 'tests') => {
-  if (qaHold.by === by) delete qaHold.by
+const letGoQa = (by: 'check' | 'tests' | 'accept') => {
+  if (qaHold.by !== by) return
+  delete qaHold.by
+  // A check that borrowed QA's worktree from the app kept for acceptance gives it back.
+  if (by === 'check' && checkRun.app?.kept === true) qaHold.by = 'accept'
 }
 
 /** The check under way in this module, the app crew started for it, and what the app printed. */
@@ -9793,9 +9873,14 @@ const checkRun: {
   starting?: true
   /** A check (or QA's look for how to start the app) the flow asked for while another was on its way: it starts once that is over. */
   queued?: { feature: string; round: number; prompt: string; find?: true }
+  /** The one app crew has up, for a check or kept for the person's acceptance (`kept`): never two. */
   app?: AppRun
-  out: string[]
-} = { out: [] }
+  /**
+   * The check under way borrowed QA's worktree, and the app up in it, from the app kept for the person's acceptance: it
+   * runs on that app (moved to the commit it needs first), and a close meanwhile leaves the app to the check, which stops it.
+   */
+  lent?: true
+} = {}
 
 const pause = ($: any, ms: number): Promise<void> => new Promise(resolve => $.clock.after(ms, () => resolve()))
 
@@ -9875,38 +9960,68 @@ async function runCheck($: any, feature: string, round: number, prompt: string) 
   const now: number = await $.clock.now()
   const log = `${files.crew}/runs/app-${feature}-r${round}-${runName(now)}.log`
   checkRun.now = { feature, round, prompt, dir: '', url, prd: l.prdPath, log }
-  checkRun.out = []
   await update($, live, s => ({ ...s, checking: { feature, round, since: now, phase: 'starting' as const, prd: l.prdPath ?? '' } }))
   // QA's own worktree, at crew's branch as merged: its prep, the first time, can take minutes. A task's tests there go first.
-  await holdQa($, 'check')
+  // The app kept up for the person's acceptance lends it, with the app: QA uses that app.
+  const borrowed = await holdQa($, 'check', true)
+  if (borrowed) checkRun.lent = true
   if (checkRun.now?.feature !== feature) {
+    delete checkRun.lent
     letGoQa('check')
     return
   }
+  const stop = await loadStopCommand($)
+  // What answers or listens there already may be the person's own app, from their checkout: crew neither checks nor stops that one.
+  const taken = async (): Promise<boolean> => (await answers($, url)) || (await listening($, url)).length > 0
+  const takenSaid = `${url} 已經有程式在回應（可能是你自己開著的 app）。crew 要在 QA 的工作目錄開 app 給 QA 操作：請先關掉它，或在面板的「設定」分頁改一個網址`
+  if (borrowed) {
+    // The app lent, as it is now: kept for the person still, or closed meanwhile and so the check's to stop, or moved first.
+    const got = await checkOnKept($, feature, argv, url, stop !== undefined, takenSaid)
+    // However it went, the check ends through endCheck: it lets go of QA's worktree and stops an app no longer kept.
+    if ('error' in got) return endCheck($, feature, { error: got.error }, ON_TIMER)
+    if ('app' in got) {
+      const app = got.app
+      const run = checkRun.now
+      if (run?.feature !== feature) return
+      checkRun.now = { ...run, dir: app.dir, ...(app.sha === undefined ? {} : { sha: app.sha }) }
+      await note($, { kind: 'check_start', feature, round, url, sha: (app.sha ?? '').slice(0, 7), kept: true })
+      await emptyShots($)
+      // Where it runs and what crew started, for a reload to stop it by: the record of the app kept for acceptance stops it too.
+      await update($, live, s => (s.checking === undefined ? s : { ...s, checking: { ...s.checking, url, dir: app.dir, pids: app.pids ?? [] } }))
+      return heldForQa($, feature)
+    }
+    // The app lent ended before QA started on it: the check starts its own, as with none kept.
+    delete checkRun.lent
+  }
+  // The app the load before left, or one crew stops now, is gone first: QA's worktree is not moved under it, nor its port taken for the person's.
+  while (appSlot.stopping > 0 || appSlot.moving > 0 || acceptRun.closing > 0) await pause($, APP_POLL_MS)
   const wd = await ensureQaDir($)
   if ('error' in wd) return endCheck($, feature, { error: wd.error }, ON_TIMER)
   checkRun.now = { ...checkRun.now, dir: wd.dir, sha: wd.sha }
   await note($, { kind: 'check_start', feature, round, url, sha: wd.sha.slice(0, 7) })
-  // What answers or listens there already may be the person's own app, from their checkout: crew neither checks nor stops that one.
-  const taken = async (): Promise<boolean> => (await answers($, url)) || (await listening($, url)).length > 0
-  const takenSaid = `${url} 已經有程式在回應（可能是你自己開著的 app）。crew 要在 QA 的工作目錄開 app 給 QA 操作：請先關掉它，或在面板的「設定」分頁改一個網址`
   if (await taken()) return endCheck($, feature, { error: takenSaid }, ON_TIMER)
   await emptyShots($)
   // The person's tests may start a server on the app's port: a run under way finishes first, and runs wait while the app is up.
   while (testing.busy === true || merges.busy > 0) await pause($, APP_POLL_MS)
   // What started there meanwhile is not crew's either.
   if (await taken()) return endCheck($, feature, { error: takenSaid }, ON_TIMER)
-  const stop = await loadStopCommand($)
   // Where the app runs, for its stop command after a reload too.
   await update($, live, s => (s.checking === undefined ? s : { ...s, checking: { ...s.checking, dir: wd.dir } }))
-  startApp($, argv, wd.dir, await $.clock.now())
-  const why = await appUp($, url, log, stop !== undefined)
+  const since: number = await $.clock.now()
+  const app = startApp($, argv, { dir: wd.dir, url, log, sha: wd.sha, since, stop: stop !== undefined })
+  const why = await appUp($, app, stop !== undefined)
   if (why !== undefined) return endCheck($, feature, { error: why }, ON_TIMER)
   // What listens on the port now and started after crew's start command is the app crew started: crew stops these alone, after
   // a reload too. One that was running before (Docker's own program, which listens for every container) is not crew's.
-  const pids = checkRun.app === undefined ? [] : await ownListeners($, url, checkRun.app.since)
-  if (checkRun.app !== undefined) checkRun.app.pids = pids
+  const pids = await ownListeners($, url, app.since)
+  app.pids = pids
+  app.up = true
   await update($, live, s => (s.checking === undefined ? s : { ...s, checking: { ...s.checking, url, pids } }))
+  await heldForQa($, feature)
+}
+
+/** The app is up for the check: QA starts on it at the engine's next frame. */
+async function heldForQa($: any, feature: string) {
   const run = checkRun.now
   if (run?.feature !== feature) return
   const at: number = await $.clock.now()
@@ -9930,7 +10045,6 @@ function laterFind($: any, feature: string) {
   }
   // Taken at once: a check the flow asks for meanwhile waits for it.
   checkRun.now = { feature, round: 0, prompt: '', dir: '', url: '', prd: '', log: '', find: true }
-  checkRun.out = []
   apart($, 'QA\'s look for how to start the app', async () => {
     try {
       await runFind($, feature)
@@ -10350,21 +10464,12 @@ async function emptyShots($: any) {
   if (old.length > 0) await $.process.run(['/bin/rm', '-f', '--', ...old], { ...atRoot(), timeoutMs: 30_000 })
 }
 
-/**
- * What the app's commands run with in QA's worktree. Docker Compose names its project by the folder, or by the compose
- * file's own name, which the person's own stack from their checkout shares: crew's gets a name of its own, so its start
- * and stop commands touch only the containers crew started. A `-p` the person wrote still wins.
- */
-const qaEnv = (dir: string): Record<string, string> => ({ CREW_QA: '1', BROWSER: 'none', COMPOSE_PROJECT_NAME: qaProject(dir) })
-
-/** The Docker Compose project crew's app runs as, by QA's worktree: one per worktree, the same after a reload. */
-const qaProject = (dir: string): string => `crew-qa-${fingerprint(dir)}`
 
 /** Starts the person's app in crew's worktree; what it prints is kept, masked, in .crew/runs once it stops. */
-function startApp($: any, argv: string[], dir: string, since: number) {
-  const stream = $.process.spawn({ argv, cwd: dir, env: qaEnv(dir) })
+function startApp($: any, argv: string[], at: { dir: string; url: string; log: string; sha?: string; since: number; kept?: true; stop: boolean }): AppRun {
+  const stream = $.process.spawn({ argv, cwd: at.dir, env: qaEnv(at.dir) })
   const it = stream[Symbol.asyncIterator]() as AppRun['it']
-  const app: AppRun = { it, since, ended: false }
+  const app: AppRun = { it, since: at.since, ended: false, dir: at.dir, url: at.url, log: at.log, argv: redact(argv.join(' ')), out: [], ...(at.sha === undefined ? {} : { sha: at.sha }), ...(at.kept === true ? { kept: true as const } : {}), ...(at.stop ? { stop: true as const } : {}) }
   checkRun.app = app
   void (async () => {
     let kept = 0
@@ -10376,15 +10481,22 @@ function startApp($: any, argv: string[], dir: string, since: number) {
           if (r.value !== undefined && r.value.signal === null) app.code = r.value.code
           break
         }
-        checkRun.out.push(r.value.text)
+        app.out.push(r.value.text)
         kept += r.value.text.length
-        while (kept > APP_LOG_MAX && checkRun.out.length > 1) kept -= checkRun.out.shift()?.length ?? 0
+        while (kept > APP_LOG_MAX && app.out.length > 1) kept -= app.out.shift()?.length ?? 0
       }
     } catch (err) {
       app.end = `沒辦法啟動：${cut(squeeze(redact(String(err))), 160)}`
     }
     app.ended = true
+    // The app kept up for the person's acceptance ended by itself (crashed, or its command ended): the card says so at once.
+    // One its command left in the background is up still: crew watches its URL from now.
+    if (app.kept === true && app.up === true && checkRun.app === app) {
+      if (inBackground(app)) apart($, 'could not watch the app kept for acceptance', () => keptBackground($, app))
+      else apart($, 'could not look at the app kept for acceptance', () => acceptTidy($))
+    }
   })()
+  return app
 }
 
 /**
@@ -10393,15 +10505,14 @@ function startApp($: any, argv: string[], dir: string, since: number) {
  * images may take minutes to build). A start command that ends is a failed
  * start, unless it ended well and a stop command is set. Why not, if it did not.
  */
-async function appUp($: any, url: string, log: string, stop: boolean): Promise<string | undefined> {
+async function appUp($: any, app: AppRun, stop: boolean): Promise<string | undefined> {
+  const { url, log, dir } = app
   const shown = log.startsWith(`${files.root}/`) ? log.slice(files.root.length + 1) : log
-  const wait = stop ? APP_WAIT_STOP_MS : APP_WAIT_MS
+  const wait = appWaitMs(stop)
   const until = (await $.clock.now()) + wait
   // A start command that ended is a failed start: with no stop command, what answers then is in the background, and crew could not stop it.
-  const dir = checkRun.now?.dir ?? ''
   const ended = (): string | undefined => {
-    const app = checkRun.app
-    if (app?.ended !== true || (stop && app.code === 0)) return undefined
+    if (app.ended !== true || (stop && app.code === 0)) return undefined
     // A command that ended well may have left the app in the background (docker compose up -d), where crew cannot stop it:
     // the person is told where it runs, so they can stop it, and what to set so crew can next time.
     const hint =
@@ -10427,6 +10538,7 @@ async function appUp($: any, url: string, log: string, stop: boolean): Promise<s
   return `等了 ${wait / 1000} 秒，${url} 都沒有回應，輸出在 ${shown}`
 }
 
+
 /**
  * Stops the app crew started: the stream ended; the person's stop command
  * run in QA's worktree, where it is set; then what listened on the URL's port
@@ -10435,16 +10547,20 @@ async function appUp($: any, url: string, log: string, stop: boolean): Promise<s
  * was running before (Docker's own, which listens for its containers), is not
  * crew's and is left. Its output goes to the log.
  */
-async function stopApp($: any) {
+async function stopApp($: any, said?: string) {
   const app = checkRun.app
-  const run = checkRun.now
   if (app === undefined) return
-  void Promise.resolve(app.it.return?.(undefined)).catch(() => undefined)
-  const stopped = run === undefined || run.dir === '' ? '' : await runStop($, run.dir)
-  if (run !== undefined) await endListeners($, run.url, app.pids ?? [])
+  // Out of the slot at once, so a second stop does nothing; the port stays held (`stopping`) until it is free.
   checkRun.app = undefined
-  if (run !== undefined) await writeCrew($, run.log, `$ ${redact((await loadStartCommand($))?.join(' ') ?? '')}\n# ${run.dir}\n# ${run.url}\n# ${app.end ?? '由 crew 結束'}\n\n${redact(plain(checkRun.out.join('')))}${stopped}`)
-  checkRun.out = []
+  appSlot.stopping += 1
+  try {
+    void Promise.resolve(app.it.return?.(undefined)).catch(() => undefined)
+    const stopped = app.dir === '' ? '' : await runStop($, app.dir)
+    await endListeners($, app.url, app.pids ?? [])
+    await writeCrew($, app.log, `$ ${app.argv}\n# ${app.dir}${app.sha === undefined ? '' : ` @ ${app.sha.slice(0, 7)}`}\n# ${app.url}\n# ${app.end ?? said ?? '由 crew 結束'}\n\n${redact(plain(app.out.join('')))}${stopped}`)
+  } finally {
+    appSlot.stopping -= 1
+  }
 }
 
 /** Runs the person's stop command in QA's worktree, where one is set: what it printed, for the app's log. */
@@ -10482,13 +10598,6 @@ async function ownListeners($: any, url: string, since: number): Promise<string[
   }
 }
 
-/** ps's elapsed time, `[[dd-]hh:]mm:ss`, in ms. */
-const elapsedMs = (etime: string): number | undefined => {
-  const m = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(etime)
-  if (m === null) return undefined
-  const [d, h, mi, s] = [m[1], m[2], m[3], m[4]].map(x => Number(x ?? 0))
-  return ((((d ?? 0) * 24 + (h ?? 0)) * 60 + (mi ?? 0)) * 60 + (s ?? 0)) * 1000
-}
 
 /** Ends the processes crew found listening on the app's port, those still there: asked to stop, and made to after ten seconds. */
 async function endListeners($: any, url: string, pids: readonly string[]) {
@@ -10630,7 +10739,12 @@ async function checkEnded($: any, e: any, timed = false) {
   return endCheck($, run.feature, { failed: report.failed, ...(said === '' ? {} : { said }) }, timed)
 }
 
-/** A check is over, however it ended: crew stops the app, lets go of the check, and tells the flow. */
+/**
+ * A check is over, however it ended: crew stops the app (not the one kept up
+ * for the person's acceptance, which the check used and leaves up; one the
+ * person closed while the check ran on it is stopped now, and its record
+ * goes), lets go of the check, and tells the flow.
+ */
 async function endCheck(
   $: any,
   feature: string,
@@ -10638,15 +10752,45 @@ async function endCheck(
   timed = false,
 ) {
   // However stopping the app goes, the check is let go of: crew holds no check, no awake Mac and no blocked question for it.
+  const run = checkRun.now
   try {
-    await stopApp($)
+    const kept = checkRun.app?.kept === true ? checkRun.app : undefined
+    if (kept === undefined) await stopApp($)
+    else if (run !== undefined && run.find !== true && run.log !== '') await writeCrew($, run.log, `# QA 用的是留給你驗收的 app：${kept.url}${kept.sha === undefined ? '' : ` @ ${kept.sha.slice(0, 7)}`}，它還開著。\n# app 的輸出在 ${kept.log}\n`)
   } catch (err) {
     $.ui.log(`crew: could not stop the app of ${feature}'s check: ${redact(String(err))}`)
-    checkRun.app = undefined
+    if (checkRun.app?.kept !== true) checkRun.app = undefined
   } finally {
     checkRun.now = undefined
+    delete checkRun.lent
+    // Kept as the check began to end, and closed (or each feature it serves decided) while crew wrote the check's log: the
+    // check's to stop still, before QA's worktree is let go of.
+    if (checkRun.app !== undefined && checkRun.app.kept !== true) {
+      try {
+        await stopApp($)
+      } catch (err) {
+        $.ui.log(`crew: could not stop the app of ${feature}'s check: ${redact(String(err))}`)
+        if (checkRun.app?.kept !== true) checkRun.app = undefined
+      }
+    }
     letGoQa('check')
-    await update($, live, ({ checking: _, ...s }) => s)
+    const closed = acceptRun.afterCheck
+    try {
+      await update($, live, ({ checking: _, ...s }) => {
+        if (closed && s.acceptApp?.state === 'closing') return (({ acceptApp: _a, ...rest }) => rest)(s)
+        return s.acceptApp?.checking === undefined ? s : { ...s, acceptApp: (({ checking: _c, ...a }) => a)(s.acceptApp) }
+      })
+      if (closed) {
+        await saveState($)
+        await note($, { kind: 'accept_app', closed: 'after_check', feature })
+      }
+    } finally {
+      // Cleared once the record is gone: till then a look at it takes it for this load's, not one a load before left.
+      if (closed) acceptRun.afterCheck = false
+    }
+    await acceptAppSaid($)
+    // The app kept for acceptance ended by itself while the check ran on it: the card says so now, not at the next heartbeat.
+    if (checkRun.app?.kept === true && appDead(checkRun.app)) apart($, 'could not look at the app kept for acceptance', () => acceptTidy($))
   }
   await note($, { kind: 'check_end', feature, ...(how.ok === true ? { ok: true } : {}), ...(how.error === undefined ? {} : { error: how.error }), ...(how.failed === undefined ? {} : { failed: how.failed.length }), ...(how.blocked === undefined ? {} : { blocked: how.blocked.length }) })
   const board = await loadBoard($)
@@ -10686,13 +10830,509 @@ async function checkLost($: any) {
   checkRun.starting = true
   apart($, 'could not take up the check under way', async () => {
     try {
-      if (was.dir !== undefined) await runStop($, was.dir)
+      // An app up in this module (kept for the person's acceptance) is not the one the module before left.
+      if (was.dir !== undefined && checkRun.app === undefined) await runStop($, was.dir)
       if (was.url !== undefined && (was.pids ?? []).length > 0) await endListeners($, was.url, was.pids ?? [])
     } finally {
       delete checkRun.starting
     }
     await endCheck($, was.feature, { lost: true }, ON_TIMER)
   })
+}
+
+/**
+ * The app crew keeps up for the person's acceptance, on their own press of
+ * ［開 app］ on a 待你驗收 card (crew's web page, on this computer): their
+ * start command in QA's worktree, at the commit QA checked the feature on, in
+ * the one app slot (checkRun.app, `kept`). It serves the features opened on
+ * it, and closes on the person's ［關掉 app］, once each of them is decided,
+ * or when Claude Code ends or crew reloads (the next load stops what the one
+ * before left, as it does a check's). A check uses it meanwhile, moved first
+ * to the commit the check needs; test runs and merges wait for it.
+ *
+ * `gen`: each start and close is a new one, and work of an older one changes
+ * nothing; `starting`: a start under way; `closing`: a close under way;
+ * `afterCheck`: the person closed it while QA's check of this load runs on it,
+ * and it stops as that check ends (the record says 'closing' till then).
+ */
+const acceptRun = { gen: 0, starting: 0, closing: 0, afterCheck: false }
+
+
+/** Where the app kept for acceptance writes what it printed, once it stops. */
+const acceptLog = (t: number): string => `${files.crew}/runs/accept-app-${runName(t)}.log`
+
+/** A path as the person reads it on the card: from the project's root. */
+const fromRoot = (path: string): string => (path.startsWith(`${files.root}/`) ? path.slice(files.root.length + 1) : path)
+
+/** The commit QA checked a feature on, for the round handed to the person (see reportShaOf): none when nothing says it. */
+async function acceptShaOf($: any, feature: string): Promise<string | undefined> {
+  const l = await read($, live)
+  const board = await loadBoard($)
+  if (l.prdPath === null || board === null) return undefined
+  const a = acceptsOf(normalizeFlow(l.flow), board)[feature]
+  if (a === undefined) return undefined
+  const reports = await loadReports($, l.prdPath)
+  const rounds = Array.isArray(reports[feature]) ? (reports[feature] ?? []) : []
+  return reportShaOf($, rounds.find(r => r.round === a.round))
+}
+
+/**
+ * The commit a report's check ran on, in full: kept with the report, or, for
+ * one crew kept before it kept that (0.7.8 and older), the one crew's log says
+ * that check started on: the newest start of a check of that feature and
+ * round, in the two days before the report. None when neither says it.
+ */
+async function reportShaOf($: any, report: CheckReport | undefined): Promise<string | undefined> {
+  if (report === undefined) return undefined
+  if (typeof report.sha === 'string' && SHA.test(report.sha)) return report.sha
+  if (typeof report.at !== 'number' || report.read === true) return undefined
+  const key = `${report.feature}|${report.round}|${report.at}`
+  if (loggedShas.has(key)) return loggedShas.get(key)
+  const sha = await loggedCheckSha($, report.feature, report.round, report.at)
+  loggedShas.set(key, sha)
+  return sha
+}
+
+/** What crew's log said of each report with no commit of its own: a report's check is over, so its lines stay as they are. */
+const loggedShas = new Map<string, string | undefined>()
+
+/** The commit crew's log says a check of `feature`'s `round` started on last before `at`, resolved in full by git. */
+async function loggedCheckSha($: any, feature: string, round: number, at: number): Promise<string | undefined> {
+  const DAY = 86_400_000
+  const days = [...new Set([0, 1, 2].map(n => dayOf(at - n * DAY)))]
+  for (const day of days) {
+    let best: { t: number; sha: string } | undefined
+    for (const line of ((await readCrew($, `${files.crew}/log/${day}.jsonl`)) ?? '').split('\n')) {
+      if (!line.includes('"check_start"')) continue
+      try {
+        const e = JSON.parse(line) as { t?: unknown; kind?: unknown; feature?: unknown; round?: unknown; sha?: unknown }
+        if (e.kind !== 'check_start' || e.feature !== feature || (e.round ?? 1) !== round || typeof e.t !== 'number' || e.t > at || at - e.t > 2 * DAY) continue
+        if (typeof e.sha === 'string' && SHA.test(e.sha) && (best === undefined || e.t >= best.t)) best = { t: e.t, sha: e.sha }
+      } catch {
+        // A line cut short: not this one.
+      }
+    }
+    if (best === undefined) continue
+    const full = await git($, ['rev-parse', '--verify', '--quiet', `${best.sha}^{commit}`])
+    const sha = String(full.stdout).trim()
+    return full.exitCode === 0 && SHA.test(sha) ? sha : undefined
+  }
+  return undefined
+}
+
+/** crew's branch as merged, its newest commit: what a check runs on. */
+async function crewTip($: any): Promise<{ sha: string } | { error: string }> {
+  const main = await ensureWorkdir($)
+  if ('error' in main) return main
+  const tip = await git($, ['rev-parse', '--verify', '--quiet', `refs/heads/${main.branch}^{commit}`])
+  const sha = String(tip.stdout).trim()
+  return tip.exitCode === 0 && SHA.test(sha) ? { sha } : { error: `讀不到 crew 分支 ${main.branch} 的最新 commit。` }
+}
+
+/** The card, the pane and crew's web page say the app kept for acceptance as it is now. */
+async function acceptAppSaid($: any) {
+  try {
+    $.ui.invalidate('ui.render')
+    void webTick($)
+    if (await decidesOnWeb($)) await refreshReview($)
+  } catch (err) {
+    await logApart($, `crew: could not show the app kept for acceptance: ${redact(String(err))}`)
+  }
+}
+
+/** Changes the record of the app kept for acceptance while `gen` is the start, move or close at work; kept for a restart, and shown. */
+async function setAcceptApp($: any, gen: number, change: (a: CrewAcceptApp) => CrewAcceptApp) {
+  if (acceptRun.gen !== gen) return
+  await update($, live, s => (s.acceptApp === undefined || acceptRun.gen !== gen ? s : { ...s, acceptApp: change(s.acceptApp) }))
+  await saveState($)
+  await acceptAppSaid($)
+}
+
+
+/**
+ * The person's ［開 app］ on a feature's card: crew starts the app for it, or,
+ * with the app up or on its way, serves this feature too. Only on this
+ * computer, and only from the person's own press: crew's web page sends it,
+ * nothing the brain or a role can call.
+ */
+function openAcceptApp($: any, feature: string): Promise<{ ok: boolean; text: string }> {
+  // One open or close at a time: two presses at once serve one app.
+  return serial('accept-app', () => openingAcceptApp($, feature))
+}
+
+async function openingAcceptApp($: any, feature: string): Promise<{ ok: boolean; text: string }> {
+  const no = (text: string) => ({ ok: false, text })
+  const l = await read($, live)
+  if (l.prdPath === null) return no('還沒有開始的 PRD。')
+  const board = await loadBoard($)
+  if (board === null) return no('讀不到看板。')
+  if (acceptsOf(normalizeFlow(l.flow), board)[feature]?.state !== 'waiting') return no(`${feature} 現在不在等你驗收，crew 沒有開 app。`)
+  const argv = await loadStartCommand($)
+  const url = await loadAppUrl($)
+  if (argv === undefined || url === undefined) return no('還沒有設定 app 的啟動指令和網址：在「設定」填好之後再按。')
+  if (acceptRun.closing > 0) return no('crew 正在關掉驗收用的 app，等一下再按。')
+  const was = l.acceptApp
+  if (was?.state === 'closing') return no(`驗收用的 app 等 QA 檢查完 ${was.checking ?? '手上的功能'} 就會關掉：關掉之後再按［開 app］。`)
+  // Up or on its way: this feature is served too, and its page opens on it.
+  if (was !== undefined && (was.state === 'up' || was.state === 'starting')) {
+    if (!was.features.includes(feature)) await update($, live, s => (s.acceptApp === undefined || s.acceptApp.features.includes(feature) ? s : { ...s, acceptApp: { ...s.acceptApp, features: [...s.acceptApp.features, feature] } }))
+    await saveState($)
+    await acceptAppSaid($)
+    return { ok: true, text: was.state === 'up' ? `驗收用的 app 開著（${(was.sha ?? '').slice(0, 7)}）：打開 ${feature} 的頁面。` : `app 正在開：好了會在剛開的分頁打開 ${feature} 的頁面。` }
+  }
+  const gen = (acceptRun.gen += 1)
+  const now: number = await $.clock.now()
+  const features = [...new Set([...(was?.features ?? []), feature])]
+  await update($, live, s => ({ ...s, acceptApp: { state: 'starting' as const, features, since: now, phase: 'qa' as const, url } }))
+  // At once after the record: a look at it meanwhile sees a start of this module's under way.
+  apart($, 'the app for acceptance', () => startAcceptApp($, gen, feature, argv, url))
+  await note($, { kind: 'accept_app', feature, open: true })
+  await saveState($)
+  await acceptAppSaid($)
+  return { ok: true, text: `crew 開始開 app 了：好了會在剛開的分頁打開 ${feature} 的頁面。` }
+}
+
+/**
+ * Starts the app kept for acceptance, as QA's check starts it: QA's worktree
+ * once no check or task's tests holds it (a check's app up at the commit
+ * wanted is kept as it is), the person's tests under way finished, the
+ * worktree at the commit QA checked the feature pressed for on, the same
+ * start command with no shell, and up once it answers at its URL. Something
+ * there crew did not start (the person's own app, maybe) it starts nothing over.
+ */
+async function startAcceptApp($: any, gen: number, feature: string, argv: string[], url: string) {
+  const gone = (): boolean => acceptRun.gen !== gen
+  const set = (change: (a: CrewAcceptApp) => CrewAcceptApp) => setAcceptApp($, gen, change)
+  const theirs = () => set(a => ({ state: 'theirs', features: a.features, since: a.since, url }))
+  const taken = async (): Promise<boolean> => (await answers($, url)) || (await listening($, url)).length > 0
+  const argvText = redact(argv.join(' '))
+  acceptRun.starting += 1
+  let held = false
+  try {
+    // The feature pressed for: one served before (the app failed, or was another's) is not the one the person wants to see now.
+    const sha = await acceptShaOf($, feature)
+    // Something answers there with no app of crew's up or going down: not crew's, maybe the person's own.
+    if (checkRun.app === undefined && appSlot.stopping === 0 && appSlot.moving === 0 && (await taken())) return await theirs()
+    for (;;) {
+      if (gone()) return
+      // A check's app, up at the commit wanted: kept for acceptance from now, the check going on with it.
+      const app = checkRun.app
+      if (app !== undefined && app.kept !== true && app.up === true && !appDead(app) && app.url === url && app.argv === argvText && (sha === undefined || app.sha === sha)) {
+        app.kept = true
+        app.log = acceptLog(await $.clock.now())
+        const checking = checkRun.now !== undefined && checkRun.now.find !== true ? checkRun.now.feature : undefined
+        await set(a => ({ state: 'up', features: a.features, since: a.since, url, dir: app.dir, pids: app.pids ?? [], log: app.log, ...(app.sha === undefined ? {} : { sha: app.sha }), ...(checking === undefined ? {} : { checking }) }))
+        await note($, { kind: 'accept_app', up: true, sha: (app.sha ?? '').slice(0, 7), from: 'check' })
+        apart($, 'could not watch the app kept for acceptance', () => keptBackground($, app))
+        return
+      }
+      if (qaHold.by === undefined && checkRun.app === undefined && appSlot.stopping === 0) break
+      await pause($, APP_POLL_MS)
+    }
+    qaHold.by = 'accept'
+    held = true
+    await set(a => ({ ...a, phase: 'tests' }))
+    // The person's tests may start a server on the app's port: a run under way finishes first, and runs wait while the app is up.
+    const busy = (): boolean => testing.busy === true || merges.busy > 0
+    while (busy()) {
+      if (gone()) return
+      await pause($, APP_POLL_MS)
+    }
+    if (gone()) return
+    const wd = await ensureQaDir($, sha)
+    if (gone()) return
+    if ('error' in wd) return await set(a => acceptFailed(a, url, wd.error))
+    if (await taken()) return await theirs()
+    const stop = (await loadStopCommand($)) !== undefined
+    let since = 0
+    for (;;) {
+      if (gone()) return
+      if (busy()) {
+        await pause($, APP_POLL_MS)
+        continue
+      }
+      since = await $.clock.now()
+      // Taken with nothing between it and the start: a test run that began meanwhile is waited for again.
+      if (!busy() && !gone()) break
+    }
+    const log = acceptLog(since)
+    const app = startApp($, argv, { dir: wd.dir, url, log, sha: wd.sha, since, kept: true, stop })
+    await set(a => ({ ...a, phase: 'app', until: since + appWaitMs(stop), dir: wd.dir, sha: wd.sha, log }))
+    const why = await appUp($, app, stop)
+    // Closed meanwhile: the close stopped it before crew knew what it started there, so what started there since is ended now.
+    if (gone()) {
+      if (checkRun.app !== app) await endListeners($, url, await ownListeners($, url, since))
+      return
+    }
+    if (why !== undefined) {
+      await stopApp($, '沒有開起來')
+      return await set(a => acceptFailed(a, url, why, log))
+    }
+    app.up = true
+    const pids = await ownListeners($, url, since)
+    app.pids = pids
+    // Closed meanwhile, as above.
+    if (gone()) {
+      if (checkRun.app !== app) await endListeners($, url, pids)
+      return
+    }
+    // QA's worktree is the app's now, till it closes.
+    held = false
+    await set(a => ({ state: 'up', features: a.features, since: a.since, url, dir: wd.dir, sha: wd.sha, pids: app.pids ?? [], log }))
+    await note($, { kind: 'accept_app', up: true, sha: wd.sha.slice(0, 7) })
+    apart($, 'could not watch the app kept for acceptance', () => keptBackground($, app))
+  } finally {
+    acceptRun.starting -= 1
+    if (held) {
+      // Once crew's app (if it started one) is stopped: a task's tests in QA's worktree go after.
+      while (appSlot.stopping > 0) await pause($, APP_POLL_MS)
+      letGoQa('accept')
+    }
+    await acceptAppSaid($)
+  }
+}
+
+/**
+ * A check on the app lent it by the person's acceptance: as it runs, at the
+ * commit the check needs; at another, crew stops it, moves QA's worktree
+ * there and starts it again, kept (the card says the commit it runs now). The
+ * app the check runs on, kept or not: one the person closed meanwhile (or
+ * closes while it moves) is the check's from then, and stops as it ends. Why
+ * not, when crew could not start it there: the check fails, and the card says
+ * it too. `gone`: the app lent ended by itself before QA started on it; crew
+ * stopped it, the card says so, and the check starts its own.
+ */
+async function checkOnKept($: any, feature: string, argv: string[], url: string, stop: boolean, takenSaid: string): Promise<{ app: AppRun } | { error: string } | { gone: true }> {
+  const tip = await crewTip($)
+  if ('error' in tip) return tip
+  // One in the background is up only while its URL answers: its command ended at the start.
+  const lent = checkRun.app
+  const quiet = lent !== undefined && lent.up === true && inBackground(lent) && !(await answers($, lent.url)) ? lent : undefined
+  const was = checkRun.app
+  // Kept for the person while it is now: closed already (the record waits for this check to stop it), crew changes no
+  // record of it, and what it starts is the check's alone. A close later changes the start, or move, at work (`gen`).
+  const kept = was?.kept === true
+  const gen = acceptRun.gen
+  const set = (change: (a: CrewAcceptApp) => CrewAcceptApp): Promise<void> => (kept ? setAcceptApp($, gen, change) : Promise.resolve())
+  if (was === undefined || was.up !== true || appDead(was) || was === quiet) {
+    if (was !== undefined) {
+      const ended = was === quiet ? `${was.url} 沒有回應了` : (was.end ?? '原因不明')
+      delete was.kept
+      await stopApp($)
+      await set(a => acceptFailed(a, was.url, `app 自己結束了（${ended}）`, was.log))
+    }
+    return { gone: true }
+  }
+  if (was.sha === tip.sha && was.url === url && was.argv === redact(argv.join(' '))) {
+    await set(a => ({ ...a, checking: feature }))
+    return { app: was }
+  }
+  appSlot.moving += 1
+  try {
+    await set(a => ({ ...a, state: 'starting', phase: 'app', checking: feature }))
+    await stopApp($, `crew 把 app 換到 QA 要檢查的版本 ${tip.sha.slice(0, 7)}`)
+    const wd = await ensureQaDir($)
+    if ('error' in wd) {
+      await set(a => acceptFailed(a, url, wd.error))
+      return { error: wd.error }
+    }
+    if ((await answers($, url)) || (await listening($, url)).length > 0) {
+      await set(a => acceptFailed(a, url, takenSaid))
+      return { error: takenSaid }
+    }
+    // Where the app runs, for its stop command after a reload: closed meanwhile, the check's record alone says it.
+    await update($, live, s => (s.checking === undefined ? s : { ...s, checking: { ...s.checking, dir: wd.dir } }))
+    const since: number = await $.clock.now()
+    const log = acceptLog(since)
+    const app = startApp($, argv, { dir: wd.dir, url, log, sha: wd.sha, since, stop, ...(kept && acceptRun.gen === gen ? { kept: true as const } : {}) })
+    await set(a => ({ ...a, state: 'starting', phase: 'app', until: since + appWaitMs(stop), dir: wd.dir, sha: wd.sha, log }))
+    const why = await appUp($, app, stop)
+    if (why !== undefined) {
+      // The check stops it as it ends.
+      delete app.kept
+      await set(a => acceptFailed(a, url, why, log))
+      return { error: why }
+    }
+    app.up = true
+    app.pids = await ownListeners($, url, since)
+    // Closed meanwhile: the check's own now, stopped as it ends.
+    if (acceptRun.gen !== gen) delete app.kept
+    else {
+      await set(a => ({ state: 'up', features: a.features, since: a.since, url, dir: wd.dir, sha: wd.sha, pids: app.pids ?? [], log, checking: feature }))
+      apart($, 'could not watch the app kept for acceptance', () => keptBackground($, app))
+    }
+    return { app }
+  } finally {
+    appSlot.moving -= 1
+  }
+}
+
+/**
+ * The app kept for acceptance closes: on the person's ［關掉 app］, or once
+ * each feature it serves is decided. One QA's check runs on now (lent it, or
+ * moving it to the commit the check needs) is the check's from then: it stops
+ * as the check ends, the record saying 'closing' till then, and QA's worktree
+ * is the check's.
+ */
+function closeAcceptApp($: any, why: 'person' | 'decided'): Promise<string> {
+  return serial('accept-app', () => closingAcceptApp($, why))
+}
+
+async function closingAcceptApp($: any, why: 'person' | 'decided'): Promise<string> {
+  const now: number = await $.clock.now()
+  const a = (await read($, live)).acceptApp
+  // Read with nothing awaited till the close is under way: a start or move sees the new `gen` from here.
+  const app = checkRun.app
+  if (a === undefined && app?.kept !== true) return '驗收用的 app 沒有開著。'
+  // Closed already: it stops as QA's check ends.
+  if (a?.state === 'closing') return closingSaid(a.checking)
+  acceptRun.gen += 1
+  acceptRun.closing += 1
+  // QA's check runs on it: lent it, moving it now, or a check's own app kept for acceptance since. The check stops it as it ends.
+  const run = checkRun.now
+  const using = a === undefined || a.state === 'up' || a.state === 'starting'
+  const check = using && run !== undefined && run.find !== true && qaHold.by === 'check' && (checkRun.lent === true || app?.kept === true) ? run.feature : undefined
+  const kept = app?.kept === true
+  try {
+    if (app !== undefined && kept) delete app.kept
+    if (check !== undefined) {
+      acceptRun.afterCheck = true
+      // The check's record says where it runs and what crew started: after a reload crew stops it by that, as a check's own.
+      const on = checkRun.app
+      await update($, live, s => ({
+        ...s,
+        ...(s.checking === undefined || on === undefined ? {} : { checking: { ...s.checking, url: on.url, dir: on.dir, ...(on.pids === undefined ? {} : { pids: on.pids }) } }),
+        acceptApp: {
+          state: 'closing' as const,
+          features: s.acceptApp?.features ?? a?.features ?? [],
+          since: s.acceptApp?.since ?? a?.since ?? now,
+          checking: check,
+          ...((on?.url ?? a?.url) === undefined ? {} : { url: on?.url ?? a?.url }),
+          ...((on?.dir ?? a?.dir) === undefined ? {} : { dir: on?.dir ?? a?.dir }),
+          ...((on?.sha ?? a?.sha) === undefined ? {} : { sha: on?.sha ?? a?.sha }),
+          ...((on?.pids ?? a?.pids) === undefined ? {} : { pids: on?.pids ?? a?.pids }),
+        },
+      }))
+    } else {
+      if (kept) await stopApp($, why === 'person' ? '你按了［關掉 app］' : '它服務的功能你都決定了')
+      // A start under way lets go of QA's worktree itself.
+      if (acceptRun.starting === 0) letGoQa('accept')
+      await update($, live, ({ acceptApp: _, ...s }) => s)
+    }
+    await saveState($)
+    await note($, { kind: 'accept_app', closed: why, ...(check === undefined ? {} : { after: check }) })
+  } finally {
+    acceptRun.closing -= 1
+  }
+  await acceptAppSaid($)
+  if (check !== undefined) return closingSaid(check)
+  if (a?.state === 'theirs') return `好：crew 不再為驗收管 ${a.url ?? '這個網址'}（那個 app 不是 crew 開的，crew 沒有關它）。`
+  return why === 'person' ? '已關掉驗收用的 app。' : '驗收用的 app 服務的功能你都決定了，crew 把它關掉了。'
+}
+
+/**
+ * The app kept for acceptance runs in the background (its start command
+ * ended well, a stop command set: docker compose up -d): the card says so,
+ * and crew asks its URL every half minute from now, while QA's check is not
+ * on it and crew is not starting, moving or closing it. Once it answers no
+ * more, asked again a poll later, it ended by itself: crew runs the stop
+ * command, and the card says why.
+ */
+async function keptBackground($: any, app: AppRun) {
+  const ours = (): boolean => checkRun.app === app && app.kept === true
+  if (!ours() || app.up !== true || !inBackground(app)) return
+  const l = await update($, live, s => (s.acceptApp === undefined || s.acceptApp.state !== 'up' || s.acceptApp.background === true ? s : { ...s, acceptApp: { ...s.acceptApp, background: true as const } }))
+  if (l.acceptApp?.background === true) await saveState($)
+  await acceptAppSaid($)
+  if (app.watched === true) return
+  app.watched = true
+  // Free to look: no check on it, nothing crew does to it now.
+  const free = (): boolean => ours() && qaHold.by === 'accept' && acceptRun.starting === 0 && acceptRun.closing === 0 && appSlot.moving === 0
+  while (ours()) {
+    await pause($, BACKGROUND_LOOK_MS)
+    if (!free() || (await answers($, app.url))) continue
+    await pause($, APP_POLL_MS)
+    if (!free() || (await answers($, app.url)) || !free()) continue
+    const gen = (acceptRun.gen += 1)
+    await stopApp($)
+    letGoQa('accept')
+    await setAcceptApp($, gen, x => acceptFailed(x, app.url, `app 自己結束了（${app.url} 沒有回應了）`, app.log))
+    await note($, { kind: 'accept_app', closed: 'gone' })
+    return
+  }
+}
+
+/**
+ * The app kept for acceptance, looked at on the heartbeat, when crew loads,
+ * after each decision, and as soon as it ends by itself: one the module
+ * before left (crew reloaded, or Claude Code restarted) is stopped; the
+ * features it serves that are decided leave its list, and with none left it
+ * closes; one that ended by itself says so.
+ */
+async function acceptTidy($: any) {
+  const l = await read($, live)
+  const a = l.acceptApp
+  if (a === undefined || acceptRun.closing > 0) return
+  // Closed while QA's check of this load runs on it: the check stops it as it ends. One the module before left, crew stops now.
+  if (a.state === 'closing') return acceptRun.afterCheck ? undefined : acceptLost($, a)
+  const mine = acceptRun.starting > 0 || checkRun.app?.kept === true || appSlot.moving > 0
+  if ((a.state === 'starting' || a.state === 'up') && !mine) return acceptLost($, a)
+  const board = l.prdPath === null ? undefined : await loadBoard($)
+  if (board === null) return
+  // A feature leaves once decided (passed or sent back), out of the plan, or with no PRD under way;
+  // one QA checks again meanwhile (handed over again after) stays.
+  const plan = board === undefined ? new Set<string>() : planFeatures(board)
+  const accepts = board === undefined ? {} : acceptsOf(normalizeFlow(l.flow), board)
+  const left = a.features.filter(f => plan.has(f) && accepts[f]?.state !== 'passed' && accepts[f]?.state !== 'fixing')
+  if (left.length === 0) {
+    await closeAcceptApp($, 'decided')
+    return
+  }
+  if (left.length < a.features.length) {
+    await update($, live, s => (s.acceptApp === undefined ? s : { ...s, acceptApp: { ...s.acceptApp, features: s.acceptApp.features.filter(f => left.includes(f)) } }))
+    await saveState($)
+    await acceptAppSaid($)
+  }
+  // It ended by itself (crashed, or its command ended): stopped as crew stops it, and the card says why, with the log.
+  const app = checkRun.app
+  if (a.state === 'up' && app?.kept === true && appDead(app) && qaHold.by === 'accept' && acceptRun.starting === 0) {
+    const gen = (acceptRun.gen += 1)
+    const ended = app.end ?? '原因不明'
+    await stopApp($)
+    letGoQa('accept')
+    await setAcceptApp($, gen, x => acceptFailed(x, app.url, `app 自己結束了（${ended}）`, app.log))
+  }
+}
+
+/** The app the module before kept for acceptance: its stop command in QA's worktree, then what it found listening; then the record goes. */
+function acceptLost($: any, a: CrewAcceptApp) {
+  acceptRun.closing += 1
+  appSlot.stopping += 1
+  apart($, 'could not stop the app the last load kept for acceptance', async () => {
+    try {
+      if (a.dir !== undefined) await runStop($, a.dir)
+      if (a.url !== undefined && (a.pids ?? []).length > 0) await endListeners($, a.url, a.pids ?? [])
+      await note($, { kind: 'accept_app', closed: 'reload' })
+    } finally {
+      appSlot.stopping -= 1
+      acceptRun.closing -= 1
+      await update($, live, s => (s.acceptApp?.since === a.since ? (({ acceptApp: _, ...rest }) => rest)(s) : s))
+      await saveState($)
+      await acceptAppSaid($)
+    }
+  })
+}
+
+/**
+ * The person's word on the app from crew's web page: 開 for a feature (only on
+ * this computer, where the app runs and its page opens), or 關.
+ */
+async function acceptAppWord($: any, text: string, via: string | undefined): Promise<{ ok: boolean; text: string }> {
+  const m = /^crew 驗收 app：(開 ([A-Za-z][A-Za-z0-9_]*-\d+)|關)\s*$/.exec(text.trim())
+  if (m === null) return { ok: false, text: 'crew 沒有記下：看不懂這個 app 的按鈕，重新整理之後再按。' }
+  if (m[1] === '關') return { ok: true, text: await closeAcceptApp($, 'person') }
+  if (via !== 'local') return { ok: false, text: 'app 只能在跑 crew 的這台電腦上開：在這台電腦打開 crew 網頁再按［開 app］。' }
+  return openAcceptApp($, m[2] ?? '')
 }
 
 const SHOT_NAME = /^[a-z0-9][a-z0-9-]{0,80}\.(png|jpe?g)$/
@@ -10945,7 +11585,7 @@ const checkReport: CrewToolRun = async ($, e) => {
   const failed = [...said, ...cases.filter(x => x.result === 'failed' && !said.some(f => f.case === x.id)).map(x => ({ case: x.id, what: x.note ?? '沒有過' }))]
   const blocked = cases.filter(x => x.result === 'blocked' && !said.some(f => f.case === x.id)).map(x => ({ case: x.id, what: x.note ?? '沒辦法操作' }))
   const at: number = await $.clock.now()
-  const report: CheckReport = { feature: run.feature, round: run.round, at, ok: failed.length === 0 && blocked.length === 0, cases, items, console: { errors: Math.max(0, num(c.errors)), sample }, failed, ...(blocked.length === 0 ? {} : { blocked }), ...(Object.keys(where).length === 0 ? {} : { where }) }
+  const report: CheckReport = { feature: run.feature, round: run.round, at, ok: failed.length === 0 && blocked.length === 0, cases, items, console: { errors: Math.max(0, num(c.errors)), sample }, failed, ...(blocked.length === 0 ? {} : { blocked }), ...(Object.keys(where).length === 0 ? {} : { where }), ...(run.sha !== undefined && SHA.test(run.sha) ? { sha: run.sha } : {}) }
   const dir = `${reviewDir(relativeOf(run.prd))}/checks`
   const shots = [...items.flatMap(i => [i.desktop, i.phone]), ...cases.map(x => (x.shot === undefined ? undefined : { file: x.shot }))].filter((x): x is Shot => x !== undefined)
   if (shots.length > 0 && (await staysIn($, dir))) {
@@ -11172,8 +11812,15 @@ async function heartbeat($: any, onTimer: boolean) {
       $.ui.log(`crew: could not look at the other copies of crew: ${redact(String(err))}`, { to: 'debug' })
     }
   }
-  // A check the module before had under way, whose QA was still at work when crew loaded: it runs again once that QA ends.
   if (onTimer) {
+    // The app kept for acceptance: the module before's stopped, the features it serves that are decided let go of. First: a
+    // check the module before left, run again, waits for that stop (acceptRun.closing) before it takes QA's worktree.
+    try {
+      await acceptTidy($)
+    } catch (err) {
+      $.ui.log(`crew: could not look at the app kept for acceptance: ${redact(String(err))}`, { to: 'debug' })
+    }
+    // A check the module before had under way, whose QA was still at work when crew loaded: it runs again once that QA ends.
     try {
       await checkLost($)
     } catch (err) {
@@ -13399,7 +14046,7 @@ async function crewVerbOf($: any, verb: string, rest: string[], by: 'person' | '
   if (verb === 'status') {
     const board = await loadBoard($)
     const l = await read($, live)
-    const s = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), prd: await prdView($), boardProblem: boardProblem(), planned: plannedFor(await loadSettings($), l), stuck: await stuckTasks($, l) })
+    const s = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await loadMemories($), prd: await prdView($), boardProblem: boardProblem(), planned: plannedFor(await loadSettings($), l), stuck: await stuckTasks($, l), appWaits: appWaitsNow() })
     // The brain asks this to know where things stand: the takeover and its draft too.
     const takenOver = await takeoverOn($)
     const line = bandText({ ...s, takeover: takeoverOf(takenOver, l.prdPath, l.draft, l.review, draftAsks(l).map(q => q.id)), guard: guardOfPane((await loadSettings($)).usage, l, await $.clock.now()) }, `crew（${l.flow.stage}）`)
@@ -13775,6 +14422,7 @@ function previewActions($: any, snap: Snapshot): Actions {
     reviewInPane: () => would('改在面板和網頁一件一件決定：設計稿核准或退回、問題直接回答'),
     reviewOnPage: () => would('改回在待你決定頁決定：用現在的看板和問題重做這一頁'),
     readPage: () => would('請大腦讀待你決定頁上的留言，把你在頁面上的決定轉給 crew'),
+    closeApp: () => would('關掉留給你驗收的 app'),
     accept: (feature, verdict) => would(verdict === 'passed' ? `記下你通過了 ${feature}` : `把你要改的地方交給 Tech lead，排在還沒開工的任務前面改 ${feature}`),
     roleMode: (role, mode) => would(mode === 'auto' ? `讓 ${ROLE_NAMES[role]} 照系統預設：大腦挑引擎，每件工作從下限開始往上升` : `讓 ${ROLE_NAMES[role]} 固定用你選的模型，不升級，大腦也不換`),
     roleFloor: (role, engine, pick) => would(`把 ${ROLE_NAMES[role]} 在 ${engine === 'codex' ? 'Codex' : 'Claude'} 上的下限改成 ${pick.model === undefined ? `effort ${pick.effort ?? ''}` : engine === 'codex' ? codexLabel(pick.model) : labelOf(pick.model)}，難的工作從這裡往上`),
@@ -13847,6 +14495,7 @@ function paneActions($: any, snap: Snapshot): Actions {
     reviewInPane: async () => said(await reviewInPane($)),
     reviewOnPage: async () => said(await reviewOnPage($)),
     readPage: async () => said(await readPage($)),
+    closeApp: async () => said(await closeAcceptApp($, 'person')),
     accept: async (feature, verdict, text, code) => {
       try {
         // A decision the flow took is said in the flow's own notice: the pane says only why one was not.
@@ -14070,6 +14719,7 @@ function drawnActions($: any): Actions {
     reviewInPane: missed,
     reviewOnPage: missed,
     readPage: missed,
+    closeApp: missed,
     accept: missed,
     ask: missed,
     rotate: missed,
@@ -14206,7 +14856,7 @@ async function liveSnapshot($: any, board: Tracker | null, l: CrewLive, seen?: S
     }
   }
   const settings = await tried(() => loadSettings($), undefined)
-  const snap = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await tried(() => loadMemories($), []), prd: await tried(() => prdView($), undefined), boardProblem: boardProblem(), boardFile: boardFileOf(), web: webPageOn(l), ...(settings === undefined ? {} : { planned: plannedFor(settings, l) }), stuck: await stuckTasks($, l) })
+  const snap = snapshotOf({ board, live: l, now: await $.clock.now(), memories: await tried(() => loadMemories($), []), prd: await tried(() => prdView($), undefined), boardProblem: boardProblem(), boardFile: boardFileOf(), web: webPageOn(l), ...(settings === undefined ? {} : { planned: plannedFor(settings, l) }), stuck: await stuckTasks($, l), appWaits: appWaitsNow() })
   return tried(() => withPaneState($, snap, board, l, seen), snap)
 }
 
@@ -14678,6 +15328,28 @@ export const register: Register = on => {
     if (web.wanted) void ensureWeb($)
     return result
   })
+  // Claude Code ending with the app kept up for acceptance: what crew found listening for it is asked to stop now, within
+  // the exit's short bound; the next start runs the person's stop command where it ran (the saved record). A /clear goes on
+  // in the same process with crew loaded, and the app stays up.
+  on('session.end', async ($, e, next) => {
+    try {
+      // The app crew has up, kept for acceptance or a check's: what crew started there is stopped as Claude Code ends. Not on
+      // /clear or a /resume to another conversation: the process goes on, and so does crew, with the app. One its start command
+      // left in the background (docker compose up -d) may have no process of crew's there: the stop command takes longer than
+      // the exit allows, so the next load runs it, by the saved record.
+      const app = checkRun.app
+      const pids = app?.pids ?? []
+      if (e.reason !== 'clear' && e.reason !== 'resume' && app !== undefined && pids.length > 0 && next.budget.remainingMs > 300) {
+        const now = await listening($, app.url)
+        const ours = pids.filter(p => now.includes(p))
+        if (ours.length > 0) await $.process.run(['/bin/kill', '-TERM', ...ours], { ...atRoot(), timeoutMs: Math.max(200, Math.min(1_000, next.budget.remainingMs - 100)) })
+      }
+    } catch (err) {
+      $.ui.log(`crew: could not stop the app as Claude Code ended: ${redact(String(err))}`, { to: 'debug' })
+    }
+    return next(e)
+  })
+
   on('session.start', async ($, e, next) => {
     // Set before the first await, so no command slips in ahead of the gate.
     let booted = () => {}
@@ -14794,6 +15466,13 @@ export const register: Register = on => {
     if (crewBuild.id !== '') await update($, loadedBuild, () => crewBuild.id)
     const news = before !== '' && crewBuild.id !== '' && crewBuild.id !== before
     const redo = await resumeOnStart($, news, kept === undefined ? undefined : { prd: kept.prd, lanes: kept.lanes as Lane[], tests: kept.tests })
+    // The app the last load kept up for acceptance went with it, but for what it left running: crew stops that. First: the
+    // check the last load had under way, run again below, waits for that stop before it takes QA's worktree.
+    try {
+      await acceptTidy($)
+    } catch (err) {
+      $.ui.log(`crew: could not stop the app the last load kept for acceptance: ${redact(String(err))}`, { to: 'debug' })
+    }
     // A check the last load had under way went with it: it runs again.
     try {
       await checkLost($)
@@ -15369,7 +16048,7 @@ async function drawPane($: any, el: Elements, viewed: string | undefined): Promi
   if (page.state !== 'off') {
     const brief = await briefSnapshot($, board, l)
     // Every line a press that takes the page there: started in the background, so the press returns at once (view first).
-    return MinimalPane({ el, snap: brief, web: page, behind: crewBuild.id !== '' && (await read($, outdated)), waits: paneWaits(brief, l, board), restart: () => void restartWeb($), go: word => void paneGo($, word), copy: (text, surface) => void copyLink($, text, surface) })
+    return MinimalPane({ el, snap: brief, web: page, behind: crewBuild.id !== '' && (await read($, outdated)), waits: paneWaits(brief, l, board), restart: () => void restartWeb($), go: word => void paneGo($, word), copy: (text, surface) => void copyLink($, text, surface), closeApp: () => void closeAcceptApp($, 'person') })
   }
   const snap = demo ? demoSnapshot(view.scenario, view.pages.at(-1)) : await liveSnapshot($, board, l)
   const watched = viewed === undefined ? undefined : l.agents[viewed]
@@ -15433,7 +16112,7 @@ async function bandLine($: any): Promise<string | undefined> {
 /** What the line above the prompt and the pane's few lines draw: crew's record and the board, without what only the tabs show. */
 async function briefSnapshot($: any, board: Tracker | null, l: CrewLive): Promise<Snapshot> {
   const now: number = await $.clock.now()
-  const shown = snapshotOf({ board, live: l, now, prd: await prdView($), boardProblem: boardProblem(), stuck: await stuckTasks($, l) })
+  const shown = snapshotOf({ board, live: l, now, prd: await prdView($), boardProblem: boardProblem(), stuck: await stuckTasks($, l), appWaits: appWaitsNow() })
   return { ...shown, takeover: takeoverOf(await takeoverOn($), l.prdPath, l.draft, l.review, draftAsks(l).map(q => q.id)), guard: guardOfPane((await loadSettings($)).usage, l, now) }
 }
 
@@ -16040,7 +16719,7 @@ async function onWebEvent($: any, gen: number, ev: WebEvent): Promise<void> {
     if (c !== undefined) toastTo.client = c
     const work = (async (): Promise<{ ok: boolean; text: string }> => {
       try {
-        return c === undefined ? { ok: false, text: 'crew 沒看到這一頁，重新整理之後再按。' } : await webDecision($, ev.text)
+        return c === undefined ? { ok: false, text: 'crew 沒看到這一頁，重新整理之後再按。' } : await webDecision($, ev.text, ev.via)
       } catch (err) {
         return { ok: false, text: `crew 沒有記下：${cut(squeeze(redact(String(err))), 160)}` }
       } finally {

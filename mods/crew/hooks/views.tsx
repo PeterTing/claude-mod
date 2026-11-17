@@ -11,7 +11,7 @@ import {
   ROLE_STATE_NAMES,
   tokens,
 } from './model'
-import type { Audit, Decision, Engine, Engines, Feature, FoundRowView, Gate, Guard, IdPrefixes, Item, ItemPage, ItemStatus, LayerState, LogEntry, ModelAsk, PageLink, PageSection, Pick, Progress, RequirementRow, RoleId, RoleModels, RoleRow, RoleRun, Route, RunPage, RunStep, Snapshot, StageCell, Takeover, Thread, Tuning } from './model'
+import type { AcceptAppRow, Audit, Decision, Engine, Engines, Feature, FoundRowView, Gate, Guard, IdPrefixes, Item, ItemPage, ItemStatus, LayerState, LogEntry, ModelAsk, PageLink, PageSection, Pick, Progress, RequirementRow, RoleId, RoleModels, RoleRow, RoleRun, Route, RunPage, RunStep, Snapshot, StageCell, Takeover, Thread, Tuning } from './model'
 import { failedOf, MAX_SENDS, pendingOf, reviewMark, reviewWord, sentOut } from './draft'
 import { goWord } from './go'
 import { percentWords } from './guard'
@@ -96,6 +96,8 @@ export type Actions = {
   readPage: () => void | Promise<void>
   /** A feature handed to the person: passed, or to change as they say. */
   accept: (feature: string, verdict: 'passed' | 'changes', said?: string, code?: string) => void | Promise<void>
+  /** The app crew keeps up for the person's acceptance closes: their own press, in the pane or on crew's web page. */
+  closeApp: () => void | Promise<void>
   /** Opens or closes a part of the pane the person asked for: a setting's help, a role's model editor, the PRD path field. */
   toggle: (key: string) => void | Promise<void>
   /** Opens a role's question field, or closes it with null; asks it; rotates it. */
@@ -224,6 +226,8 @@ export function workOf(key: string, value?: string): PaneWork | undefined {
     if (asked !== undefined) return act => did(act.ask(asked, value))
     return undefined
   }
+  // Only while the app kept for acceptance is there to close.
+  if (key === 'acc-app-close') return async (act, _view, snap) => (snap.acceptApp === undefined ? false : did(act.closeApp()))
   const simple: Record<string, (act: Actions) => void | Promise<void>> = {
     start: act => act.start(),
     'switch-prd': act => act.start(),
@@ -1398,6 +1402,7 @@ function AcceptRows({ el, snap, act, view }: { el: Elements; snap: Snapshot; act
       <Text color="warning" {...look(el, 'h3')}>
         待你驗收（{open}）{all.passed > 0 ? `　已通過 ${all.passed} 個` : ''}
       </Text>
+      {snap.acceptApp !== undefined && AcceptAppLine({ el, a: snap.acceptApp, close: () => act.closeApp() })}
       {rows.rows.map(r => (
         <Box key={`acc-${r.feature}`} flexDirection="column" rowGap={ROW_GAP} {...look(el, 'item')}>
           <Box flexDirection="row" flexWrap="wrap" rowGap={ROW_GAP} columnGap={1} {...look(el, 'item-head')}>
@@ -1426,6 +1431,51 @@ function AcceptRows({ el, snap, act, view }: { el: Elements; snap: Snapshot; act
         </Box>
       ))}
       {MoreLine({ el, act, id: 'accepts', total: all.rows.length, all: rows.all, noun: '項' })}
+    </Box>
+  )
+}
+
+/** What the app kept up for the person's acceptance is doing, in a few words: the pane's line and crew's web page's. */
+export const acceptAppWords = (a: AcceptAppRow): string => {
+  const served = a.features.length === 0 ? '' : `：${a.features.join('、')}`
+  if (a.state === 'up') return `驗收用的 app 開著（${a.sha ?? 'crew 分支'}）${served}${a.checking === undefined ? '' : `・QA 正在用它檢查 ${a.checking}`}`
+  if (a.state === 'failed') return `驗收用的 app 開不起來：${a.why ?? '原因不明'}`
+  if (a.state === 'theirs') return '網址上已經有不是 crew 開的程式在回應（可能是你自己的 app），crew 沒有另外開'
+  if (a.state === 'closing') return `驗收用的 app 關掉中：QA 正在用它檢查 ${a.checking ?? '一個功能'}，檢查完 crew 就關掉`
+  const why = a.checking !== undefined ? `換到 QA 要檢查 ${a.checking} 的版本` : a.phase === 'qa' ? '等 QA 的工作目錄空出來' : a.phase === 'tests' ? '等正在跑的測試和合回結束' : '等 app 開起來'
+  return `驗收用的 app 正在開：${why}${a.phase === 'app' && a.waitS !== undefined ? `，最多再等 ${a.waitS} 秒` : ''}`
+}
+
+/**
+ * crew's test runs and merges waiting for the app kept for acceptance to
+ * close, as the card and the pane say it: nothing when none waits. Merges held
+ * hold the full-stack's work in crew's worktree too (it goes in once they are over).
+ */
+export const appWaitWords = (a: AcceptAppRow): string | undefined => {
+  const n = a.waits.tests + a.waits.merges
+  if (n === 0) return undefined
+  return `${n} 個合回／測試在等${a.state === 'closing' ? ' app 關掉' : '你關掉 app'}${a.waits.merges > 0 ? '，全端在 crew 工作目錄的工作也會等' : ''}`
+}
+
+/** The app kept up for acceptance, on the pane's 待你驗收: what it is doing, what waits for it, and the person's ［關掉 app］. */
+function AcceptAppLine({ el, a, close }: { el: Elements; a: AcceptAppRow; close: () => void | Promise<void> }) {
+  const { Box, Text, Button } = el
+  const waits = appWaitWords(a)
+  const down = a.state === 'failed' || a.state === 'theirs'
+  return (
+    <Box key="acc-app" flexDirection="column" rowGap={ROW_GAP} {...look(el, 'item')}>
+      <Box flexDirection="row" flexWrap="wrap" rowGap={ROW_GAP} columnGap={1}>
+        <Text color={a.state === 'failed' ? 'error' : a.state === 'up' ? 'success' : 'suggestion'} wrap="wrap">
+          {acceptAppWords(a)}
+        </Text>
+        {/* Closing already: it stops as QA's check ends, with nothing more for the person to press. */}
+        {a.state !== 'closing' && <Button key="acc-app-close" label={down ? '不用了' : '關掉 app'} onPress={() => void close()} />}
+      </Box>
+      {waits !== undefined && (
+        <Text color="warning" wrap="wrap">
+          {waits}
+        </Text>
+      )}
     </Box>
   )
 }
@@ -3669,7 +3719,7 @@ const paneDoing = (snap: Snapshot): string => {
  * A crew older than its files on disk says so (`behind`): how to take the new
  * one is on the page, as the pane writes no command to type.
  */
-export function MinimalPane({ el, snap, web, behind = false, waits, restart, go, copy }: { el: Elements; snap: Snapshot; web: WebStatus; behind?: boolean; waits: readonly PaneWait[]; restart: () => void; go: (word: string) => void; copy: (text: string, surface?: string) => void }) {
+export function MinimalPane({ el, snap, web, behind = false, waits, restart, go, copy, closeApp = () => {} }: { el: Elements; snap: Snapshot; web: WebStatus; behind?: boolean; waits: readonly PaneWait[]; restart: () => void; go: (word: string) => void; copy: (text: string, surface?: string) => void; closeApp?: () => void }) {
   const { Box, Text, Button } = el
   const status = statusWords(snap)
   const total = Math.max(waitingAll(snap), waits.length)
@@ -3756,6 +3806,7 @@ export function MinimalPane({ el, snap, web, behind = false, waits, restart, go,
       ) : (
         <Text dimColor>沒有事情等你決定</Text>
       )}
+      {snap.acceptApp !== undefined && AcceptAppLine({ el, a: snap.acceptApp, close: closeApp })}
       {(snap.alignment !== undefined || snap.resident !== undefined || windows.length > 0) && (
         <Box flexDirection="column" rowGap={LIST_GAP}>
           {snap.alignment !== undefined && (

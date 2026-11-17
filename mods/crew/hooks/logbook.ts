@@ -136,7 +136,17 @@ const wordsOf = (e: Line): Words | undefined => {
       return { word: '叫醒大腦', who: 'crew', text: `Claude Code 沒有動作，${held.length} 個角色排著要開始：送一句話讓大腦回一個短回合` }
     }
     case 'check_start':
+      if (e.kept === true) return { word: 'QA 開 app', who: 'crew', text: `用留給你驗收、還開著的 app（crew 分支 ${stringOf(e.sha)}）給 QA 實際操作 ${stringOf(e.feature)}（第 ${String(e.round ?? 1)} 輪）：${stringOf(e.url)}` }
       return { word: 'QA 開 app', who: 'crew', text: `在 QA 的工作目錄（crew 分支 ${stringOf(e.sha)}）開 app 給 QA 實際操作 ${stringOf(e.feature)}（第 ${String(e.round ?? 1)} 輪）：${stringOf(e.url)}` }
+    case 'accept_app':
+      if (e.open === true) return { word: '驗收用的 app', who: '你', text: `你按了［開 app］（${stringOf(e.feature)}）` }
+      if (e.up === true) return { word: '驗收用的 app', who: 'crew', text: `開好了（crew 分支 ${stringOf(e.sha)}${e.from === 'check' ? '，沿用 QA 檢查時開著的 app' : ''}）` }
+      // Closed while QA's check runs on it: it stops as the check ends, and a line says when.
+      if (typeof e.after === 'string' && e.after !== '') return { word: '驗收用的 app', who: e.closed === 'person' ? '你' : 'crew', text: `${e.closed === 'person' ? '你按了［關掉 app］' : '它服務的功能你都決定了'}：QA 正在用它檢查 ${e.after}，檢查完 crew 就關掉` }
+      if (e.closed === 'after_check') return { word: '驗收用的 app', who: 'crew', text: `QA 檢查完 ${stringOf(e.feature)}，crew 把它關掉了` }
+      // In the background (its start command ended at the start), its URL answered no more: crew ran the stop command.
+      if (e.closed === 'gone') return { word: '驗收用的 app', who: 'crew', text: '它在背景跑，網址沒有回應了：crew 用關掉 app 的指令收掉它' }
+      return { word: '驗收用的 app', who: e.closed === 'person' ? '你' : 'crew', text: e.closed === 'person' ? '你按了［關掉 app］，crew 關掉了' : e.closed === 'decided' ? '它服務的功能你都決定了，crew 關掉了' : e.closed === 'reload' ? 'crew 重新載入，關掉上一次開著的 app' : '關掉了' }
     case 'check_qa':
       return { word: 'QA 實際操作', who: 'QA', text: `用瀏覽器實際操作 ${stringOf(e.feature)}（第 ${String(e.round ?? 1)} 輪）` }
     case 'check_end':

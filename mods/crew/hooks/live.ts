@@ -12,7 +12,7 @@ import { RESET_WAIT } from './guard'
 import { CARRY_RECENT_MS } from './carry'
 import { acceptMark, acceptsOf, doingOf, normalizeFlow, planFeatures, waitingOf } from './flow'
 import type { FlowState } from './flow'
-import type { Decision, Feature, Gate, IdPrefixes, Item, RequirementRow, RoleId, RoleRow, RoleRun, Route, Snapshot, Stage, StageCell, Thread, Tier, UsageRow } from './model'
+import type { AcceptAppRow, Decision, Feature, Gate, IdPrefixes, Item, RequirementRow, RoleId, RoleRow, RoleRun, Route, Snapshot, Stage, StageCell, Thread, Tier, UsageRow } from './model'
 
 /** A team that has not started. */
 export const emptyLive = (): CrewLive => ({
@@ -735,6 +735,19 @@ const confirmCount = (board: Tracker, feature: string): { confirm?: number } => 
   return n === 0 ? {} : { confirm: n }
 }
 
+/** The app kept up for acceptance as the pane says it: the commit short, and the seconds left to wait while it comes up. */
+export const acceptAppRow = (a: NonNullable<CrewLive['acceptApp']>, now: number, waits: { tests: number; merges: number }): AcceptAppRow => ({
+  state: a.state,
+  features: [...a.features],
+  ...(a.sha === undefined ? {} : { sha: a.sha.slice(0, 7) }),
+  ...(a.state === 'starting' && a.phase !== undefined ? { phase: a.phase } : {}),
+  ...(a.state === 'starting' && a.phase === 'app' && a.until !== undefined ? { waitS: Math.max(0, Math.ceil((a.until - now) / 1000)) } : {}),
+  ...(a.why === undefined ? {} : { why: a.why }),
+  ...(a.checking === undefined ? {} : { checking: a.checking }),
+  ...(a.background === true && a.state === 'up' ? { background: true as const } : {}),
+  waits: { tests: waits.tests, merges: waits.merges },
+})
+
 /** The features waiting on the person to accept, and how many they passed: none before QA hands one over. */
 const acceptRows = (board: Tracker | null, flow: CrewLive['flow']): { accepts?: NonNullable<Snapshot['accepts']> } => {
   if (board === null) return {}
@@ -805,10 +818,13 @@ export const snapshotOf = ({
   },
   web = false,
   stuck = [],
+  appWaits = { tests: 0, merges: 0 },
 }: {
   board: Tracker | null
   live: CrewLive
   now: number
+  /** crew's test runs and merges waiting for the app kept up for acceptance to close. */
+  appWaits?: { tests: number; merges: number }
   /** The tasks whose merge crew's prep stopped, while crew's question on them is open: the person is to see to them. */
   stuck?: readonly string[]
   /** What the full-stack builds a task of this tier on, from its models as the person set them; absent, on crew's own. */
@@ -1100,6 +1116,7 @@ export const snapshotOf = ({
       ? {}
       : { checks: checksIn(board, live.flow.checks, live.flow.checkOpen) }),
     ...acceptRows(board, live.flow),
+    ...(live.acceptApp === undefined ? {} : { acceptApp: acceptAppRow(live.acceptApp, now, appWaits) }),
     ...(live.resident === undefined ? {} : { resident: residentOf(live.resident, now) }),
     ...(boardProblem === undefined ? {} : { boardProblem: { text: boardProblem, ...(live.prdPath === null ? {} : { prd: live.prdPath }) } }),
     ...(boardFile === undefined ? {} : { boardFile }),

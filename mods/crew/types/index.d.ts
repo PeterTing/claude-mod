@@ -266,6 +266,36 @@ export type CrewCarry = {
 /** Another copy of crew seen at work on this repo, its record changing between two looks: which copy, and when. */
 export type CrewTwin = { from: string; at: number }
 
+/**
+ * The app crew keeps up for the person's acceptance, started on their own
+ * press on a 待你驗收 card: one at a time, in QA's worktree, and the app QA's
+ * checks use while it is up. `state`: on its way (`starting`, at `phase`:
+ * waiting for QA's worktree, for crew's tests and merges to finish, or for the
+ * app to answer, by `until`); `up`; `failed`, with why and its log; `theirs`,
+ * a program crew did not start answered at the URL already, so crew started
+ * none; `closing`, the person closed it (or decided each feature it served)
+ * while QA's check of `checking` runs on it, and it stops as that check ends. `features`: those it is up for, and it stops once each is decided.
+ * `sha`: the commit it runs, or is to. `dir`, `url` and `pids`: where it runs
+ * and what listens for it, so crew stops it after a reload, as a check's app.
+ */
+export type CrewAcceptApp = {
+  state: 'starting' | 'up' | 'failed' | 'theirs' | 'closing'
+  features: string[]
+  since: number
+  phase?: 'qa' | 'tests' | 'app'
+  until?: number
+  sha?: string
+  dir?: string
+  url?: string
+  pids?: string[]
+  log?: string
+  why?: string
+  /** QA's check of this feature uses it now. */
+  checking?: string
+  /** Its start command ended, leaving it in the background (docker compose up -d): crew watches its URL, and only the stop command ends it. */
+  background?: true
+}
+
 /** Everything crew keeps for a running team in this session. */
 
 export type CrewLive = {
@@ -365,6 +395,8 @@ export type CrewLive = {
    * where the app runs; `find`, QA is finding in the repo how to start the app.
    */
   checking?: { feature: string; round: number; since: number; phase: 'starting' | 'waiting' | 'checking'; agentId?: string; prd: string; url?: string; pids?: string[]; dir?: string; find?: true }
+  /** The app crew keeps up for the person's acceptance, started on their own press: see CrewAcceptApp. */
+  acceptApp?: CrewAcceptApp
   /** Questions the heartbeat already brought up to the person. */
   reminded?: string[]
   /** A PRD the brain wrote with the person and has not started: who reviews it, and whether it waits for the person's yes. */

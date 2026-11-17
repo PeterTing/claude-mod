@@ -527,6 +527,26 @@ export type Resident = {
   digest?: { sent?: string; queued: number; next: string }
 }
 
+/**
+ * The app crew keeps up for the person's acceptance, as the pane says it: its
+ * state, and on its way, what it waits for and at most how many seconds more
+ * for the app to answer; up, the commit it runs (short) and the features it
+ * is up for; failed, why. `waits`: crew's test runs and merges held till it
+ * closes (they would take the app's port).
+ */
+export type AcceptAppRow = {
+  state: 'starting' | 'up' | 'failed' | 'theirs' | 'closing'
+  features: readonly string[]
+  sha?: string
+  phase?: 'qa' | 'tests' | 'app'
+  waitS?: number
+  why?: string
+  checking?: string
+  /** It runs in the background: its start command ended, and the stop command ends it. */
+  background?: true
+  waits: { tests: number; merges: number }
+}
+
 /** Everything the panes draw, at one moment. */
 export type Snapshot = {
   prd: { id: string; title: string; progress: number } | null
@@ -580,6 +600,13 @@ export type Snapshot = {
    * `mark`: the card as the pane shows it; a decision sent with it is refused once the card has moved on.
    */
   accepts?: { rows: readonly { feature: string; title?: string; round: number; state: 'waiting' | 'again' | 'fixing'; said?: string; confirm?: number; mark?: string }[]; passed: number }
+  /**
+   * The app crew keeps up for the person's acceptance (started on their press
+   * on a 待你驗收 card): on its way, up, or why not; the commit it runs, the
+   * features it is up for, QA's check using it now, and how many of crew's
+   * test runs and merges wait for it to close (`waits`).
+   */
+  acceptApp?: AcceptAppRow
   /** The decide page has news crew could not publish outside a hook: it goes with Claude Code's next action. */
   pageDue?: true
   /**

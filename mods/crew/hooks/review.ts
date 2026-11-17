@@ -92,6 +92,29 @@ export type PageAcceptItem = {
 }
 
 /**
+ * The app crew keeps up for the person's acceptance, as a card shows it: on
+ * its way (`phase`: QA's worktree, the tests under way, the app coming up,
+ * `waitS` seconds at most), up at a commit, failed and why (its log), or not
+ * started for a program crew did not start answering at the URL (`theirs`).
+ * `mine`: it serves this card's feature, so the tab the person opened goes
+ * there once it is up; `checking`: QA's check uses it now; `waits`: crew's
+ * test runs and merges waiting for it to close.
+ */
+export type PageAcceptApp = {
+  state: 'starting' | 'up' | 'failed' | 'theirs' | 'closing'
+  mine: boolean
+  sha?: string
+  phase?: 'qa' | 'tests' | 'app'
+  waitS?: number
+  why?: string
+  log?: string
+  checking?: string
+  /** It runs in the background (its start command ended): Claude Code ending does not stop it; crew's next load runs the stop command. */
+  background?: true
+  waits?: { tests: number; merges: number }
+}
+
+/**
  * A feature handed to the person to accept: what QA checked and how, the
  * things to look at, the approved screens to see them on, what they said last
  * time and what changed since, and how to open it themselves.
@@ -112,8 +135,11 @@ export type PageAccept = {
   /** What the PM said of the person's words the tech lead took to it (data). */
   pm?: string
   changed?: readonly string[]
-  /** `worktree` is shown from the project root; `worktreeAt` is its full path, which the copy button gives. */
-  open?: { url?: string; accounts?: string; start?: string; worktree?: string; worktreeAt?: string }
+  /**
+   * `worktree` is shown from the project root; `worktreeAt` is its full path, which the copy button gives. `app`: the app
+   * crew keeps up for acceptance, while there is one; `qaSha`: the commit QA checked this round on.
+   */
+  open?: { url?: string; accounts?: string; start?: string; worktree?: string; worktreeAt?: string; app?: PageAcceptApp; qaSha?: string }
   /** Where the feature is in the app, as QA found it: the page's address in the app, the way there from its menu, or why it has no page. */
   where?: { page?: string; menu?: string; none?: string }
   /**
@@ -135,6 +161,13 @@ export type PageData = { prd: string; at: string; draft?: PageDraft; designs: re
 
 /** The first words of each comment the page sends: what crew looks for. */
 export const PAGE_HEADS = ['crew 設計稿決定', 'crew 回答', 'crew PRD 確認', 'crew PRD 要改', 'crew 驗收'] as const
+
+/**
+ * How the page's ［開 app］ and ［關掉 app］ on a 待你驗收 card begin: the
+ * person's own press, on crew's web page alone. No decision, and never one a
+ * brain relays from a comment.
+ */
+export const ACCEPT_APP_HEAD = 'crew 驗收 app：'
 
 /** How a comment begins that asks the brain about a question rather than answers it: the brain answers it there itself. */
 export const ASK_HEAD = 'crew 提問'
@@ -168,6 +201,7 @@ export const parsePage = (comment: string): PageMessage | string => {
   const change = /^crew PRD 要改：/.exec(text)
   const accept = /^crew 驗收：(通過|要改) ([A-Za-z][A-Za-z0-9_]*-\d+)(?=\s|$)/.exec(text)
   if (text.startsWith(`${ASK_HEAD}：`)) return '這則是使用者問你的問題，不是決定：直接在那則留言下用白話回答，不要轉給 crew；那一題還等他回答'
+  if (text.startsWith(ACCEPT_APP_HEAD)) return '開關驗收用的 app 只能由使用者在 crew 網頁上自己按，不能轉給 crew'
   if (design === null && answer === null && confirm === null && change === null && accept === null) return `這則留言不是 crew 待你決定頁送出的（開頭要是 ${PAGE_HEADS.map(h => `「${h}」`).join('、')}）`
   if (tail === null) return '少了代碼，請在待你決定頁重新按一次'
   const code = tail[1] ?? ''
@@ -537,6 +571,16 @@ ul.opts li { padding: 2px 0; }
 .acc-where button, .acc-where a.btn { font: inherit; font-size: .85rem; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 3px 12px; cursor: pointer; text-decoration: none; }
 .acc-where button:focus-visible, .acc-where a.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 560px) { .acc-where .wrow { grid-template-columns: 1fr; } }
+.acc-where button.go { background: var(--accent); color: var(--surface); border-color: var(--accent); font-weight: 600; }
+.acc-where button:disabled { opacity: .55; cursor: default; }
+.acc-app { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.acc-app .st { font-weight: 600; }
+.acc-app.up .st { color: var(--ok); }
+.acc-app.starting .st, .acc-app.theirs .st { color: var(--warn); }
+.acc-app.failed { border-color: var(--bad); background: var(--bad-soft); }
+.acc-app.failed .st { color: var(--bad); }
+.acc-app .waits { color: var(--warn); font-size: .85rem; }
+.acc-links { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .items .how { grid-column: 2; font-size: .86rem; border-left: 3px solid var(--ok); padding-left: 8px; overflow-wrap: anywhere; }
 .items .how b { color: var(--ok); font-weight: 600; }
 details.mockd > summary { color: var(--ink); }
@@ -594,6 +638,10 @@ const SCRIPT = String.raw`<script>
   var accFocus = false;
   // The design under a card QA did not open the app for, opened by the person: kept open across redraws.
   var accMockOpen = {};
+  // The tabs the person opened with ［開 app］, by feature, till crew's app is up and they go to it; what crew said back to each press.
+  var appTabs = {};
+  var appSaid = {};
+  var appPoll = null;
   var accResize = null;
   // On crew's own web page this page runs in a frame of that page's: a decision goes to crew through it and is recorded at once.
   var WEB = !!document.querySelector('meta[name="crew-surface"][content="web"]');
@@ -1236,13 +1284,168 @@ const SCRIPT = String.raw`<script>
       else pick();
     } catch (e) { pick(); }
   }
+  // This page is open on the computer crew runs on: only there does crew start the app, and only there do its links open.
+  function here() { return /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname); }
+  // The two ways in the person keeps, whatever crew's app does: the app's own address (where its test login is), then the page.
+  function accLinks(a, href) {
+    var login = pageHref((a.open || {}).url, '');
+    var row = el('div', { class: 'acc-links' });
+    if (login && login !== href) row.append(el('a', { class: 'btn', href: login, target: '_blank', rel: 'noopener noreferrer', text: '1. app 的網址（登入）↗' }), el('a', { class: 'btn', href: href, target: '_blank', rel: 'noopener noreferrer', text: '2. 打開這一頁 ↗' }));
+    else row.append(el('a', { class: 'btn', href: href, target: '_blank', rel: 'noopener noreferrer', text: (a.where || {}).page ? '打開這一頁 ↗' : '打開 app ↗' }));
+    return row;
+  }
+  // What crew's app for acceptance does now, in the person's words.
+  function appWords(app) {
+    if (app.state === 'up') return 'app 開著（crew 分支 ' + (app.sha || '') + '）' + (app.checking ? '，QA 正在用它檢查 ' + app.checking : '') + '。';
+    if (app.state === 'failed') return 'app 開不起來：' + (app.why || '原因不明') + '。';
+    if (app.state === 'theirs') return '這個網址已經有程式在回應，不是 crew 開的（可能是你自己開著的 app），所以 crew 沒有另外開：［打開這一頁］和下面的連結會打開它；要 crew 開，先關掉它再按一次。';
+    if (app.state === 'closing') return 'app 關掉中：QA 正在用它檢查 ' + (app.checking || '一個功能') + '，檢查完 crew 就關掉。';
+    var why = app.checking ? '換到 QA 要檢查 ' + app.checking + ' 的版本' : app.phase === 'qa' ? '等 QA 的工作目錄空出來' : app.phase === 'tests' ? '等正在跑的測試和合回結束' : '等 app 開起來';
+    return '正在開 app：' + why + (app.phase === 'app' && typeof app.waitS === 'number' ? '，最多等 ' + app.waitS + ' 秒' : '') + '。';
+  }
+  // crew opens the app for the person here: crew's web page, on this computer, with the app's start command and address set.
+  function appOpens(a) {
+    var open = a.open || {};
+    return WEB && here() && !data.view && !!open.start && !!open.url;
+  }
+  // How many of crew's test runs and merges wait for the app, in the person's words; merges held hold the full-stack's work in crew's worktree too.
+  function appWaitSaid(app) {
+    var w = app.waits;
+    if (!w || (w.tests + w.merges) === 0) return '';
+    return (w.tests + w.merges) + ' 個合回／測試在等' + (app.state === 'closing' ? ' app 關掉' : '你關掉 app') + (w.merges > 0 ? '，全端在 crew 工作目錄的工作也會等' : '');
+  }
+  // ［開 app］ on a card, with what crew's app does now: on this computer, with the app's start command and address set, and only for the person's press.
+  function accApp(a) {
+    var open = a.open || {};
+    var app = open.app || null;
+    var opens = appOpens(a);
+    if (!app && !opens) return null;
+    var key = 'app:' + a.feature;
+    var said = el('span', { class: 'cap', text: appSaid[a.feature] || '' });
+    var box = el('div', { class: 'acc-app ' + (app ? app.state : 'off'), role: 'group', 'aria-label': '驗收用的 app' });
+    var turn = a.state === 'waiting' || a.state === 'again';
+    if (app) {
+      box.append(el('span', { class: 'st', text: appWords(app) }));
+      // The log, where the reason does not say it already.
+      if (app.state === 'failed' && app.log && (app.why || '').indexOf(app.log) < 0) box.append(el('span', { class: 'cap' }, '輸出在 ', el('code', { text: app.log })));
+      if (app.state === 'up' && open.qaSha && app.sha && open.qaSha !== app.sha) box.append(el('span', { class: 'cap', text: 'QA 檢查這個功能時用的是 ' + open.qaSha + '，現在開著的 app 是 ' + app.sha + '。' }));
+      // Its start command ended, leaving it in the background: crew watches its URL, and Claude Code ending does not stop it.
+      if (app.state === 'up' && app.background) box.append(el('span', { class: 'cap', text: '它在背景跑（啟動指令跑完就結束了）：crew 每 30 秒看一次它的網址，沒有回應就用「關掉 app 的指令」收掉。Claude Code 結束時 crew 關不掉它，要等下次 crew 啟動，才會用那個指令把它關掉。' }));
+      var waits = appWaitSaid(app);
+      if (waits) box.append(el('span', { class: 'waits', text: waits }));
+    } else box.append(el('span', { class: 'cap', text: (open.qaSha ? 'crew 會用 QA 檢查這個功能時的版本（' + open.qaSha + '）' : 'QA 檢查時沒記下版本，crew 會用 crew 分支最新的版本') + '，在 QA 的工作目錄開 app；開好就在新分頁先打開 app 的網址（登入），再打開這一頁。app 會開著，直到你按［關掉 app］、它服務的功能你都決定了，或 Claude Code 結束、crew 重新載入（啟動指令把 app 放到背景跑的，Claude Code 結束時關不掉，要等下次 crew 啟動才會關掉）。開著時，crew 的測試和合回會等你關掉。' }));
+    // Closing: it stops as QA's check ends, with nothing for the person to press.
+    if (opens && !(app && app.state === 'closing')) {
+      var row = el('div', { class: 'row' });
+      var up = app && (app.state === 'up' || app.state === 'theirs');
+      if (turn && (!app || app.state !== 'starting' || !app.mine)) {
+        var label = !app || app.state === 'failed' ? (app ? '再試一次' : '開 app 並打開這一頁') : up ? '打開這一頁' : '開 app 並打開這一頁';
+        row.append(el('button', { type: 'button', class: 'go', text: label, onclick: function () { accAppGo(a, said, box); } }));
+      }
+      if (app) row.append(el('button', { type: 'button', text: app.state === 'failed' || app.state === 'theirs' ? '不用了' : '關掉 app', onclick: function () { appSend(key, 'crew 驗收 app：關', said, box); } }));
+      row.append(said);
+      if (idle(said)) disable(row, true);
+      box.append(row);
+    }
+    return box;
+  }
+  // The person's ［開 app］: the tab opens now, at the press (a browser lets a page open one only then), and knows nothing of this page.
+  function accAppGo(a, said, box) {
+    var w = null;
+    try { w = window.open('', '_blank'); } catch (e) { w = null; }
+    if (w) { try { w.opener = null; } catch (e) {} tabSay(w, '正在開 app，好了這個分頁會自己打開 ' + a.feature + ' 的頁面…'); }
+    var open = a.open || {};
+    var login = pageHref(open.url, '');
+    var page = pageHref(open.url, (a.where || {}).page);
+    appTabs[a.feature] = { w: w, login: login, page: page || login, at: Date.now() };
+    appSend('app:' + a.feature, 'crew 驗收 app：開 ' + a.feature, said, box, a.feature);
+    if (!w) appSaid[a.feature] = '瀏覽器擋下了新分頁：app 開好之後，用下面的 1、2 兩個連結打開。';
+  }
+  function appSend(key, text, said, box, feature) {
+    said.textContent = '送出中…';
+    disable(box, true);
+    comments.sendToClaude({ anchor: null, text: text }).then(function () {
+      if (feature && (appTabs[feature] || {}).w) appSaid[feature] = '';
+      // Sent: the card is drawn again (what crew does next comes with data.json), so it is not left saying 送出中.
+      try { draw(); } catch (e) { if (window.console) console.error(e); }
+      reload();
+      appWatch();
+    }, function (e) {
+      if (feature) {
+        var t = appTabs[feature];
+        delete appTabs[feature];
+        if (t && t.w) tabSay(t.w, '沒有開 app：' + ((e && e.message) || '送不到 crew') + '。請回到 crew 網頁再按一次。');
+      }
+      if (failed(e, said)) disable(box, can !== 'available');
+      if (feature) appSaid[feature] = said.textContent;
+    });
+  }
+  // Words in the tab while crew's app comes up: plain text, nothing that runs.
+  function tabSay(w, text) {
+    try {
+      var d = w.document;
+      d.title = 'crew：開 app';
+      if (!d.body) d.documentElement.append(d.createElement('body'));
+      d.body.textContent = '';
+      var p = d.createElement('p');
+      p.textContent = text;
+      p.style.cssText = 'font: 16px/1.6 system-ui, sans-serif; margin: 48px auto; max-width: 36em; padding: 0 16px;';
+      d.body.append(p);
+    } catch (e) {}
+  }
+  // Each tab the person opened goes to the app once crew says it is up: the app's address first (its test login sets a cookie), then the page.
+  function accAppTabs() {
+    Object.keys(appTabs).forEach(function (f) {
+      var t = appTabs[f];
+      if (!t.w || t.w.closed) { delete appTabs[f]; return; }
+      var a = (data.accept || []).filter(function (x) { return x.feature === f; })[0];
+      var app = a && a.open && a.open.app;
+      if (!app || !app.mine) {
+        if (Date.now() - t.at > 60000) { tabSay(t.w, 'crew 沒有開 app：回到 crew 網頁的「待你驗收」看原因。'); delete appTabs[f]; }
+        return;
+      }
+      if (app.state === 'failed') { tabSay(t.w, 'app 開不起來：' + (app.why || '原因不明') + (app.log ? '（輸出在 ' + app.log + '）' : '') + '。回到 crew 網頁可以再試一次。'); delete appTabs[f]; return; }
+      if (app.state === 'starting') { tabSay(t.w, appWords(app) + ' 好了這個分頁會自己打開 ' + f + ' 的頁面。'); return; }
+      if (app.state === 'closing') { tabSay(t.w, appWords(app) + ' 關掉之後回到 crew 網頁再按［開 app］。'); delete appTabs[f]; return; }
+      delete appTabs[f];
+      tabGo(t);
+    });
+    appWatch();
+  }
+  function tabGo(t) {
+    var w = t.w;
+    var first = t.login || t.page;
+    try { w.location.href = first; } catch (e) { return; }
+    if (!t.page || t.page === first) return;
+    // The address is another site's once the tab is there: what it set (a test login's cookie) is set, and the page goes after it.
+    var since = Date.now();
+    var seen = 0;
+    var wait = setInterval(function () {
+      if (w.closed) { clearInterval(wait); return; }
+      var there = false;
+      try { there = w.location.href !== 'about:blank' && w.document.readyState === 'complete'; } catch (e) { there = true; }
+      if (there && !seen) seen = Date.now();
+      if ((seen && Date.now() - seen >= 1500) || Date.now() - since >= 15000) {
+        clearInterval(wait);
+        try { w.location.href = t.page; } catch (e) {}
+      }
+    }, 250);
+  }
+  // While a tab waits for the app, crew's page is read every two seconds rather than every twenty.
+  function appWatch() {
+    var on = Object.keys(appTabs).length > 0;
+    if (on && !appPoll) appPoll = setInterval(reload, 2000);
+    else if (!on && appPoll) { clearInterval(appPoll); appPoll = null; }
+  }
   // Where to look, first on the card: the version QA looked at, and the page it is on, so the person finds the real screen.
   function accWhere(a) {
     var open = a.open || {};
     var where = a.where || {};
     var box = el('div', { class: 'acc-where', role: 'group', 'aria-label': '去哪裡看' }, el('h3', { text: '去哪裡看' }));
-    var ver = el('div', { class: 'wv' }, el('p', { text: '這個功能在 crew 的分支上，還沒合回你平常用的分支' + (open.worktree ? '：要從 crew 的工作目錄啟動 app 才看得到。' : '。') }));
-    if (open.worktree) {
+    // crew opens the app for them here (in QA's worktree): the button below says how, and no folder of crew's is theirs to start it in.
+    var opens = appOpens(a);
+    var ver = el('div', { class: 'wv' }, el('p', { text: '這個功能在 crew 的分支上，還沒合回你平常用的分支' + (opens ? (open.app ? '：crew 在 QA 的工作目錄幫你開 app，狀態在下面。' : '：不用自己開，按下面的［開 app 並打開這一頁］，crew 會在 QA 的工作目錄幫你開。') : open.worktree ? '：要從 crew 的工作目錄啟動 app 才看得到。' : '。') }));
+    if (open.worktree && !opens) {
       var dir = el('code', { text: open.worktree });
       var copied = el('span', { class: 'cap' });
       ver.append(el('p', {}, dir), el('div', { class: 'row' }, el('button', { type: 'button', text: '複製路徑', onclick: function () { copyText(open.worktreeAt || open.worktree, dir, copied); } }), copied));
@@ -1259,8 +1462,11 @@ const SCRIPT = String.raw`<script>
     } else if (where.none) pg.append(el('p', { text: where.none }));
     else pg.append(el('p', { class: 'cap', text: 'QA 這一輪沒有寫這個功能在哪一頁：先照下面每一件的「怎麼看」找。' }));
     if (href) {
-      var away = /^https?:\/\/(localhost|[a-z0-9-]+\.localhost|127\.0\.0\.1|\[::1\])(:\d+)?\//i.test(href) && !/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname);
-      pg.append(el('div', { class: 'row' }, el('a', { class: 'btn', href: href, target: '_blank', rel: 'noopener noreferrer', text: where.page && href !== pageHref(open.url, '') ? '打開這一頁 ↗' : '打開 app ↗' }), away ? el('span', { class: 'cap', text: '這個連結只在跑 app 的那台電腦上打得開。' }) : null));
+      var away = /^https?:\/\/(localhost|[a-z0-9-]+\.localhost|127\.0\.0\.1|\[::1\])(:\d+)?\//i.test(href) && !here();
+      var app = accApp(a);
+      if (app) pg.append(app);
+      pg.append(accLinks(a, href));
+      if (away) pg.append(el('span', { class: 'cap', text: '這個連結只在跑 app 的那台電腦上打得開。' }));
     }
     else if (!where.none) pg.append(el('p', { class: 'cap', text: 'crew 還不知道這個 app 的網址，所以這裡沒有連結。' + W('在 crew 網頁的「設定」填好 app 的網址和啟動指令，這裡就會變成連結；這一輪沒有截圖，app 設定好後 QA 會實際操作並補圖。', '在面板的「設定」填好 app 的網址和啟動指令，這裡就會變成連結；這一輪沒有截圖，app 設定好後 QA 會實際操作並補圖。') }));
     box.append(el('div', { class: 'wrow' }, el('span', { class: 'wl', text: '哪一頁' }), pg));
@@ -1775,7 +1981,8 @@ const SCRIPT = String.raw`<script>
   // the page shows is always the version a decision on it names (crew's web page is not loaded again for a new version).
   function take(j) {
     var next = shape(j);
-    if (JSON.stringify(next) === JSON.stringify(data)) return;
+    // The same data: a tab waiting for an app already up still goes to it.
+    if (JSON.stringify(next) === JSON.stringify(data)) { accAppTabs(); return; }
     var now = {};
     (next.designs || []).forEach(function (d) { now[d.id] = d.code + ':' + (d.stamp || ''); });
     Object.keys(html).forEach(function (id) { if (htmlKey[id] !== now[id]) { delete html[id]; delete htmlKey[id]; } });
@@ -1783,6 +1990,7 @@ const SCRIPT = String.raw`<script>
     data = next;
     settle();
     redraw();
+    accAppTabs();
   }
   // crew's web page names one thing to show, for a press on crew's pane: its tab, and the card of that number.
   var showWant = null;
