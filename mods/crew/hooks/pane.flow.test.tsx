@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
-import { approve, build, designed, done, paneUi, PLAN, ROOT, SPLIT, start, textOf, tested, world, write } from './world'
+import { agentOf, approve, build, checked, command, designed, done, paneUi, PLAN, ROOT, SPLIT, start, textOf, tested, world, write } from './world'
 
 /** crew run from its pane alone: no command typed. */
 
@@ -32,12 +32,14 @@ describe('crew from its pane', () => {
     await start($)
     expect(w.panes).toContain('open:crew')
     const ui = await paneUi($)
-    expect(await textOf(ui)).toMatch(/crew 已載入，還沒有開始的 PRD/)
+    expect(await textOf(ui)).toMatch(/還沒有開始的 PRD/)
     const pick = (await ui.find({ key: 'prd-pick' })) as unknown as { props: { value: string; options: { value: string; label: string }[] } }
     // PRDs first, then the other documents; a README is no PRD.
     expect(pick.props.options.map(o => o.value)).toEqual(['docs/PRD.md', 'docs/specs/checkout.md'])
     expect(w.reads.get(`${ROOT}/docs/.private/plan.md`) ?? 0).toBe(0)
-    expect(pick.props.options[0]?.label).toMatch(/docs\/PRD\.md　會員訂閱/)
+    // Each PRD by its file name; the one picked shows its folder and title under it.
+    expect(pick.props.options.map(o => o.label)).toEqual(['PRD.md', 'checkout.md'])
+    expect(await textOf(ui)).toMatch(/docs\/・會員訂閱/)
     await ui.select({ key: 'prd-pick', value: 'docs/specs/checkout.md' })
     await ui.press({ key: 'start' })
     expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:pm' })
@@ -49,7 +51,7 @@ describe('crew from its pane', () => {
     const w = world($, on)
     await start($)
     const ui = await paneUi($)
-    await ui.press({ key: 'tab-settings' })
+    await ui.press({ key: 'tab-tokens' })
     w.broken.store = 'settings:'
     await ui.press({ key: 'tuning-auto' })
     expect(w.toasts.at(-1)).toMatch(/crew：沒有完成：.*ENOSPC/)
@@ -61,6 +63,8 @@ describe('crew from its pane', () => {
     const w = world($, on)
     await start($)
     const ui = await paneUi($)
+    // The path field is one press away: most starts pick from the list.
+    await ui.press({ key: 'prd-path-open' })
     await ui.input({ key: 'prd-path', text: 'docs/PRD.md' })
     expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:pm' })
     await ui.unmount()
@@ -209,7 +213,9 @@ describe('crew from its pane', () => {
     w.store.delete(`tests:${ROOT}`)
     await start($)
     await planned($)
-    await build($)
+    await $.command.run(command('answer Q-03 先不設定'))
+    await build($, undefined, agentOf('fullstack'))
+    await checked($)
     expect(w.tests.runs).toEqual([])
     const ui = await paneUi($)
     await ui.press({ key: 'tab-settings' })

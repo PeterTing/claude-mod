@@ -5,7 +5,7 @@ import type { Engine } from 'claude-code/testing'
 import { applyOps, newTracker } from './board'
 import { parseMemories } from './memory'
 import { requirementsOf } from './prd'
-import { build, command, designed, done, paneText, PLAN, PRD, REQ, resumed, ROOT, SPLIT, start, world, write } from './world'
+import { accepted, agentOf, build, command, designed, done, paneText, PLAN, PRD, REQ, resumed, ROOT, SPLIT, start, world, write } from './world'
 
 /** The board held to the PRD as it stands, checked every few seconds without a model call. */
 
@@ -20,7 +20,7 @@ const notice = async ($: Engine, agentId: string) =>
     drop?: string
   }
 
-/** A finished first pass: split, every criterion with a test case. */
+/** A finished first pass: split, every criterion with a test case, built, tested, handed over and passed. */
 const finished = async ($: Engine) => {
   await $.command.run(command('start docs/PRD.md'))
   await write($, 'a-pm-1', SPLIT)
@@ -31,6 +31,7 @@ const finished = async ($: Engine) => {
   await write($, 'a-techlead-4', PLAN)
   await done($, 'a-techlead-4')
   await build($)
+  await accepted($)
 }
 
 describe('the board held to the PRD', () => {
@@ -148,6 +149,7 @@ describe('the board held to the PRD', () => {
     await write($, 'a-techlead-4', PLAN)
     await done($, 'a-techlead-4')
     await build($)
+    await accepted($)
     expect((await notice($, 'a-fullstack-5')).text).toMatch(/完成/)
     w.disk.set(PRD_PATH, CHANGED)
     await w.clock.advance(11_000)
@@ -165,7 +167,7 @@ describe('the board held to the PRD', () => {
     const text = await paneText($, 'progress')
     expect(text).toMatch(/PRD 需求[\s\S]*\n規格\n設計\n測試案例\n任務\n實作\nReview\n測試結果\n/)
     // Spec, test cases, tasks and code come from the board and git; the rest are not tracked yet, and never shown as done.
-    expect(text).toMatch(new RegExp(`${REQ}\\n[^\\n]*\\n✓\\n✓ 2/2\\n✓ 2/2\\n✓ 2/2\\n✓ 2/2\\n✓ 2/2\\n✓ 1/1\\n`))
+    expect(text).toMatch(new RegExp(`會員訂閱\\n1\\n[^\\n]*\\n✓\\n✓ 2/2\\n✓ 2/2\\n✓ 2/2\\n✓ 2/2\\n✓ 2/2\\n✓ 1/1\\n`))
   })
 
   test('shows how the board stands against the PRD, and when crew last looked', async ($, on) => {
@@ -332,12 +334,13 @@ describe('the board held to the PRD', () => {
     const req2 = requirementsOf(second)[0]?.id ?? ''
     await $.command.run(command('start docs/BILLING.md'))
     // A new start sets the PM off again, as a new agent.
-    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:uiux', 'crew:techlead', 'crew:fullstack', 'crew:pm'])
-    await write($, 'a-pm-6', [
+    expect(w.spawned.map(s => s.subagentType).filter(t => t !== 'crew:finder' && t !== 'crew:checker')).toEqual(['crew:pm', 'crew:qa', 'crew:uiux', 'crew:techlead', 'crew:fullstack', 'crew:pm'])
+    const pm = agentOf('pm')
+    await write($, pm, [
       { op: 'add_feature', title: '電子發票', summary: '', sources: [req2] },
       { op: 'add_criterion', feature: 'PRD-003', text: '每月寄出發票' },
     ])
-    await done($, 'a-pm-6')
+    await done($, pm)
     expect(w.sent.some(m => /看板還對不上 PRD/.test(m.text))).toBe(false)
     expect((await $.command.run(command('status'))).text).toMatch(/adding_tests[\s\S]*對準 PRD ✓/)
   })
@@ -386,6 +389,8 @@ describe('the board held to the PRD', () => {
     await write($, 'a-techlead-4', [{ op: 'add_task', feature: 'PRD-001', criteria: ['AC-003'], title: '年繳', detail: '', size: 'S' }])
     await done($, 'a-techlead-4')
     await build($, ['TASK-003'])
+    // The feature passed before has new work: it comes back for the person to pass again.
+    await accepted($)
     expect((await $.command.run(command('status'))).text).toMatch(/done[\s\S]*對準 PRD ✓/)
     w.disk.set(PRD_PATH, `${CHANGED}\n\n使用者可以暫停訂閱。`)
     await w.clock.advance(10_000)
@@ -432,20 +437,21 @@ describe('the board held to the PRD', () => {
     w.disk.set(`${ROOT}/docs/BILLING.md`, second)
     const req2 = requirementsOf(second)[0]?.id ?? ''
     await $.command.run(command('start docs/BILLING.md'))
-    await write($, 'a-pm-6', [
+    const pm = agentOf('pm')
+    await write($, pm, [
       { op: 'add_feature', title: '電子發票', summary: '', sources: [req2] },
       { op: 'add_criterion', feature: 'PRD-003', text: '每月寄出發票' },
     ])
-    await done($, 'a-pm-6')
+    await done($, pm)
     const edited = `${second}\n\n發票可以下載 PDF。`
     const req3 = requirementsOf(edited).find(r => r.text === '發票可以下載 PDF。')?.id ?? ''
     w.disk.set(`${ROOT}/docs/BILLING.md`, edited)
     await w.clock.advance(10_000)
-    await write($, 'a-pm-6', [
+    await write($, pm, [
       { op: 'add_feature', title: '下載 PDF', summary: '', sources: [req3] },
       { op: 'add_criterion', feature: 'PRD-004', text: '可以下載 PDF' },
     ])
-    await done($, 'a-pm-6')
+    await done($, pm)
     await w.clock.advance(10_000)
     const board = w.board() as { crew_prd?: { requirements: { id: string }[]; earlier?: { path: string }[] } } | null
     expect(board?.crew_prd?.requirements.map(r => r.id)).toEqual([req2, req3])
@@ -755,7 +761,7 @@ describe('the board held to the PRD', () => {
     await start($)
     await finished($)
     await $.command.run(command('start docs/PRD.md'))
-    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:uiux', 'crew:techlead', 'crew:fullstack'])
+    expect(w.spawned.map(s => s.subagentType).filter(t => t !== 'crew:finder' && t !== 'crew:checker')).toEqual(['crew:pm', 'crew:qa', 'crew:uiux', 'crew:techlead', 'crew:fullstack'])
     expect((await $.command.run(command('status'))).text).toMatch(/done[\s\S]*對準 PRD ✓/)
   })
 

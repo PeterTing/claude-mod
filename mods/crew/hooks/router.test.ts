@@ -55,7 +55,7 @@ describe('routeFor', () => {
   })
 
   test('escalates past XL to Fable at xhigh', () => {
-    expect(routeFor('fullstack', 'XL', { beyond: true })).toMatchObject({ model: 'fable', label: 'Fable 5.1', effort: 'xhigh', limit: 256_000, beyond: true })
+    expect(routeFor('fullstack', 'XL', { beyond: true })).toMatchObject({ model: 'fable', label: 'Fable 5.2', effort: 'xhigh', limit: 256_000, beyond: true })
   })
 })
 

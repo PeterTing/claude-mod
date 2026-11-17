@@ -254,7 +254,7 @@ describe('housekeeping', () => {
     w.disk.set(`${ROOT}/.crew/.gitignore`, 'mine/\n')
     await start($)
     await $.command.run(command('remember 用新台幣'))
-    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('mine/\nusage/\nlog/\nwork/\nruns/\ncodex/\ndesigns/*/index.html\ndesigns/*/data.json\ndesigns/*/prd.json\n')
+    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('mine/\nusage/\nlog/\nwork/\nruns/\ncodex/\nshelved/\ndesigns/*/index.html\ndesigns/*/data.json\ndesigns/*/prd.json\nqa-shots/\ndesigns/*/checks/\ndesigns/*/acceptance.json\nsession.json\nwriter.json\n')
   })
 
   test('refuses a start while a PRD is under way without touching any file', async ($, on) => {
@@ -317,7 +317,7 @@ describe('a board crew cannot read', () => {
     await start($)
     const ui = await paneUi($)
     const text = await textOf(ui)
-    expect(text).toMatch(/crew 已載入，還沒有開始的 PRD/)
+    expect(text).toMatch(/還沒有開始的 PRD/)
     // In crew's own folder, the file is the person's to fix or move.
     expect(text).toMatch(/⚠ \.crew\/prd-tracker\.json 不是 crew 的看板格式（沒有 prd_items 清單）。crew 不讀也不改它，請修好或移走這個檔案，crew 才能開始。/)
     await ui.press({ key: 'start' })

@@ -15,8 +15,8 @@ export type TaskSignals = {
 
 export type Route = {
   tier: Tier
-  /** Crew's name for the Claude model: the newest of its family; the agent runs its full id (`claudeId`). */
-  model: Model
+  /** Crew's name for the Claude model: a family's alias, the newest of it, or an older generation's full id; the agent runs its full id (`claudeId`). */
+  model: string
   label: string
   effort: Effort
   /** Context tokens before the role is rotated. */
@@ -33,25 +33,123 @@ const TIERS: readonly Tier[] = ['S', 'M', 'L', 'XL']
 const MODELS: readonly Model[] = ['haiku', 'sonnet', 'opus', 'fable']
 const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 
-const MODEL_LABELS: Record<Model, string> = { haiku: 'Haiku 5.5', sonnet: 'Sonnet 5.5', opus: 'Opus 5.5', fable: 'Fable 5.1' }
+/** The newest of each family crew knew when it was written: what it offers until it has asked a Claude Code what its aliases run. */
+const KNOWN_LATEST: Record<Model, string> = { haiku: 'claude-haiku-5-5', sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', fable: 'claude-fable-5-2' }
 
-/** The full id each of crew's names runs: the agent is given the id, so what runs is what the pane says, whatever an alias comes to mean later. */
-const CLAUDE_IDS: Record<Model, string> = { haiku: 'claude-haiku-5-5', sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', fable: 'claude-fable-5-1' }
-
-/** The older generations still served, by their full id, which is crew's name for them: a role may be fixed on one, never climb to it. */
-const OLDER_LABELS: Record<string, string> = {
-  'claude-fable-5': 'Fable 5',
-  'claude-opus-5': 'Opus 5',
-  'claude-opus-4-8': 'Opus 4.8',
-  'claude-opus-4-7': 'Opus 4.7',
-  'claude-opus-4-6': 'Opus 4.6',
-  'claude-sonnet-5': 'Sonnet 5',
-  'claude-sonnet-4-6': 'Sonnet 4.6',
-  'claude-haiku-4-5': 'Haiku 4.5',
+/** The older generations a role may still run, by their full id, which is crew's name for them: Opus only its newest, as the person asked. */
+const KEPT_OLDER: Record<Model, readonly string[]> = {
+  fable: ['claude-fable-5-1', 'claude-fable-5'],
+  opus: [],
+  sonnet: ['claude-sonnet-5', 'claude-sonnet-4-6'],
+  haiku: ['claude-haiku-4-5'],
 }
 
-/** The Claude models a role may be fixed on, as the pane lists them: the strongest family first, each newest first. */
-export const CLAUDE_FIXED_MODELS: readonly string[] = ['fable', 'claude-fable-5', 'opus', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'sonnet', 'claude-sonnet-5', 'claude-sonnet-4-6', 'haiku', 'claude-haiku-4-5']
+/** A Codex model as crew lists it: its slug, which runs it, and its name in the pane. */
+export type CodexEntry = { slug: string; label: string }
+
+/** The Codex models `codex debug models` listed when crew was written: what crew offers until it reads the list itself. */
+const KNOWN_CODEX: readonly CodexEntry[] = [
+  { slug: 'gpt-5.6-luna', label: '5.6 Luna' },
+  { slug: 'gpt-6-luna', label: '6 Luna' },
+  { slug: 'gpt-5.6-terra', label: '5.6 Terra' },
+  { slug: 'gpt-6.1-terra', label: '6.1 Terra' },
+  { slug: 'gpt-5.6-sol', label: '5.6 Sol' },
+  { slug: 'gpt-6-sol', label: '6 Sol' },
+  { slug: 'gpt-6.1-sol', label: '6.1 Sol' },
+  { slug: 'gpt-6-astra', label: '6 Astra' },
+]
+
+/**
+ * The models crew offers now: Claude's newest of each family as this Claude
+ * Code resolves its aliases, the full ids it resolved before, and Codex's own
+ * list. Set by `useCatalog` from what crew stored; each session starts it over.
+ */
+const catalog: { latest: Record<Model, string>; seen: readonly string[]; codex: readonly CodexEntry[] } = { latest: { ...KNOWN_LATEST }, seen: [], codex: KNOWN_CODEX }
+
+const CLAUDE_ID = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?$/
+const CODEX_SLUG = /^gpt-(\d+(?:\.\d+)?)-([a-z]+)$/
+
+/** A Claude model's family and generation, from its full id: `claude-fable-5-2` is Fable 5.2; a snapshot's date is dropped. */
+const claudeParts = (id: string): { family: string; version: [number, number] } | undefined => {
+  const m = CLAUDE_ID.exec(id.replace(/-\d{8}$/, ''))
+  return m === null ? undefined : { family: m[1] ?? '', version: [Number(m[2]), Number(m[3] ?? 0)] }
+}
+
+const newer = (a: [number, number], b: [number, number]): number => a[0] - b[0] || a[1] - b[1]
+
+/**
+ * Takes the model lists crew stored: what this Claude Code's aliases resolved
+ * to, the ids they resolved to before, and Codex's list. Each family's newest
+ * is the newest of these and what crew knew, so a list never goes back: not
+ * while a Claude Code just updated is still being asked, nor on an older one
+ * whose alias runs an older generation. Anything not in the shape of a Claude
+ * id or a Codex slug is left out.
+ */
+export const useCatalog = (given: { latest?: Readonly<Record<string, unknown>>; seen?: readonly unknown[]; codex?: readonly unknown[] } = {}): void => {
+  const seen = (given.seen ?? []).filter((id): id is string => typeof id === 'string' && claudeParts(id) !== undefined).slice(0, 40)
+  const latest = { ...KNOWN_LATEST }
+  for (const m of MODELS) {
+    const here = given.latest?.[m]
+    for (const id of [...(typeof here === 'string' ? [here] : []), ...seen].map(x => x.replace(/-\d{8}$/, ''))) {
+      const p = claudeParts(id)
+      const top = claudeParts(latest[m])
+      if (p?.family === m && (top === undefined || newer(p.version, top.version) > 0)) latest[m] = id
+    }
+  }
+  const codex = (given.codex ?? []).flatMap(e => {
+    const o = (typeof e === 'object' && e !== null ? e : {}) as Record<string, unknown>
+    return typeof o.slug === 'string' && CODEX_SLUG.test(o.slug) && typeof o.label === 'string' && o.label.length > 0 && o.label.length <= 40 ? [{ slug: o.slug, label: o.label }] : []
+  })
+  catalog.latest = latest
+  catalog.seen = seen
+  catalog.codex = codex.length > 0 ? codex : KNOWN_CODEX
+}
+
+/** A Claude model's name as the pane says it, from its full id: `Fable 5.2`. */
+const idLabel = (id: string): string | undefined => {
+  const p = claudeParts(id)
+  if (p === undefined) return undefined
+  return `${p.family.charAt(0).toUpperCase()}${p.family.slice(1)} ${p.version[0]}${p.version[1] === 0 && !/-\d+-0$/.test(id) ? '' : `.${p.version[1]}`}`
+}
+
+/** A family's older generations a role may run, newest first: the ones crew keeps, and any newest this Claude Code has since moved past. */
+const olderOf = (family: Model): string[] => {
+  if (family === 'opus') return []
+  const top = claudeParts(catalog.latest[family])?.version ?? [0, 0]
+  const ids = new Set([...catalog.seen, KNOWN_LATEST[family], ...KEPT_OLDER[family]].map(id => id.replace(/-\d{8}$/, '')))
+  return [...ids]
+    .flatMap(id => {
+      const p = claudeParts(id)
+      return p !== undefined && p.family === family && newer(p.version, top) < 0 ? [{ id, version: p.version }] : []
+    })
+    .sort((a, b) => newer(b.version, a.version))
+    .map(x => x.id)
+}
+
+/** The Claude models a role may be fixed on or start from, as the pane lists them: the strongest family first, its newest (by alias) then its older generations. */
+export const claudeFixedModels = (): readonly string[] => [...MODELS].reverse().flatMap(m => [m, ...olderOf(m)])
+
+/**
+ * Every Claude model crew takes by name: what the pane lists, and each
+ * family's newest by its full id. A full id stays the generation named: once
+ * a newer one comes, it is among the older ones, not moved up with the alias.
+ */
+export const claudeModels = (): readonly string[] => [...claudeFixedModels(), ...MODELS.map(m => catalog.latest[m])]
+
+/** Whether a Claude model is one crew takes: a family's alias, its newest by full id, or an older generation it keeps. */
+export const isClaudeModel = (model: string): boolean => claudeModels().includes(model)
+
+/**
+ * A Claude model the person set, as crew offers it now: one it still offers as
+ * it is; a generation it no longer offers (an older Opus, say) as its
+ * family's newest, so the family the person chose holds; anything else none.
+ */
+export const claudeKept = (model: string): string | undefined => {
+  // As the pane offers it: a family's newest by its full id is its alias there.
+  if (claudeFixedModels().includes(model)) return model
+  const family = /^claude-([a-z]+)-\d/.exec(model)?.[1]
+  return MODELS.find(m => m === family)
+}
 
 /** The efforts a Claude model takes: Haiku 4.5 none, the 4.6 generation all but xhigh, the rest all five. */
 export const claudeEfforts = (model: string): readonly Effort[] =>
@@ -66,11 +164,22 @@ export const fitEffort = (model: string, effort: string): Effort | undefined => 
   return under.at(-1) ?? takes[0]
 }
 
-/** The full id the agent is given for one of crew's names. */
-export const claudeId = (model: string): string => CLAUDE_IDS[model as Model] ?? model
+/** The full id the agent is given for one of crew's names: a family's alias runs the newest this Claude Code resolves it to. */
+export const claudeId = (model: string): string => (MODELS.includes(model as Model) ? catalog.latest[model as Model] : model)
 
 /** Where a Claude model stands on the ladder: an older generation where its family's newest does. */
-const ladderModel = (model: string): Model | undefined => (MODELS.includes(model as Model) ? (model as Model) : MODELS.find(m => model.includes(`-${m}-`)))
+const ladderModel = (model: string): Model | undefined => (MODELS.includes(model as Model) ? (model as Model) : MODELS.find(m => claudeParts(model)?.family === m))
+
+/** Of two Claude models, the stronger family's; of one family, the first. */
+const strongerClaude = (a: string, b: string): string => (MODELS.indexOf(ladderModel(b) ?? 'haiku') > MODELS.indexOf(ladderModel(a) ?? 'haiku') ? b : a)
+
+/** Whether a Claude model is weaker than another: a lower family, or an older generation of the same one (an alias stands at its family's newest). */
+const claudeBelow = (a: string, b: string): boolean => {
+  const fa = MODELS.indexOf(ladderModel(a) ?? 'haiku')
+  const fb = MODELS.indexOf(ladderModel(b) ?? 'haiku')
+  if (fa !== fb) return fa < fb
+  return newer(claudeParts(claudeId(a))?.version ?? [0, 0], claudeParts(claudeId(b))?.version ?? [0, 0]) < 0
+}
 
 /**
  * Each tier as the pane says it: how hard the work is, which is not how much
@@ -130,10 +239,10 @@ export type Tuning = { engine?: 'claude' | 'codex'; model?: string; effort?: Eff
 export const tunedRoute = (route: Route, tuning: Tuning | undefined): Route => {
   if (route.beyond === true) return route
   const claude = tuning?.engine !== 'codex'
-  const model = claude && MODELS.includes(tuning?.model as Model) ? (tuning?.model as Model) : undefined
+  const model = claude && tuning?.model !== undefined && isClaudeModel(tuning.model) ? tuning.model : undefined
   return {
     ...route,
-    ...(model === undefined ? {} : { model, label: MODEL_LABELS[model] }),
+    ...(model === undefined ? {} : { model, label: labelOf(model) }),
     ...(claude && tuning?.effort !== undefined ? { effort: tuning.effort } : {}),
     // A threshold the brain raised on its own is a least one: work the role's tier sizes higher keeps the tier's.
     ...(tuning?.limit === undefined ? {} : { limit: tuning.raise === true ? Math.max(route.limit, tuning.limit) : tuning.limit }),
@@ -147,11 +256,11 @@ export type Floors = { claude?: { model: string; effort: string }; codex?: { mod
 export const floorFor = (role: RoleId, engine: 'claude' | 'codex', floors: Floors = {}): { model: string; effort: string } => {
   if (engine === 'claude') {
     const own = floors.claude
-    return own !== undefined && MODELS.includes(own.model as Model) && EFFORTS.includes(own.effort as Effort) ? own : FLOORS[role]
+    return own !== undefined && isClaudeModel(own.model) && EFFORTS.includes(own.effort as Effort) ? own : FLOORS[role]
   }
   const own = floors.codex
   const choices = codexChoices(role)
-  return own !== undefined && choices.models.includes(own.model as CodexModel) && choices.efforts.includes(own.effort as Effort) ? own : CODEX_FLOORS[role]
+  return own !== undefined && choices.models.includes(own.model) && choices.efforts.includes(own.effort as Effort) ? own : codexFloor(role)
 }
 
 /** A model and effort as the pane says them: `Sonnet 5.5・high`, `6.1 Sol・xhigh`; a Claude model that takes no effort, by its name alone. */
@@ -162,8 +271,9 @@ export const pickSaid = (engine: 'claude' | 'codex', pick: { model: string; effo
 export const floorOf = (role: RoleId, tuning: Tuning, floors: Floors = {}): string | undefined => {
   const engine = tuning.engine ?? 'claude'
   const floor = floorFor(role, engine, floors)
-  const models: readonly string[] = engine === 'codex' ? CODEX_MODELS : MODELS
-  const low = (tuning.model !== undefined && models.indexOf(tuning.model) < models.indexOf(floor.model)) || (tuning.effort !== undefined && EFFORTS.indexOf(tuning.effort) < EFFORTS.indexOf(floor.effort as Effort))
+  // On Claude an older generation of the floor's family is under it too.
+  const under = (model: string): boolean => (engine === 'codex' ? codexRank(model) < codexRank(floor.model) : claudeBelow(model, floor.model))
+  const low = (tuning.model !== undefined && under(tuning.model)) || (tuning.effort !== undefined && EFFORTS.indexOf(tuning.effort) < EFFORTS.indexOf(floor.effort as Effort))
   return low ? pickSaid(engine, floor) : undefined
 }
 
@@ -171,13 +281,13 @@ export const floorOf = (role: RoleId, tuning: Tuning, floors: Floors = {}): stri
 export const labelOf = (model: string): string => {
   // An id the engine resolved may carry its snapshot's date: `claude-haiku-4-5-20251001`.
   const id = model.replace(/-\d{8}$/, '')
-  return MODEL_LABELS[id as Model] ?? OLDER_LABELS[id] ?? MODEL_LABELS[MODELS.find(m => CLAUDE_IDS[m] === id) as Model] ?? model
+  return idLabel(claudeId(id)) ?? model
 }
 
 /** The alias of a Claude model's family: the Agent tool takes no other `model`, so crew spawns by it and its hook names the full id. */
 export const claudeAlias = (model: string): Model => ladderModel(model) ?? 'sonnet'
 
-/** The Claude models and efforts a role's floor may be set to, weakest first. */
+/** The Claude families, weakest first: the ladder a role on auto climbs, each by its newest. */
 export const CLAUDE_MODELS: readonly Model[] = MODELS
 export const CLAUDE_EFFORTS: readonly Effort[] = EFFORTS
 
@@ -195,71 +305,84 @@ export const limitsByTier = (): string => TIERS.map(t => `${TIER_NAMES[t]} ${Mat
 export const routeFor = (role: RoleId, tier: Tier, options: { beyond?: boolean; floor?: { model: string; effort: string } } = {}): Route => {
   const base = options.beyond === true ? { model: 'fable' as const, effort: 'xhigh' as const, limit: 256_000 } : BY_TIER[tier]
   const own = options.floor
-  const floor = own !== undefined && MODELS.includes(own.model as Model) && EFFORTS.includes(own.effort as Effort) ? { model: own.model as Model, effort: own.effort as Effort } : FLOORS[role]
-  const model = higher(MODELS, base.model, floor.model)
+  const floor = own !== undefined && isClaudeModel(own.model) && EFFORTS.includes(own.effort as Effort) ? { model: own.model, effort: own.effort as Effort } : FLOORS[role]
+  // A floor on an older generation holds its family there: work that climbs to that family runs the generation the person picked.
+  const model = strongerClaude(floor.model, base.model)
   return {
     tier,
     model,
-    label: MODEL_LABELS[model],
+    label: labelOf(model),
     effort: higher(EFFORTS, base.effort, floor.effort),
     limit: base.limit,
     ...(options.beyond === true ? { beyond: true as const } : {}),
   }
 }
 
-/**
- * The Codex models crew routes to, weakest first: the newest of each family
- * `codex debug models` lists. An older generation (6 Sol, 5.6) is left out.
- */
-export const CODEX_MODELS = ['gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.1-sol', 'gpt-6-astra'] as const
-export type CodexModel = (typeof CODEX_MODELS)[number]
+/** Codex's families, weakest first: Luna, Terra, Sol, Astra. A family crew does not know stands with the weakest. */
+const CODEX_FAMILIES: readonly string[] = ['luna', 'terra', 'sol', 'astra']
+
+/** Where a Codex model stands, by family, then generation. */
+const codexKey = (slug: string): [number, number] => {
+  const m = CODEX_SLUG.exec(slug)
+  return m === null ? [-1, 0] : [Math.max(0, CODEX_FAMILIES.indexOf(m[2] ?? '')), Number(m[1])]
+}
+
+/** The Codex models crew offers, weakest first: every one `codex debug models` lists, older generations too. */
+export const codexModels = (): readonly string[] => [...catalog.codex].sort((a, b) => newer(codexKey(a.slug), codexKey(b.slug))).map(e => e.slug)
+
+/** A Codex model's place among the ones offered, weakest first; -1 for one not offered. */
+const codexRank = (slug: string): number => codexModels().indexOf(slug)
+
+/** Of two Codex models, the stronger: by family, then generation; of the same, the first. */
+const strongerCodex = (a: string, b: string): string => (newer(codexKey(b), codexKey(a)) > 0 ? b : a)
+
+/** The newest Codex model of a family offered, else the one crew knew. */
+const newestCodex = (family: string, known: string): string => {
+  const own = codexModels().filter(slug => CODEX_SLUG.exec(slug)?.[2] === family)
+  return own.at(-1) ?? known
+}
 
 /** The efforts a Codex role may run on: `ultra` hands parts of the work to Codex's own subagents, which crew does not run. */
 export const CODEX_EFFORTS: readonly Effort[] = EFFORTS
 
-const CODEX_LABELS: Record<CodexModel, string> = { 'gpt-6-luna': '6 Luna', 'gpt-6.1-terra': '6.1 Terra', 'gpt-6.1-sol': '6.1 Sol', 'gpt-6-astra': '6 Astra' }
-
 /** A Codex model's name as the pane says it: `6.1 Sol`; `short` drops the generation, for a table cell. */
 export const codexLabel = (model: string, short = false): string => {
-  const label = CODEX_LABELS[model as CodexModel] ?? model
+  const label = catalog.codex.find(e => e.slug === model)?.label ?? KNOWN_CODEX.find(e => e.slug === model)?.label ?? model
   return short ? label.replace(/^[\d.]+ /, '') : label
 }
 
-type CodexStep = { model: CodexModel; effort: Effort }
+type CodexStep = { model: string; effort: Effort }
 
-/** Codex by tier: Terra writes and reads screens fast, 6.1 Sol is the workhorse for code; an XL task that failed again goes to Astra. */
-const CODEX_BY_TIER: Record<Tier, CodexStep> = {
-  S: { model: 'gpt-6.1-terra', effort: 'medium' },
-  M: { model: 'gpt-6.1-terra', effort: 'high' },
-  L: { model: 'gpt-6.1-sol', effort: 'high' },
-  XL: { model: 'gpt-6.1-sol', effort: 'xhigh' },
+/** Codex by tier, each the newest of its family: Terra writes and reads screens fast, Sol is the workhorse for code; an XL task that failed again goes to Astra. */
+const codexByTier = (tier: Tier): CodexStep => {
+  const terra = newestCodex('terra', 'gpt-6.1-terra')
+  const sol = newestCodex('sol', 'gpt-6.1-sol')
+  return { S: { model: terra, effort: 'medium' as Effort }, M: { model: terra, effort: 'high' as Effort }, L: { model: sol, effort: 'high' as Effort }, XL: { model: sol, effort: 'xhigh' as Effort } }[tier]
 }
-const CODEX_BEYOND: CodexStep = { model: 'gpt-6-astra', effort: 'xhigh' }
+const codexBeyond = (): CodexStep => ({ model: newestCodex('astra', 'gpt-6-astra'), effort: 'xhigh' })
 
 /**
- * Where each role starts on Codex until the person sets it: PM, UI/UX and QA
+ * Where a role starts on Codex until the person sets it: PM, UI/UX and QA
  * write specs, designs and test cases, which Terra is made for; the tech lead
  * and the full-stack review and write code, at the least the person set.
  */
-export const CODEX_FLOORS: Record<RoleId, CodexStep> = {
-  pm: { model: 'gpt-6.1-terra', effort: 'high' },
-  uiux: { model: 'gpt-6.1-terra', effort: 'medium' },
-  qa: { model: 'gpt-6.1-terra', effort: 'medium' },
-  techlead: { model: 'gpt-6.1-sol', effort: 'xhigh' },
-  fullstack: { model: 'gpt-6.1-sol', effort: 'xhigh' },
+export const codexFloor = (role: RoleId): CodexStep => {
+  const terra = newestCodex('terra', 'gpt-6.1-terra')
+  const sol = newestCodex('sol', 'gpt-6.1-sol')
+  return { pm: { model: terra, effort: 'high' as Effort }, uiux: { model: terra, effort: 'medium' as Effort }, qa: { model: terra, effort: 'medium' as Effort }, techlead: { model: sol, effort: 'xhigh' as Effort }, fullstack: { model: sol, effort: 'xhigh' as Effort } }[role]
 }
 
-/** The least a role's floor may be set to on Codex: the person's rule for the tech lead and the full-stack. */
+/** The least a role's floor may be set to on Codex: the person's rule for the tech lead and the full-stack, 6.1 Sol at xhigh or stronger. */
 export const CODEX_MINIMUM: Partial<Record<RoleId, CodexStep>> = {
   techlead: { model: 'gpt-6.1-sol', effort: 'xhigh' },
   fullstack: { model: 'gpt-6.1-sol', effort: 'xhigh' },
 }
 
 /** The models and efforts a role's Codex floor may be set to: none under its minimum. */
-export const codexChoices = (role: RoleId): { models: readonly CodexModel[]; efforts: readonly Effort[] } => {
+export const codexChoices = (role: RoleId): { models: readonly string[]; efforts: readonly Effort[] } => {
   const least = CODEX_MINIMUM[role]
-  if (least === undefined) return { models: CODEX_MODELS, efforts: CODEX_EFFORTS }
-  return { models: CODEX_MODELS.slice(CODEX_MODELS.indexOf(least.model)), efforts: CODEX_EFFORTS.slice(CODEX_EFFORTS.indexOf(least.effort)) }
+  if (least === undefined) return { models: codexModels(), efforts: CODEX_EFFORTS }
+  return { models: codexModels().filter(slug => newer(codexKey(slug), codexKey(least.model)) >= 0), efforts: CODEX_EFFORTS.slice(CODEX_EFFORTS.indexOf(least.effort)) }
 }
 
 /**
@@ -267,16 +390,17 @@ export const codexChoices = (role: RoleId): { models: readonly CodexModel[]; eff
  * its floor. `beyond` is an XL task that failed again.
  */
 export const codexRouteFor = (floor: { model: string; effort: string }, tier: Tier, options: { beyond?: boolean } = {}): { tier: Tier; model: string; effort: Effort } => {
-  const base = options.beyond === true ? CODEX_BEYOND : CODEX_BY_TIER[tier]
-  const model = CODEX_MODELS.includes(floor.model as CodexModel) ? higher(CODEX_MODELS, base.model, floor.model as CodexModel) : base.model
+  const base = options.beyond === true ? codexBeyond() : codexByTier(tier)
+  const model = codexRank(floor.model) >= 0 ? strongerCodex(base.model, floor.model) : base.model
   const effort = EFFORTS.includes(floor.effort as Effort) ? higher(EFFORTS, base.effort, floor.effort as Effort) : base.effort
   return { tier, model, effort }
 }
 
 /**
  * The steps a role climbs on an engine, from easy work to the hardest that
- * failed again, said as `易–中 Terra・high · 難 Sol・high · 極難 xhigh · 再失敗 Astra・xhigh`:
- * tiers that run the same are said once, and a step on the model before it says its effort alone.
+ * failed again, said as `易–中 6.1 Terra・high · 難 6.1 Sol・high · 極難 xhigh · 再失敗 6 Astra・xhigh`
+ * (the generation said, as older ones are offered too): tiers that run the same are said once,
+ * and a step on the model before it says its effort alone.
  */
 export const ladderOf = (role: RoleId, engine: 'claude' | 'codex', floor?: { model: string; effort: string }): string => {
   const at = (tier: Tier, beyond: boolean): { model: string; effort: string } => {
@@ -284,8 +408,8 @@ export const ladderOf = (role: RoleId, engine: 'claude' | 'codex', floor?: { mod
       const r = routeFor(role, tier, { beyond, ...(floor === undefined ? {} : { floor }) })
       return { model: r.label, effort: r.effort }
     }
-    const r = codexRouteFor(floor ?? CODEX_FLOORS[role], tier, { beyond })
-    return { model: codexLabel(r.model, true), effort: r.effort }
+    const r = codexRouteFor(floor ?? codexFloor(role), tier, { beyond })
+    return { model: codexLabel(r.model), effort: r.effort }
   }
   const steps: { name: string; model: string; effort: string }[] = []
   let from: Tier = 'S'
@@ -315,19 +439,24 @@ export const autoPick = (role: RoleId, tier: Tier, floors: Floors, tuning: Tunin
   const engine = tuning?.engine ?? options.engine ?? 'claude'
   const beyond = options.beyond === true
   const floor = floorFor(role, engine, floors)
-  const models: readonly string[] = engine === 'codex' ? CODEX_MODELS : MODELS
   const routed = engine === 'codex' ? codexRouteFor(floor, tier, { beyond }) : routeFor(role, tier, { beyond, floor })
-  const held = (value: string | undefined, order: readonly string[], least: string, otherwise: string): string =>
-    beyond || value === undefined || !order.includes(value) ? otherwise : higher(order, value, least)
-  const model = held(tuning?.model, models, floor.model, routed.model)
-  const effort = held(tuning?.effort, EFFORTS, floor.effort, routed.effort)
-  return { engine, model, label: engine === 'codex' ? codexLabel(model) : MODEL_LABELS[model as Model], effort }
+  const offered = (model: string): boolean => (engine === 'codex' ? codexRank(model) >= 0 : isClaudeModel(model))
+  // The brain's model holds the role there, never below the floor; of one family, the brain's pick, unless it is an older generation than the floor's.
+  const model =
+    beyond || tuning?.model === undefined || !offered(tuning.model)
+      ? routed.model
+      : engine === 'codex'
+        ? strongerCodex(tuning.model, floor.model)
+        : claudeBelow(tuning.model, floor.model)
+          ? floor.model
+          : strongerClaude(tuning.model, floor.model)
+  const effort = beyond || tuning?.effort === undefined || !EFFORTS.includes(tuning.effort) ? routed.effort : higher(EFFORTS, tuning.effort, floor.effort as Effort)
+  return { engine, model, label: engine === 'codex' ? codexLabel(model) : labelOf(model), effort }
 }
 
 /** Whether a pick runs higher than another on the same engine: a stronger model, or the same model at a higher effort. A Claude model of an older generation stands where its family's newest does. */
 export const isClimb = (next: { engine: 'claude' | 'codex'; model: string; effort: string }, from: { model: string; effort: string }): boolean => {
-  const models: readonly string[] = next.engine === 'codex' ? CODEX_MODELS : MODELS
-  const at = (model: string): number => models.indexOf(next.engine === 'codex' ? model : (ladderModel(model) ?? model))
+  const at = (model: string): number => (next.engine === 'codex' ? codexRank(model) : MODELS.indexOf(ladderModel(model) ?? ('' as Model)))
   const a = at(next.model)
   const b = at(from.model)
   return a !== b ? a > b : EFFORTS.indexOf(next.effort as Effort) > EFFORTS.indexOf(from.effort as Effort)

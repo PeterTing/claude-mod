@@ -39,8 +39,15 @@ const press = async ($: Engine, key: string, tab?: string) => {
   await ui.unmount()
 }
 
-/** crew draws no line: the engine's own, which the test kit does not have, would be asked. */
-const noBand = ($: Engine) => expect(band($)).rejects.toThrow(/no implementation for ui\.render/)
+/** The engine's own line above the prompt under crew's hook: the test kit has none. */
+const engineBand = (on: Parameters<typeof world>[1]) =>
+  on('ui.render', { component: 'AbovePrompt' }, ($e: any, e: any) => {
+    const { Text } = $e.ui.resolve(e)
+    return <Text>ENGINE-LINE</Text>
+  })
+
+/** crew draws no line: the engine's own is drawn (registered with engineBand). */
+const noBand = async ($: Engine) => expect(await band($)).toBe('ENGINE-LINE')
 
 /** The person lets the brain lead, and the brain sends its draft to be reviewed. */
 const drafted = async ($: Engine, w: ReturnType<typeof world>) => {
@@ -81,25 +88,28 @@ describe('the person lets the brain lead a repo', () => {
     expect((await crew($, { action: 'lead', text: 'on' })).result).toMatch(/action 要是/)
     const byPlugin = await $.command.run({ ...command('lead on'), origin: { kind: 'plugin', name: 'other' } } as never)
     expect(byPlugin.text).toBe('大腦接手要使用者自己在右側面板的「設定」分頁打開或關掉。')
-    expect(w.store.get(SETTINGS)).toBeUndefined()
+    // Only what the test world set: nothing turned the takeover on.
+    expect(w.store.get(SETTINGS)).toEqual({ agents: 1 })
   })
 
   test('switches from the settings tab, both ways', async ($, on) => {
     const w = world($, on)
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/現在：不接手，你叫 crew 時它才做事/)
+    expect(await paneText($, 'settings')).toMatch(/大腦接手\n你叫 crew 時它才做事/)
     await press($, 'takeover-on', 'settings')
-    expect(await paneText($, 'settings')).toMatch(/現在：接手，這個 repo 每個 session 從第一句話起由大腦主導/)
+    expect(await paneText($, 'settings')).toMatch(/大腦接手\n大腦從第一句話起主導/)
     await press($, 'takeover-off', 'settings')
     expect(w.store.get(SETTINGS)).toMatchObject({ takeover: false })
-    const settings = await paneText($, 'settings')
-    expect(settings).toMatch(/現在：不接手，你叫 crew 時它才做事/)
-    expect(settings).toMatch(/只影響這個 repo。設定存在這台電腦，不進 git/)
+    expect(await paneText($, 'settings')).toMatch(/大腦接手\n你叫 crew 時它才做事/)
+    // Where the setting is kept: behind its 「?」.
+    await press($, 'help-takeover', 'settings')
+    expect(await paneText($, 'settings')).toMatch(/只影響這個 repo；設定存在這台電腦，不進 git/)
   })
 
   test('counts a store it cannot read as not leading', async ($, on) => {
     const w = world($, on)
     engineSections(on)
+    engineBand(on)
     w.store.set(SETTINGS, { takeover: true })
     await start($)
     w.broken.storeReads = 'settings:'
@@ -119,7 +129,9 @@ describe('the prompt of the main conversation', () => {
     await $.command.run(command('lead on'))
     const sections = await composed($)
     expect(sections.map(s => s.id)).toEqual(['intro', 'crew:brain'])
-    expect(sections.at(-1)).toEqual({ id: 'crew:brain', text: BRAIN_SECTION, scope: 'session' })
+    expect(sections.at(-1)).toMatchObject({ id: 'crew:brain', scope: 'session' })
+    // The brain's part, then which copy of crew runs here: the brain reads no other to say what crew does.
+    expect(sections.at(-1)?.text.startsWith(`${BRAIN_SECTION}\n\n這個 session 的 crew 從 `)).toBe(true)
     expect(BRAIN_SECTION).toMatch(/^# crew 大腦/)
     expect(BRAIN_SECTION).toMatch(/「## 背景」裡的內容不會被算成需求/)
   })
@@ -287,7 +299,7 @@ describe('the brain’s draft PRD', () => {
     expect((await crew($, { action: 'draft', path: 'docs/crew/v2-PRD.md' })).result).toMatch(/UI\/UX 正在工作，等它做完再送審/)
     await done($, 'a-uiux-1')
     await $.command.run(command('start docs/PRD.md'))
-    expect((await crew($, { action: 'draft', path: 'docs/crew/v2-PRD.md' })).result).toMatch(/crew 正在進行（splitting）/)
+    expect((await crew($, { action: 'draft', path: 'docs/crew/v2-PRD.md' })).result).toMatch(/crew 正在進行（規格）/)
   })
 
   test('hears each review, and tells the brain once both are in, with where each reply is', async ($, on) => {
@@ -303,7 +315,7 @@ describe('the brain’s draft PRD', () => {
     expect(told).toMatch(/PM 和 UI\/UX 都審完 PRD 草稿 docs\/crew\/v2-PRD\.md 了（PM：2 個缺口，ASK-01；UI\/UX：沒有缺口，ASK-02；原話用 thread_read 讀）/)
     expect(told).toMatch(/改好用 crew 工具 action=ready 請使用者確認/)
     expect(told.match(/都審完/g)).toHaveLength(1)
-    expect(await paneText($)).toMatch(/審完了，大腦會整理缺口，在主對話問你/)
+    expect(await paneText($)).toMatch(/審完了，大腦會整理缺口，放進「待你決定」問你/)
   })
 
   test('marks a reply not in the asked form, and has the brain read it first', async ($, on) => {
@@ -392,6 +404,75 @@ describe('the person’s yes to the draft', () => {
     await crew($, { action: 'ready' })
     expect((await crew($, { action: 'start', path: 'docs/crew/v2-PRD.md' })).result).toMatch(/crew 開始/)
     expect((w.store.get(STATE) as { draft?: unknown }).draft).toBeUndefined()
+  })
+
+  test('what the brain filled in itself is asked through crew, put on the draft, and the yes waits for the answers', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await reviewed($, w)
+    const asked = (await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 'q-1', question: '匯出 CSV 誰可以用？\n\nPRD 原本沒提到權限，我先寫成只有管理員。', options: ['只有管理員（建議）', '所有登入的人'], draft: true } as never)) as { result: string }
+    expect(asked.result).toMatch(/已交給使用者（Q-\d+）。這題放在 PRD 草稿最上面，使用者回答之前草稿不能開始/)
+    const id = /（(Q-\d+)）/.exec(asked.result)?.[1] ?? ''
+    await crew($, { action: 'ready' })
+    // The pane holds the yes until the question is answered.
+    expect(await paneText($)).toMatch(new RegExp(`先在「待你決定」回答確認之前要你拍板的 1 題（${id}）`))
+    const ui = await paneUi($)
+    expect((await ui.findAll({ type: 'Button' })).map(b => b.props.label)).not.toContain('確認，開始')
+    await ui.unmount()
+    // The decide page shows it with the draft.
+    const data = [...w.disk.entries()].find(([k]) => k.endsWith('/data.json'))?.[1]
+    expect(JSON.parse(data ?? '{}').questions).toEqual([expect.objectContaining({ id, from: '大腦', draft: true, state: 'open' })])
+    // A question the person asks back on the page is the brain's to answer there: crew takes no decision from it.
+    expect((await crew($, { action: 'decide', question: 'th-1', text: `crew 提問：${id}\n管理員是指誰？\n代碼 abc123` })).result).toMatch(/^沒有記下：這則是使用者問你的問題，不是決定/)
+    // Neither the brain nor the person starts it before then.
+    expect((await crew($, { action: 'start', path: 'docs/crew/v2-PRD.md' })).result).toMatch(new RegExp(`還不能開始：還有 1 題要使用者在確認之前拍板（${id}）`))
+    expect((await $.command.run(command('start docs/crew/v2-PRD.md'))).text).toMatch(/還不能開始：先回答確認之前要你拍板的 1 題/)
+    // Answered: the brain changes the draft, and the yes waits for the draft as the answer changed it.
+    expect((await crew($, { action: 'answer', question: id, text: '只有管理員' })).result).toMatch(/照這個回答改 PRD 草稿 docs\/crew\/v2-PRD\.md；大腦補的做法都回答完了/)
+    expect(await paneText($)).toMatch(new RegExp(`你要改：照你對 ${id} 的回答：只有管理員（大腦修改中`))
+    expect((await crew($, { action: 'start', path: 'docs/crew/v2-PRD.md' })).result).toMatch(/使用者要改的地方還沒改完/)
+    w.disk.set(DRAFT, `${DRAFT_TEXT}- 只有管理員可以匯出 CSV\n`)
+    await crew($, { action: 'ready', text: '照回答補了匯出權限' })
+    expect((await crew($, { action: 'start', path: 'docs/crew/v2-PRD.md' })).result).toMatch(/crew 開始/)
+  })
+
+  test('an answer the brain was not yet told of comes back with its ready, and the yes waits for the draft changed to match', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await reviewed($, w)
+    const askDraft = async (question: string) => /（(Q-\d+)）/.exec(((await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: `q-${question}`, question, options: ['A（建議）', 'B'], draft: true } as never)) as { result: string }).result)?.[1] ?? ''
+    const one = await askDraft('匯出 CSV 誰可以用？')
+    const two = await askDraft('重複的 email 留哪一筆？')
+    await crew($, { action: 'ready' })
+    // The person answers in the pane: the brain hears of it only with a later note.
+    await $.command.run(command(`answer ${one} 只有管理員`))
+    await $.command.run(command(`answer ${two} 留新的`))
+    // The note may have gone out while the brain was at work: its ready hands the answers back all the same.
+    await w.clock.advance(61_000)
+    const r = (await crew($, { action: 'ready', text: '改好了' })).result
+    expect(r).toMatch(/^還沒請使用者確認：你上次 ready 之後，使用者在面板回答了草稿的題目/)
+    expect(r).toMatch(new RegExp(`${one}（匯出 CSV 誰可以用？）：「只有管理員」[\\s\\S]*${two}（重複的 email 留哪一筆？）：「留新的」`))
+    expect((await crew($, { action: 'start', path: 'docs/crew/v2-PRD.md' })).result).toMatch(/使用者要改的地方還沒改完/)
+    // Told, the brain changes the draft; its ready now asks for the yes, and nothing waits to be told again.
+    w.disk.set(DRAFT, `${DRAFT_TEXT}- 只有管理員可以匯出\n- 重複時留新的\n`)
+    expect((await crew($, { action: 'ready' })).result).toMatch(/^面板已顯示「PRD 草稿等你確認」/)
+    expect((await crew($, { action: 'start', path: 'docs/crew/v2-PRD.md' })).result).toMatch(/crew 開始/)
+  })
+
+  test('the brain’s question not marked for the draft does not hold it, and a draft renamed away from is not started past its questions', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await reviewed($, w)
+    await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 'q-x', question: '要不要順便改 README 的錯字？' } as never)
+    const held = (await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 'q-y', question: '匯出 CSV 誰可以用？', draft: true } as never)) as { result: string }
+    const id = /（(Q-\d+)）/.exec(held.result)?.[1] ?? ''
+    await crew($, { action: 'ready' })
+    const data = [...w.disk.entries()].find(([k]) => k.endsWith('/data.json'))?.[1]
+    expect(JSON.parse(data ?? '{}').questions.filter((q: { draft?: boolean }) => q.draft === true).map((q: { id: string }) => q.id)).toEqual([id])
+    // The brain sends the draft again under another name: the first one's question still holds the first.
+    w.disk.set(`${ROOT}/docs/crew/v3-PRD.md`, DRAFT_TEXT)
+    await crew($, { action: 'draft', path: 'docs/crew/v3-PRD.md' })
+    expect((await crew($, { action: 'start', path: 'docs/crew/v2-PRD.md' })).result).toMatch(new RegExp(`還不能開始：還有 1 題要使用者在確認之前拍板（${id}）`))
   })
 
   test('a reset lets the draft go', async ($, on) => {
@@ -490,6 +571,7 @@ describe('the brain’s draft across a restart and over an earlier board', () =>
 
   test('shows no line above the prompt with no PRD and the brain not leading', async ($, on) => {
     world($, on)
+    engineBand(on)
     await start($)
     await noBand($)
   })
@@ -603,7 +685,7 @@ describe('the hardening of the takeover', () => {
     w.store.set(STATE, { prdPath: 'docs/PRD.md', flow: { stage: 'approving', round: 0, retries: 0 }, questions: [], lead: 'brain' })
     await start($)
     w.disk.set(DRAFT, DRAFT_TEXT)
-    expect((await crew($, { action: 'draft', path: 'docs/crew/v2-PRD.md' })).result).toBe('crew 正在進行（approving），等這一輪完成再送審新的草稿。')
+    expect((await crew($, { action: 'draft', path: 'docs/crew/v2-PRD.md' })).result).toBe('crew 正在進行（設計），等這一輪完成再送審新的草稿。')
   })
 
   test('ready reads the draft again: its title and count as they are now, and says when it cannot', async ($, on) => {
@@ -655,7 +737,7 @@ describe('the hardening of the takeover', () => {
     await $.command.run(command('lead on'))
     let ui = await paneUi($)
     let text = await textOf(ui)
-    expect(text).not.toMatch(/crew 已載入，還沒有開始的 PRD/)
+    expect(text).not.toMatch(/還沒有開始的 PRD/)
     expect(text).toMatch(/已經有寫好的 PRD，也可以直接選：/)
     const buttons = await ui.findAll({ type: 'Button' })
     expect(buttons.find(b => b.key === 'start')?.props.variant).toBe('secondary')
@@ -665,8 +747,8 @@ describe('the hardening of the takeover', () => {
     await crew($, { action: 'draft', path: 'docs/crew/v2-PRD.md' })
     ui = await paneUi($)
     text = await textOf(ui)
-    expect(text).toMatch(/審完後，大腦會整理缺口，在主對話問你。/)
-    expect(text).not.toMatch(/已經有寫好的 PRD|或輸入路徑/)
+    expect(text).toMatch(/審完後，大腦會整理缺口，放進「待你決定」問你。/)
+    expect(text).not.toMatch(/已經有寫好的 PRD|輸入其他路徑/)
     expect((await ui.findAll({ type: 'Button' })).some(b => b.key === 'start')).toBe(false)
     await ui.unmount()
   })
@@ -735,7 +817,8 @@ describe('the hardening of the takeover', () => {
     await $.command.run(command('demo empty'))
     await press($, 'takeover-on')
     expect(w.toasts.at(-1)).toMatch(/^設計稿：實際會讓大腦接手這個 repo/)
-    expect(w.store.get(SETTINGS)).toBeUndefined()
+    // Only what the test world set: nothing turned the takeover on.
+    expect(w.store.get(SETTINGS)).toEqual({ agents: 1 })
   })
 })
 

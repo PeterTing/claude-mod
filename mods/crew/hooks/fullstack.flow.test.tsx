@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
 import { taskMark } from './git'
-import { approve, build, command, designed, done, paneText, PLAN, resumed, ROOT, SPLIT, start, tested, world, write } from './world'
+import { accepted, approve, build, command, designed, done, paneText, PLAN, resumed, ROOT, SPLIT, start, tested, world, write } from './world'
 
 /** The full-stack builds the tasks one at a time in crew's own worktree; a commit, not its word, says a task is built. */
 
@@ -74,19 +74,195 @@ describe('the full-stack', () => {
     await approve($, 'TASK-002')
     // crew runs the person's test command; every test case passes.
     await tested()
+    // Built and tested: QA hands each feature over and the person passes it.
+    await accepted($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
-    expect(w.toasts.at(-1)).toMatch(/G5 2\/2[\s\S]*G6/)
+    // The pass is said after the finish.
+    expect(w.toasts.find(t => /crew 完成/.test(t))).toMatch(/G5 2\/2[\s\S]*G6/)
   })
 
-  test('has the person decide when a task twice ends with no commit', async ($, on) => {
+  test('has the tech lead find why a task twice ends with no commit, then the person decide, with both their words', async ($, on) => {
     const w = world($, on)
     await start($)
     await planned($)
     await done($, 'a-fullstack-5', '卡住了')
-    await done($, 'a-fullstack-5', '還是卡住')
-    expect((await $.command.run(command('status'))).text).toMatch(/escalated[\s\S]*待你決定 1/)
-    expect((await $.command.run(command('answer Q-03 先跳過金流，用假資料'))).text).toMatch(/轉給 全端|轉給全端/)
+    await done($, 'a-fullstack-5', '還是卡住，金流的金鑰沒有')
+    // The tech lead looks first, told what the builder said: the person is not asked yet.
+    expect(w.sent.at(-1)?.to).toBe('a-techlead-4')
+    expect(w.sent.at(-1)?.text).toMatch(/「還是卡住，金流的金鑰沒有」/)
+    expect((await $.command.run(command('status'))).text).toMatch(/building[\s\S]*待你決定 0[\s\S]*TASK-001（Tech lead 正在查它為什麼一直做不完）/)
+    await done($, 'a-techlead-4', '測試環境沒有金鑰，先用假的金流')
+    // What the tech lead found goes to the builder.
     expect(w.sent.at(-1)?.to).toBe('a-fullstack-5')
+    expect(w.sent.at(-1)?.text).toMatch(/先用假的金流/)
+    await done($, 'a-fullstack-5', '假的金流也接不上')
+    // Then the person, with what both said; only TASK-001 waits, and the builder goes on with TASK-002 meanwhile.
+    const status = (await $.command.run(command('status'))).text
+    expect(status).toMatch(/building[\s\S]*待你決定 1/)
+    expect(status).not.toMatch(/escalated/)
+    expect(status).toMatch(/TASK-001（等你回答 Q-03/)
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-fullstack-5', text: expect.stringMatching(/請實作 TASK-002/) })
+    expect((await $.command.run(command('answer Q-03 先跳過金流，用假資料'))).text).toMatch(/交給 ?全端：TASK-001 會接著做，現在同時最多 1 個 agent（Tech lead 的 review 算在內），都在工作，其他任務照常進行/)
+    // Once TASK-002 is done, the builder takes TASK-001 on with the person's answer.
+    w.commit('TASK-002: 取消流程')
+    await done($, 'a-fullstack-5')
+    await approve($, 'TASK-002')
+    const back = w.sent.filter(m => m.to === 'a-fullstack-5').at(-1)
+    expect(back?.text).toMatch(/TASK-001[\s\S]*先跳過金流，用假資料/)
+  })
+
+  test('sets aside what a task left half done in crew’s worktree on a ref of crew’s own while the tech lead looks, and has the builder put it back first', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.git.dirty = ' M src/plan.ts\n?? src/plan.test.ts\n'
+    await done($, 'a-fullstack-5', '卡住了')
+    await done($, 'a-fullstack-5', '還是卡住，資料表還沒有')
+    for (let i = 0; i < 5; i += 1) await tested()
+    // On crew's own ref, not the stash the person's checkout shares; the worktree is clean again.
+    const ref = [...w.git.refs.keys()].find(k => k.startsWith('refs/crew/shelf/TASK-001/'))
+    expect(ref).toBeDefined()
+    const sha = w.git.refs.get(ref ?? '') ?? ''
+    expect(w.git.stashed.get(sha)).toMatch(/src\/plan\.ts/)
+    expect(w.git.commands.some(c => c.includes('stash') && !c.includes('create'))).toBe(false)
+    expect(w.git.dirty).toBe('')
+    // The tech lead is told where the work is, and reads what it holds in a file crew wrote (by its full path), as it runs no git.
+    const patch = `${ROOT}/.crew/runs/shelf-TASK-001-${sha.slice(0, 12)}.patch`
+    const tl = w.sent.filter(m => m.to === 'a-techlead-4').at(-1)
+    expect(tl?.text).toContain(`crew 已經收在 ${ref}`)
+    expect(tl?.text).toContain(`修改的內容（diff）在 ${patch}，請用 Read 看`)
+    expect(w.disk.get(patch)).toMatch(/src\/plan\.ts/)
+    // Once the flow heard, crew keeps no note of it to find again.
+    expect([...w.store.keys()].some(k => k.startsWith('shelfUnheard:'))).toBe(false)
+    // crew puts the work back itself as the builder takes the task up again: the builder hears so first, then the tech lead's words.
+    await done($, 'a-techlead-4', '先用記憶體裡的假資料表')
+    // crew puts the work back in crew's worktree's own turn, then hands the builder the task.
+    for (let i = 0; i < 5; i += 1) await tested()
+    const back = w.sent.filter(m => m.to === 'a-fullstack-5').at(-1)
+    expect(back?.text).toMatch(new RegExp(`^crew 已經把 TASK-001 上一輪改到一半、還沒 commit 的修改放回工作目錄了（原本收在 ${ref}[\\s\\S]*先用記憶體裡的假資料表`))
+    expect(back?.text).not.toMatch(/git stash apply/)
+    expect(w.git.applied).toEqual([sha])
+    expect(w.git.dirty).toMatch(/src\/plan\.ts/)
+  })
+
+  test('puts set-aside work back only once the person’s own run in crew’s worktree is over, then gives the builder the task', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.git.dirty = ' M src/plan.ts\n'
+    await done($, 'a-fullstack-5', '卡住了')
+    await done($, 'a-fullstack-5', '還是卡住，資料表還沒有')
+    for (let i = 0; i < 5; i += 1) await tested()
+    const ref = [...w.git.refs.keys()].find(k => k.startsWith('refs/crew/shelf/TASK-001/')) ?? ''
+    const sha = w.git.refs.get(ref) ?? ''
+    expect(sha).not.toBe('')
+    // The person asks the builder something meanwhile: its run is in crew's worktree.
+    await $.command.run(command('ask fullstack 用了什麼框架？'))
+    const asked = w.sent.filter(m => m.to === 'a-fullstack-5').length
+    await done($, 'a-techlead-4', '先用記憶體裡的假資料表')
+    for (let i = 0; i < 5; i += 1) await tested()
+    // Nothing goes back under the person's run, and the builder is not handed the task yet.
+    expect(w.git.applied).toEqual([])
+    expect(w.sent.filter(m => m.to === 'a-fullstack-5').length).toBe(asked)
+    // Its run over, crew puts the work back, then hands the builder the task with the tech lead's words: no stopped flow is said meanwhile.
+    await done($, 'a-fullstack-5', '用 React')
+    for (let i = 0; i < 5; i += 1) await tested()
+    expect(w.toasts.some(t => /流程停住了/.test(t))).toBe(false)
+    expect(w.git.applied).toEqual([sha])
+    const back = w.sent.filter(m => m.to === 'a-fullstack-5').at(-1)
+    expect(back?.text).toMatch(new RegExp(`^crew 已經把 TASK-001 上一輪改到一半、還沒 commit 的修改放回工作目錄了（原本收在 ${ref}[\\s\\S]*先用記憶體裡的假資料表`))
+  })
+
+  test('puts the work back beside what the task left that crew could not set aside: that is the task’s own, not someone else’s', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    // .crew/.gitignore lost its shelved/ rule after crew checked it (the person edited it): what the task's .gitignore hid stays put.
+    const gi = `${ROOT}/.crew/.gitignore`
+    w.disk.set(gi, (w.disk.get(gi) ?? '').split('\n').filter(l => l !== 'shelved/').join('\n'))
+    w.git.dirty = ' M src/plan.ts\n'
+    w.git.unhidden = '?? .env.local\n'
+    await done($, 'a-fullstack-5', '卡住了')
+    await done($, 'a-fullstack-5', '還是卡住，資料表還沒有')
+    for (let i = 0; i < 5; i += 1) await tested()
+    const ref = [...w.git.refs.keys()].find(k => k.startsWith('refs/crew/shelf/TASK-001/')) ?? ''
+    const sha = w.git.refs.get(ref) ?? ''
+    expect(sha).not.toBe('')
+    expect(w.git.dirty).toBe('?? .env.local\n')
+    expect(w.toasts.some(t => /沒有忽略 shelved\//.test(t))).toBe(true)
+    await done($, 'a-techlead-4', '先用記憶體裡的假資料表')
+    for (let i = 0; i < 5; i += 1) await tested()
+    // The task's own leftover is no reason to refuse: crew puts the rest back beside it.
+    expect(w.git.applied).toEqual([sha])
+    const back = w.sent.filter(m => m.to === 'a-fullstack-5').at(-1)
+    expect(back?.text).toMatch(new RegExp(`^crew 已經把 TASK-001 上一輪改到一半、還沒 commit 的修改放回工作目錄了（原本收在 ${ref}[\\s\\S]*先用記憶體裡的假資料表`))
+    expect(back?.text).not.toMatch(/別的沒 commit 的修改/)
+  })
+
+  test('tells the builder to put the work back itself, and how, when crew cannot; a conflict is the builder’s to resolve', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    w.git.dirty = ' M src/plan.ts\n'
+    await done($, 'a-fullstack-5', '卡住了')
+    await done($, 'a-fullstack-5', '還是卡住')
+    for (let i = 0; i < 5; i += 1) await tested()
+    const ref = [...w.git.refs.keys()].find(k => k.startsWith('refs/crew/shelf/TASK-001/'))
+    const sha = w.git.refs.get(ref ?? '') ?? ''
+    w.git.applyFails.set(sha, 'error: Your local changes to the following files would be overwritten by merge: src/plan.ts')
+    await done($, 'a-techlead-4', '先放回來')
+    // crew puts the work back in crew's worktree's own turn, then hands the builder the task.
+    for (let i = 0; i < 5; i += 1) await tested()
+    const back = w.sent.filter(m => m.to === 'a-fullstack-5').at(-1)
+    expect(back?.text).toMatch(new RegExp(`^crew 沒辦法自己把 TASK-001 上一輪改到一半的修改放回工作目錄（git stash apply 沒有成功：error: Your local changes[\\s\\S]*git stash apply ${sha}`))
+    // Not back: the flow keeps it, to be put back by the next run that left neither it nor a commit.
+    expect(w.git.applied).toEqual([])
+  })
+
+  test('moves what the task’s own .gitignore hid out of git’s way, so the worktree is clean, puts it back with the work, and leaves the person’s prep alone', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await planned($)
+    // The person's prep left a file there, its name quoted by git (a space in it): no one's work, it stays where it is.
+    const dir = [...w.git.worktrees.keys()].find(d => d !== ROOT) ?? ''
+    expect(dir).not.toBe('')
+    w.store.set(`setupRuns:${ROOT}`, { left: { [dir]: ['"local env.txt"'] } })
+    // The task changed .gitignore: put back, it no longer ignores the build output and the local secrets.
+    w.git.dirty = ' M .gitignore\n M src/plan.ts\n?? "local env.txt"\n'
+    w.git.unhidden = '?? dist/\n?? .env\n'
+    await done($, 'a-fullstack-5', '卡住了')
+    await done($, 'a-fullstack-5', '還是卡住')
+    for (let i = 0; i < 5; i += 1) await tested()
+    const refs = [...w.git.refs.keys()].filter(k => k.startsWith('refs/crew/shelf/TASK-001/'))
+    expect(refs.length).toBe(1)
+    const ref = refs[0] ?? ''
+    const sha = w.git.refs.get(ref) ?? ''
+    const stashed = w.git.stashed.get(sha) ?? ''
+    expect(stashed).toMatch(/\.gitignore[\s\S]*src\/plan\.ts/)
+    expect(stashed).not.toMatch(/local env/)
+    expect(w.git.commands.some(c => c.includes(':(exclude,literal)local env.txt'))).toBe(true)
+    // What .gitignore hid is moved as it is into crew's own folder, never into git: one git add only, and no stash holds .env.
+    const store = `${ROOT}/.crew/shelved/TASK-001-${sha.slice(0, 12)}`
+    expect([...w.git.movedOut.entries()]).toEqual([
+      [`${store}/dist`, `${dir}/dist`],
+      [`${store}/.env`, `${dir}/.env`],
+    ])
+    expect(w.git.commands.filter(c => c.includes('add') && c.includes('-A')).length).toBe(1)
+    expect([...w.git.stashed.values()].some(v => v.includes('.env'))).toBe(false)
+    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toMatch(/^shelved\/$/m)
+    // Only the prep's file stays: the next task finds the worktree clean.
+    expect(w.git.dirty).toBe('?? "local env.txt"\n')
+    const tl = w.sent.filter(m => m.to === 'a-techlead-4').at(-1)
+    expect(tl?.text).toContain(`被它的 .gitignore 忽略的檔案（dist、.env），crew 沒有收進 git，而是原樣搬到 ${store}`)
+    // crew puts both back as the builder takes the task up again: the work first, then the files, where it moved them from.
+    await done($, 'a-techlead-4', '先放回來再做')
+    // crew puts the work back in crew's worktree's own turn, then hands the builder the task.
+    for (let i = 0; i < 5; i += 1) await tested()
+    const back = w.sent.filter(m => m.to === 'a-fullstack-5').at(-1)
+    expect(back?.text).toMatch(/^crew 已經把 TASK-001 上一輪改到一半、還沒 commit 的修改放回工作目錄了（[^）]*被 \.gitignore 忽略的檔案也搬回來了）/)
+    expect(w.git.applied).toEqual([sha])
+    expect(w.git.movedBack).toEqual([`${dir}/dist`, `${dir}/.env`])
+    expect([...w.store.keys()].some(k => k.startsWith('shelfUnheard:'))).toBe(false)
   })
 
   test('counts a task as built from its commit, not from what the full-stack says', async ($, on) => {
@@ -103,7 +279,7 @@ describe('the full-stack', () => {
     w.git.repo = false
     await start($)
     await planned($)
-    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:uiux', 'crew:techlead'])
+    expect(w.spawned.map(s => s.subagentType).filter(t => t !== 'crew:finder' && t !== 'crew:checker')).toEqual(['crew:pm', 'crew:qa', 'crew:uiux', 'crew:techlead'])
     expect(w.toasts.some(t => /全端沒有開始：這個資料夾不是 git repo/.test(t))).toBe(true)
   })
 
@@ -132,7 +308,7 @@ describe('the full-stack', () => {
     // Nothing goes on before the person says so in the pane.
     expect(w.spawned).toEqual([])
     await resumed($)
-    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:fullstack'])
+    expect(w.spawned.map(s => s.subagentType).filter(t => t !== 'crew:finder' && t !== 'crew:checker')).toEqual(['crew:fullstack'])
     expect(w.spawned[0]?.prompt).toMatch(/重開過[\s\S]*TASK-002/)
   })
 
@@ -184,6 +360,7 @@ describe('the full-stack', () => {
     await start($)
     await planned($)
     await build($)
+    await accepted($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
     // The person merges crew/prd and deletes it: its commits are now on HEAD only.
     w.git.branches.set('HEAD', [...(w.git.branches.get('crew/prd') ?? []), ...(w.git.branches.get('HEAD') ?? [])])
@@ -212,7 +389,7 @@ describe('the full-stack', () => {
     await start($)
     await $.command.run(command('ask pm 月繳價格多少？'))
     await done($, 'a-pm-1', '一百元')
-    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm'])
+    expect(w.spawned.map(s => s.subagentType).filter(t => t !== 'crew:finder' && t !== 'crew:checker')).toEqual(['crew:pm'])
     expect(w.git.commands.some(c => c.includes('worktree'))).toBe(false)
   })
 
@@ -356,12 +533,22 @@ describe('the full-stack', () => {
     await write($, 'a-techlead-4', PLAN.map(t => ({ ...t, size: 'XL' })))
     await done($, 'a-techlead-4')
     expect(w.spawned.at(-1)).toMatchObject({ subagentType: 'crew:fullstack', model: 'opus' })
+    // The tech lead says which files each task changes: the two are built side by side.
+    await write($, 'a-techlead-4', [{ op: 'set_task', id: 'TASK-001', touches: ['src/plan'] }, { op: 'set_task', id: 'TASK-002', touches: ['src/cancel'] }])
+    await done($, 'a-techlead-4')
     await done($, 'a-fullstack-5', '卡住了')
     await done($, 'a-fullstack-5', '還是卡住')
+    // The tech lead looks at why TASK-001 is not getting done.
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4', text: expect.stringMatching(/TASK-001[\s\S]*2 輪都沒有交出工作/) })
+    await done($, 'a-techlead-4', '先用假資料試')
+    expect(w.sent.at(-1)).toMatchObject({ to: 'a-fullstack-5', text: expect.stringMatching(/先用假資料試/) })
+    await done($, 'a-fullstack-5', '還是不行')
+    const builders = w.spawned.filter(s => s.subagentType === 'crew:fullstack').length
     await $.command.run(command('answer Q-03 先跳過金流，用假資料'))
     // The answer wakes the same Opus agent: another model would have started the task afresh.
     expect(w.sent.at(-1)?.to).toBe('a-fullstack-5')
-    expect(w.spawned.filter(s => s.subagentType === 'crew:fullstack')).toHaveLength(1)
+    expect(w.sent.at(-1)?.text).toMatch(/先跳過金流，用假資料/)
+    expect(w.spawned.filter(s => s.subagentType === 'crew:fullstack')).toHaveLength(builders)
   })
 
   test('takes the checkout as it was when the full-stack’s run began, not when work reached it mid-run', async ($, on) => {
@@ -405,6 +592,8 @@ describe('the full-stack', () => {
       ['TASK-001', 1],
       ['TASK-002', 1],
     ])
+    // Built and tested: QA hands each feature over and the person passes it.
+    await accepted($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
   })
 
@@ -423,7 +612,7 @@ describe('the full-stack', () => {
     w.git.branches.set('HEAD', [])
     await start($)
     await planned($)
-    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:uiux', 'crew:techlead'])
+    expect(w.spawned.map(s => s.subagentType).filter(t => t !== 'crew:finder' && t !== 'crew:checker')).toEqual(['crew:pm', 'crew:qa', 'crew:uiux', 'crew:techlead'])
     expect(w.toasts.some(t => /全端沒有開始：這個 repo 還沒有 commit/.test(t))).toBe(true)
   })
 

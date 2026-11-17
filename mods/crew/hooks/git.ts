@@ -5,8 +5,8 @@
  * the full-stack says about its work is not. Pure.
  */
 
-import type { Task, TaskReview, TestResult, Tracker } from './board'
-import type { Outcome } from './runs'
+import type { NoneMark, Task, TaskReview, TestResult, Tracker } from './board'
+import type { DirHint, NoResult, Outcome, PartSum, SkipSet, Stopped } from './runs'
 import { testMark } from './runs'
 import { tasksOf } from './board'
 import { fingerprint } from './prd'
@@ -131,12 +131,66 @@ export const reviewsOf = (board: Tracker, reviewed: Reviewed, commits: ReadonlyM
 /** The board with each task marked with crew's review of it; null when no mark changes. */
 export const withReviews = (board: Tracker, reviews: ReadonlyMap<string, TaskReview>): Tracker | null => markTasks(board, 'crew_review', reviews)
 
+/** The board with each task built on its own branch marked with its newest commit while crew's branch does not hold it; null when no mark changes. */
+export const withUnmerged = (board: Tracker, unmerged: ReadonlyMap<string, string>): Tracker | null => markTasks(board, 'crew_unmerged', unmerged)
+
 /**
  * crew's latest run of the person's test command: the commit of crew's branch
  * it ran on, the run (its log's name), and each test case's result tied to the
  * case as it stood (testMark).
  */
-export type Ran = { sha: string; at: number; exit: number; run: string; results: Record<string, { result: Outcome; mark: string }> }
+export type Ran = {
+  sha: string
+  at: number
+  exit: number
+  run: string
+  /** The worktree it ran in, as it was made then: crew drops it when it makes that worktree again. */
+  dir?: string
+  /** For each command crew found that it could not run, the commit where that command last ran to its end in the same worktree. */
+  through?: Record<string, string>
+  /** `by`: the place (0 the first) of the command a pass came from. */
+  results: Record<string, { result: Outcome; mark: string; by?: number }>
+  /** Each of the person's commands the run ran, in order: as shown, its exit code, how long it took, the runner's totals. */
+  parts?: PartSum[]
+  /** The commands crew found that did not run: could not start, or their runner is not installed here. */
+  stopped?: Stopped[]
+  /** For those, what each had in the run before (its part, the test cases it passed): only to compare the next run with, never this run's results. */
+  carried?: { parts: PartSum[]; results: Record<string, { result: Outcome; mark: string; by?: number }> }
+  /** The run went to its end: every command printed totals, and none may have stopped short. */
+  counted?: boolean
+  /** Why each test case with no result has none, the folders with tests no command ran, and what each command skipped. */
+  none?: Record<string, NoResult>
+  dirs?: Record<string, DirHint>
+  skips?: SkipSet[]
+}
+
+/** Test case id → why crew's latest run gave it no result, for each case of the board the run kept a reason for. */
+export const nonesOf = (board: Tracker, ran: Ran | undefined): Map<string, NoneMark> => {
+  const out = new Map<string, NoneMark>()
+  if (ran?.none === undefined) return out
+  for (const tc of board.prd_items.flatMap(item => item.test_cases)) {
+    const n = ran.none[tc.id]
+    if (n === undefined || ran.results[tc.id] !== undefined) continue
+    out.set(tc.id, { why: n.why, run: ran.run, ...(n.dir === undefined ? {} : { dir: n.dir }), ...(n.cause === undefined ? {} : { cause: n.cause }) })
+  }
+  return out
+}
+
+/** The board with each test case marked with why crew's latest run gave it no result; null when none changes. The status is withResults' to set. */
+export const withNones = (board: Tracker, nones: ReadonlyMap<string, NoneMark>): Tracker | null => {
+  let changed = false
+  const items = board.prd_items.map(item => {
+    const cases = item.test_cases.map(tc => {
+      const now = nones.get(tc.id)
+      if (JSON.stringify(tc.crew_none ?? null) === JSON.stringify(now ?? null)) return tc
+      changed = true
+      const { crew_none: _, ...rest } = tc
+      return now === undefined ? rest : { ...rest, crew_none: now }
+    })
+    return { ...item, test_cases: cases }
+  })
+  return changed ? { ...board, prd_items: items } : null
+}
 
 /** Test case id → crew's result for that very case; out of date once crew's branch has moved past the run's commit. */
 export const resultsMarkOf = (board: Tracker, ran: Ran | undefined, tip: string | undefined): Map<string, TestResult> => {
@@ -146,7 +200,8 @@ export const resultsMarkOf = (board: Tracker, ran: Ran | undefined, tip: string 
   for (const tc of board.prd_items.flatMap(item => item.test_cases)) {
     const r = ran.results[tc.id]
     if (r === undefined || r.mark !== testMark(tc)) continue
-    out.set(tc.id, { result: r.result, sha: ran.sha, run: ran.run, ...(stale ? { stale: true as const } : {}) })
+    const by = r.result === 'passed' && r.by !== undefined ? ran.parts?.[r.by]?.cmd : undefined
+    out.set(tc.id, { result: r.result, sha: ran.sha, run: ran.run, ...(stale ? { stale: true as const } : {}), ...(by === undefined ? {} : { by: by.slice(0, 80) }) })
   }
   return out
 }

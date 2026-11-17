@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { applyOps, newTracker, tasksOf } from './board'
 import type { Op, Tracker } from './board'
-import { branchOf, commitsByTask, commitsOf, marksOf, recordSeen, resultsMarkOf, reviewsOf, SUBJECT, taskMark, withCommits, withResults, withReviews, workdirOf } from './git'
+import { branchOf, commitsByTask, commitsOf, marksOf, nonesOf, recordSeen, resultsMarkOf, reviewsOf, SUBJECT, taskMark, withCommits, withNones, withResults, withReviews, workdirOf } from './git'
 import { testMark } from './runs'
 
 const ctx = (by: string) => ({ by, today: '2026-10-16', prefixes: { feature: 'PRD-', testCase: 'TC-' } })
@@ -150,5 +150,20 @@ describe('crew’s record of its latest test run', () => {
     const gone = withResults(fresh, new Map())!
     expect(gone.prd_items[0]!.test_cases[0]).toMatchObject({ automated_status: 'not_run' })
     expect(gone.prd_items[0]!.test_cases[0]!.crew_result).toBeUndefined()
+  })
+
+  test('marks each test case the run gave no result with why, and takes the mark off once it has one or no reason', () => {
+    const board = tested()
+    const ran = { sha: 'aaaaaaa1', at: 1, exit: 0, run: '20261020-120000', results: { 'TC-002': { result: 'passed' as const, mark: 'x' } }, none: { 'TC-001': { why: 'unreached' as const, dir: 'backend' }, 'TC-002': { why: 'missing' as const } } }
+    // TC-002 has a result in that run: no reason goes with it.
+    expect(Object.fromEntries(nonesOf(board, ran))).toEqual({ 'TC-001': { why: 'unreached', dir: 'backend', run: '20261020-120000' } })
+    expect(nonesOf(board, undefined).size).toBe(0)
+    const marked = withNones(board, nonesOf(board, ran))!
+    expect(marked.prd_items[0]!.test_cases.map(c => c.crew_none)).toEqual([{ why: 'unreached', dir: 'backend', run: '20261020-120000' }, undefined])
+    // The status is the results' to set.
+    expect(marked.prd_items[0]!.test_cases.map(c => c.automated_status)).toEqual(board.prd_items[0]!.test_cases.map(c => c.automated_status))
+    expect(withNones(marked, nonesOf(board, ran))).toBeNull()
+    const cleared = withNones(marked, new Map())!
+    expect(cleared.prd_items[0]!.test_cases[0]!.crew_none).toBeUndefined()
   })
 })

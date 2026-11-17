@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { applyOps, approvedNow, criteriaOf, designsOf, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, isTracker, liveCasesOf, liveTasksOf, madeByCrew, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf, tipOf, trackerProblem, withEmptyLists } from './board'
+import { applyOps, approvedNow, criteriaOf, designsOf, g6Split, gateG1, gateG2, gateG3, gateG4, gateG5, gateG6, isTracker, liveCasesOf, liveTasksOf, madeByCrew, newTracker, parseOps, prefixesFrom, renderBoard, tasksOf, tipOf, trackerProblem, withEmptyLists } from './board'
 import type { Op, Tracker } from './board'
 import { fingerprint } from './prd'
 
@@ -713,6 +713,18 @@ describe('the test results of a test case', () => {
     const r = run(tested(), [{ op: 'drop_feature', id: 'PRD-001', reason: '不做' }, { op: 'drop_criterion', id: 'AC-003', reason: '不做' }] as Op[], 'pm')
     if (!r.ok) throw new Error(r.errors.join())
     expect(liveCasesOf(r.tracker).map(c => c.id)).toEqual(['TC-002'])
+  })
+
+  test('tells G6’s gaps apart: failed in the run, no result in the run, and a result from an older commit', () => {
+    let b = result(tested(), 'TC-001', { result: 'failed', sha: 'aaaaaaa1', run: 'r' })
+    b = result(b, 'TC-002', { result: 'passed', sha: 'aaaaaaa1', run: 'r', stale: true })
+    const g = g6Split(b)
+    expect(g.failed.map(c => c.id)).toEqual(['TC-001'])
+    expect(g.stale.map(c => c.id)).toEqual(['TC-002'])
+    expect(g.missing.map(c => c.id)).toEqual(['TC-003'])
+    // A failure from an older commit is out of date, not a failure now; a passed one is no gap.
+    const old = result(result(tested(), 'TC-001', { result: 'failed', sha: 'a', run: 'r', stale: true }), 'TC-002', { result: 'passed', sha: 'a', run: 'r' })
+    expect(g6Split(old)).toMatchObject({ failed: [], stale: [{ id: 'TC-001' }], missing: [{ id: 'TC-003' }] })
   })
 
   test('shows on the board for the roles', () => {

@@ -53,7 +53,7 @@ describe('what the brain hears once every reviewer settled', () => {
   test('where each reply is, and to ask the person', () => {
     const d = withOutcome(withOutcome(sent(), 'pm', { found: '2 個缺口' }), 'uiux', { found: '沒有缺口' })
     expect(settledNote(d)).toBe(
-      'PM 和 UI/UX 都審完 PRD 草稿 docs/crew/v2-PRD.md 了（PM：2 個缺口，ASK-01；UI/UX：沒有缺口，ASK-02；原話用 thread_read 讀）。把缺口整理成問題問使用者，照回答改草稿，改好用 crew 工具 action=ready 請使用者確認。',
+      'PM 和 UI/UX 都審完 PRD 草稿 docs/crew/v2-PRD.md 了（PM：2 個缺口，ASK-01；UI/UX：沒有缺口，ASK-02；原話用 thread_read 讀）。把缺口和你自己補上的做法整理成問題，一題一則用 ask_person 問使用者（draft 填 true，附選項，建議的放第一個），照回答改草稿，改好用 crew 工具 action=ready 請使用者確認。',
     )
   })
 
@@ -93,6 +93,12 @@ describe('a draft kept for a restart', () => {
   test('keeps a draft waiting for the person, with its note, a doubtful review and one never sent', () => {
     const d: CrewDraft = { ...withOutcome(withOutcome(sent(), 'pm', { found: '回覆沒照格式', unsure: true }), 'uiux', { found: '沒有送到', failed: true }), stage: 'confirm', note: '已補', sends: 2 }
     expect(draftOf(JSON.parse(JSON.stringify(d)))).toEqual(d)
+  })
+
+  test('keeps the person’s answers the brain has yet to be handed, across a restart', () => {
+    const d: CrewDraft = { ...withOutcome(withOutcome(sent(), 'pm', { found: '沒有缺口' }), 'uiux', { found: '沒有缺口' }), stage: 'confirm', change: '照你對 Q-01 的回答：只有管理員', answered: ['Q-01', 'Q-02'] }
+    expect(draftOf(JSON.parse(JSON.stringify(d)))).toEqual(d)
+    expect(draftOf({ ...d, answered: ['Q-01', 7] })?.answered).toEqual(['Q-01'])
   })
 
   test('takes no other shape: one review of each reviewer, and the fields of a draft', () => {

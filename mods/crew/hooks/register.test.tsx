@@ -2,6 +2,9 @@ import type { CommandRunInput, On, RenderPropsOf } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
+import type { CodexStatus, Engines, RoleModels, RoleRow } from './model'
+import { nextEngine } from './views'
+
 const SURFACES = ['terminal', 'desktop'] as const
 
 const command = (args: string): CommandRunInput => ({
@@ -40,6 +43,22 @@ const stage = (on: On) => {
 
 const demoOn = ($: Engine) => $.command.run(command('demo'))
 
+type Pressable = { find: (q: { key: string }) => Promise<unknown>; press: (q: { key: string }) => Promise<unknown> }
+
+/** Opens what a press toggles (a setting's 「?」, a role's editor), unless it is open already. */
+const opened = async (ui: Pressable, key: string) => {
+  const button = (await ui.find({ key })) as { props: { variant?: string } } | undefined
+  if (button?.props.variant !== 'primary') await ui.press({ key })
+}
+
+/** Closes what the person opened: the pane keeps it open across surfaces, as the person left it. */
+const closed = async (ui: Pressable, ...keys: string[]) => {
+  for (const key of keys) {
+    const button = (await ui.find({ key })) as { props: { variant?: string } } | undefined
+    if (button?.props.variant === 'primary') await ui.press({ key })
+  }
+}
+
 /** The engine beneath, and the notices the pane's controls give. */
 const staged = (on: On): string[] => {
   stage(on)
@@ -56,8 +75,10 @@ describe('/crew demo', () => {
     stage(on)
     for (const surface of SURFACES) {
       const ui = await $.ui.mount(pane(surface))
-      expect(await shown(ui)).toMatch(/crew 已載入，還沒有開始的 PRD/)
-      expect(await ui.find({ key: 'start' })).toBeDefined()
+      expect(await shown(ui)).toMatch(/還沒有開始的 PRD/)
+      // No PRD in the repo to pick: the path field is the way to start, its submit 開始.
+      expect(await ui.find({ key: 'prd-path' })).toBeDefined()
+      expect(await ui.find({ key: 'start' })).toBeUndefined()
       await ui.unmount()
     }
   })
@@ -104,10 +125,15 @@ describe('/crew demo', () => {
       const ui = await $.ui.mount(pane(surface))
       await ui.press({ key: 'tab-progress' })
       const text = await shown(ui)
-      // How the weights go, and the plain count beside them.
-      expect(text).toMatch(/58%\n依難易度加權 · 31\/50 項[\s\S]*加權：每一項照它的難易度算，易 1・中 2・難 4・極難 8；Tech lead 還沒評的算中。\n難易度看難不難，不看範圍大小/)
-      // Done items count at how hard they turned out, so a rating raised can take the percentage down.
-      expect(text).toMatch(/做完的照最後的難易度算，\n所以調高時百分比可能往下掉。不加權是 31\/50 項。\n最近調整：TASK-12 難 → 中：Tech lead 重評，範圍大但都照現成的 API 寫法 · 進度 57% → 58%/)
+      // The plain count beside the weighted one, and the last rating changed with what it did to the percentage.
+      expect(text).toMatch(/58%\n依難易度加權 · 31\/50 項[\s\S]*不加權是 31\/50 項\n最近調整：TASK-12 難 → 中：Tech lead 重評，範圍大但都照現成的 API 寫法 · 進度 57% → 58%/)
+      // How the weights go, behind its 「?」: done items count at how hard they turned out, so a rating raised can take the percentage down.
+      expect(text).not.toMatch(/加權：每一項/)
+      await opened(ui, 'help-weighting')
+      const weights = await shown(ui)
+      expect(weights).toMatch(/加權：每一項照它的難易度算，易 1・中 2・難 4・極難 8；Tech lead 還沒評的算中。\n難易度看難不難，不看範圍大小/)
+      expect(weights).toMatch(/做完的照最後的難易度算，所以調高時百分比可能往下掉。/)
+      await closed(ui, 'help-weighting')
       expect(text).toMatch(/F-01 方案選擇/)
       expect(text).toMatch(/100%/)
       expect(text).toMatch(/F-04 年繳方案/)
@@ -153,9 +179,10 @@ describe('/crew demo', () => {
       const text = await shown(ui)
       expect(text).toMatch(/PRD 需求/)
       expect(text).toMatch(/\n規格\n設計\n測試案例\n任務\n實作\nReview\n測試結果\n/)
-      expect(text).toMatch(/R-9b3c12\n[^\n]*\n✓\n✓\n✓ 6\/6\n✓\n◐ 3\/5\n○\n◐ 2\/6\n/)
-      expect(text).toMatch(/R-07d4e9\n[^\n]*\n✓\n✓\n✓ 5\/5\n✓\n◐ 1\/3\n⟳\n/)
-      expect(text).toMatch(/R-2f6b55[\s\S]*移出範圍：移出 v1/)
+      expect(text).toMatch(/\n1\. 方案與結帳\n1\.1\n/)
+      expect(text).toMatch(/\n1\.2\n[^\n]*\n✓\n✓\n✓ 6\/6\n✓\n◐ 3\/5\n○\n◐ 2\/6\n/)
+      expect(text).toMatch(/2\. 取消與帳單\n2\.1\n[^\n]*\n✓\n✓\n✓ 5\/5\n✓\n◐ 1\/3\n⟳\n/)
+      expect(text).toMatch(/2\.3\n提供年繳方案[^\n]*\n移出範圍：移出 v1/)
       await ui.unmount()
     }
   })
@@ -188,7 +215,9 @@ describe('/crew demo', () => {
       // How hard, not how big: each with the tech lead's word on why.
       expect(text).toMatch(/難：範圍小（2 個檔），但驗簽和重送要照金流商的規格，錯了會重複扣款/)
       expect(text).toMatch(/中：範圍大（8 個檔），但都照現成的 API 寫法/)
-      expect(text).toMatch(/難易度看難不難，不看範圍大小/)
+      await opened(ui, 'help-board')
+      expect(await shown(ui)).toMatch(/難易度看難不難，不看範圍大小/)
+      await closed(ui, 'help-board')
       await ui.unmount()
     }
   })
@@ -243,17 +272,18 @@ describe('/crew demo', () => {
     for (const surface of SURFACES) {
       const ui = await $.ui.mount(pane(surface))
       const calm = await shown(ui)
-      expect(calm).toMatch(/常駐 ✓ 心跳 2 分鐘前 · 下次 3 分鐘後 · 大腦摘要 12:30 送出，2 則等 13:00/)
+      expect(calm).toMatch(/✓ 常駐・心跳 2 分鐘前/)
+      expect(calm).toMatch(/大腦摘要 2 則等 13:00/)
       // The line is on every tab, as the PRD's is.
       await ui.press({ key: 'tab-board' })
-      expect(await shown(ui)).toMatch(/常駐 ✓/)
+      expect(await shown(ui)).toMatch(/✓ 常駐/)
       await ui.press({ key: 'tab-overview' })
       await ui.press({ key: 'scenario-attention' })
       const found = await shown(ui)
-      expect(found).toMatch(/常駐 ⚠ 心跳 1 分鐘前發現：crew 的分支在角色工作以外多了 1 個 commit（TASK-12）→ 已排給 Tech lead review/)
+      expect(found).toMatch(/⚠ 常駐・心跳 1 分鐘前發現：crew 的分支在角色工作以外多了 1 個 commit（TASK-12）→ 已排給 Tech lead review/)
       expect(found).toMatch(/重開接續：13:02 從 building 接續（全端，TASK-15）/)
       await ui.press({ key: 'scenario-empty' })
-      expect(await shown(ui)).toMatch(/常駐 ✓ 心跳 剛剛 · 下次 5 分鐘後/)
+      expect(await shown(ui)).toMatch(/✓ 常駐・心跳 剛剛/)
       await ui.press({ key: 'scenario-normal' })
       await ui.unmount()
     }
@@ -267,14 +297,18 @@ describe('/crew demo', () => {
       await ui.press({ key: 'tab-tokens' })
       const calm = await shown(ui)
       // Asking first is the default; two buttons switch it, as /crew tuning does.
-      expect(calm).toMatch(/大腦處置：先問你（大腦提出建議，你核准才執行）/)
+      expect((await ui.find({ key: 'tuning-ask' })) as unknown).toMatchObject({ props: { variant: 'primary' } })
       expect(await ui.find({ key: 'tuning-auto' })).toBeDefined()
-      expect(await ui.find({ key: 'tuning-ask' })).toBeDefined()
+      // No cadence to set: crew reckons the bottlenecks after each piece of work, in code. Said behind its 「?」.
+      expect(await ui.find({ key: 'audit-every' })).toBeUndefined()
+      await opened(ui, 'help-tuning')
+      expect(await shown(ui)).toMatch(/瓶頸每件工作做完就重算，有新的才告訴大腦。換模型另外由「模型」分頁的「大腦換模型前」管/)
+      await closed(ui, 'help-tuning')
       expect(calm).toMatch(/大腦處置（不能為了省 token 跳過關卡、測試或 review）/)
       expect(calm).toMatch(/DEC-15 UI\/UX 輪替，門檻 100K → 80K[\s\S]*處置前 命中率 52% · context 96K → 現在 命中率 81% · context 8K/)
       await ui.press({ key: 'scenario-attention' })
       const loud = await shown(ui)
-      expect(loud).toMatch(/提醒已送大腦（同一條件一小時最多一次）/)
+      expect(loud).toMatch(/提醒已送大腦（同一條件數字變差才再提醒，一小時最多一次）/)
       expect(loud).toMatch(/UI\/UX 今日佔 Claude 的 73%（超過 40%） · 12:41/)
       expect(loud).toMatch(/全端快取命中率 52%（低於 60%）/)
       // Asked first: the brain's proposal waits for the person, with the numbers it would act on.
@@ -299,7 +333,7 @@ describe('/crew demo', () => {
     expect(text).toMatch(/提醒已送大腦/)
     expect(text).toMatch(/命中率/)
     await ui.unmount()
-    expect((await $.command.run(command('demo calm'))).text).toMatch(/用法：\/crew demo \[normal\|empty\|attention\|restart\|leading\|drafting\|confirm\|codex\|quota\] \[overview\|progress\|board\|threads\|memory\|tokens\|models\|settings\]/)
+    expect((await $.command.run(command('demo calm'))).text).toMatch(/用法：\/crew demo \[normal\|empty\|attention\|restart\|leading\|drafting\|confirm\|codex\|quota\|usage\] \[overview\|progress\|board\|threads\|log\|memory\|tokens\|models\|settings\]/)
   })
 
   test('says in 設定 which file holds the board', async ($, on) => {
@@ -307,7 +341,7 @@ describe('/crew demo', () => {
     await $.command.run(command('demo normal settings'))
     for (const surface of SURFACES) {
       const ui = await $.ui.mount(pane(surface))
-      expect(await shown(ui)).toMatch(/看板\n檔案：\.crew\/prd-tracker\.json\n測試指令\n/)
+      expect(await shown(ui)).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
       await ui.unmount()
     }
   })
@@ -318,9 +352,16 @@ describe('/crew demo', () => {
     for (const surface of SURFACES) {
       const ui = await $.ui.mount(pane(surface))
       const text = await shown(ui)
-      expect(text).toMatch(/網頁\nhttp:\/\/127\.0\.0\.1:47321\/\ncrew 啟動時\n這個網址只有這台電腦打得開/)
+      expect(text).toMatch(/網頁\nhttp:\/\/127\.0\.0\.1:47321\/\n網頁・啟動時\n/)
       // The phone through Tailscale: this machine on the tailnet, and the phones paired with it.
-      expect(text).toMatch(/手機\nTailscale ✓ 已連上 · 這台電腦 macbook\nhttps:\/\/macbook\.tail0c3f\.ts\.net\/\n已配對：iPhone · 昨天配對\n只有你 tailnet 裡、用你的帳號登入的裝置連得到。crew 用 tailscale serve，\n不用 funnel，不會公開到網路上。/)
+      expect(text).toMatch(/手機\nTailscale ✓ 已連上 · 這台電腦 macbook\nhttps:\/\/macbook\.tail0c3f\.ts\.net\/\n已配對：iPhone · 昨天配對\n/)
+      // Who can open it, behind each 「?」.
+      expect(text).not.toMatch(/funnel|這台電腦打得開/)
+      await opened(ui, 'help-web')
+      await opened(ui, 'help-phone')
+      const said = await shown(ui)
+      expect(said).toMatch(/只有這台電腦打得開/)
+      expect(said).toMatch(/crew 用 tailscale serve，不用 funnel，不會公開到網路上/)
       expect((await ui.find({ key: 'tailnet-on' })) as unknown).toMatchObject({ props: { variant: 'primary' } })
       await ui.press({ key: 'pair-device' })
       expect(toasts.at(-1)).toMatch(/設計稿：實際會顯示一組配對碼（例如 482-913），10 分鐘內在手機輸入/)
@@ -328,15 +369,12 @@ describe('/crew demo', () => {
       expect(toasts.at(-1)).toMatch(/設計稿：實際會移除 iPhone，它要再配對一次才連得到/)
       await ui.press({ key: 'tailnet-off' })
       expect(toasts.at(-1)).toMatch(/設計稿：實際會停掉 tailscale serve，網頁只限這台電腦/)
-      // No cadence to set: crew reckons the bottlenecks after each piece of work, in code.
-      expect(text).toMatch(/瓶頸每件工作做完就重算，有新的才告訴大腦，沒有頻率要設/)
-      expect(await ui.find({ key: 'audit-every' })).toBeUndefined()
-      expect(text).toMatch(/換模型另外由「模型」分頁的「大腦換模型前」管/)
       expect((await ui.find({ key: 'web-on-start' })) as unknown).toMatchObject({ props: { variant: 'primary' } })
       await ui.press({ key: 'web-open' })
       expect(toasts.at(-1)).toMatch(/設計稿：實際會在瀏覽器打開 crew 的網頁/)
       await ui.press({ key: 'web-not-on-start' })
       expect(toasts.at(-1)).toMatch(/設計稿：實際會讓 crew 啟動時不打開網頁/)
+      await closed(ui, 'help-web', 'help-phone')
       await ui.unmount()
     }
   })
@@ -354,9 +392,11 @@ describe('/crew demo', () => {
       expect(text).toMatch(/◐ 處置中：crew 給 Codex 精簡的設定/)
       expect(text).toMatch(/✓ 已處置：DEC-18 先用 Grep 找位置再讀/)
       expect(text).toMatch(/每一次執行都記在 \.crew\/usage\/，不進 git，跨 session 留著/)
-      // Reckoned in code after each piece of work; the brain hears only of a new one, or one handled that grew again.
-      expect(text).toMatch(/每件工作做完，crew 用程式重算一次瓶頸，不花 token。\n只有出現新的瓶頸，或處置過的又變大，才把那一條告訴大腦；/)
       expect(text).toMatch(/上次告訴大腦：記憶包用到的只有 23%（新的瓶頸）· 40 分鐘前/)
+      // Reckoned in code after each piece of work; the brain hears only of a new one, or one handled that grew again: behind its 「?」.
+      await opened(ui, 'help-audit')
+      expect(await shown(ui)).toMatch(/每件工作做完，crew 用程式重算一次瓶頸，不花 token。只有出現新的瓶頸，或處置過的又變大，才把那一條告訴大腦；/)
+      await closed(ui, 'help-audit')
       await ui.unmount()
     }
   })
@@ -367,27 +407,43 @@ describe('/crew demo', () => {
     for (const surface of SURFACES) {
       const ui = await $.ui.mount(pane(surface))
       const text = await shown(ui)
-      expect(text).toMatch(/Codex ✓ 已登入（ChatGPT 帳號）· codex-cli 0\.162\.1/)
-      expect(text).toMatch(/登入或額度恢復後，crew 會自己發現，不用重開 Claude Code/)
+      expect(text).toMatch(/Codex ✓ 已登入・0\.162\.1・2 分鐘前檢查/)
+      // What crew offers: each family's newest, and how many Codex lists in all.
+      expect(text).toMatch(/Claude：Fable 5\.2・Opus 5\.5・Sonnet 5\.5・Haiku 5\.5/)
+      expect(text).toMatch(/Codex：6 Astra・6\.1 Sol・6\.1 Terra・6 Luna 等 8 個/)
+      // A line a role: how it picks, where it starts on each engine, its threshold; the rest once it is opened.
+      expect(text).toMatch(/PM\n系統預設\nSonnet 5\.5・high／6\.1 Terra・high\n依難易度\nUI\/UX\n/)
+      expect(text).toMatch(/UI\/UX\n系統預設\nSonnet 5\.5・medium／6\.1 Terra・medium\n大腦調成 80K\n全端\n/)
+      expect(text).not.toMatch(/現在 Claude/)
+      expect(await ui.find({ key: 'mode-pm-auto' })).toBeUndefined()
+      await opened(ui, 'models-pm')
+      const pm = await shown(ui)
       // crew's default: the brain picks the engine, and each engine's floor has the steps its work climbs.
       expect((await ui.find({ key: 'mode-pm-auto' })) as unknown).toMatchObject({ props: { variant: 'primary' } })
       expect((await ui.find({ key: 'mode-pm-fixed' })) as unknown).toMatchObject({ props: { variant: 'secondary' } })
-      expect(text).toMatch(/PM\n現在 Claude：大腦選的，Claude 額度還夠\n預設引擎:\n {2}易–中 Sonnet 5.5・high · 難 Opus 5.5・high · 極難 xhigh · 再失敗 Fable 5.1・xhigh\n {2}易–中 Terra・high · 難 Sol・high · 極難 xhigh · 再失敗 Astra・xhigh/)
-      // Asking first covers every move, on either engine, a climb for harder work included.
-      expect(text).toMatch(/大腦換模型前\n換引擎、模型或 effort，Claude 和 Codex 都先在「模型的事」問你：\n依難易度往上升、失敗後升級、Codex 不能用時改用 Claude，都算。\n等你回答的時候，那個角色停著。\n自己挑選的角色不會被換；它卡住時，不管開關都會問你。/)
-      expect(text).toMatch(/全端\n現在 Codex：大腦選的，Claude 額度留給 Tech lead/)
-      expect(text).toMatch(/易–極難 Sol・xhigh · 再失敗 Astra・xhigh/)
-      expect(text).toMatch(/易 60K · 中 100K · 難 160K · 極難 256K/)
-      // A threshold by the work's size the brain tuned says so, and which decision did.
-      expect(text).toMatch(/UI\/UX\n現在 Claude：大腦選的，Claude 額度還夠\n預設引擎:\n(?:.*\n){2}大腦調成 80K（DEC-15）\n全端\n/)
+      expect(pm).toMatch(/PM\n系統預設\n[^\n]*\n依難易度\n現在 Claude：大腦選的，Claude 額度還夠\n/)
+      expect(pm).toMatch(/越難越往上（Claude）：易–中 Sonnet 5\.5・high · 難 Opus 5\.5・high · 極難 xhigh · 再失敗 Fable 5\.2・xhigh\n越難越往上（Codex）：易–中 6\.1 Terra・high · 難 6\.1 Sol・high · 極難 xhigh · 再失敗 6 Astra・xhigh/)
+      // Asking first covers every move, on either engine, a climb for harder work included: said behind its 「?」.
+      await opened(ui, 'help-switch')
+      expect(await shown(ui)).toMatch(/大腦要換引擎、模型或 effort 前（依難易度往上、失敗後升級、Codex 不能用時改用 Claude 都算），先在「模型的事」問你，那個角色等你回答。你自己挑選的角色不會被換；它卡住時一樣會問你。/)
+      await opened(ui, 'models-fullstack')
+      const fullstack = await shown(ui)
+      expect(fullstack).toMatch(/現在 Codex：大腦選的，Claude 額度留給 Tech lead/)
+      expect(fullstack).toMatch(/越難越往上（Codex）：易–極難 6\.1 Sol・xhigh · 再失敗 6 Astra・xhigh/)
+      expect(fullstack).toMatch(/輪替門檻依難易度：易 60K · 中 100K · 難 160K · 極難 256K/)
+      // A threshold by the work's size the brain tuned says which decision did, once opened.
+      await opened(ui, 'models-uiux')
+      expect(await shown(ui)).toMatch(/大腦調成 80K（DEC-15）/)
       expect((await ui.find({ key: 'ask-switch-on' })) as unknown).toMatchObject({ props: { variant: 'primary' } })
       if (surface === 'terminal') {
-        // Nothing under 6.1 Sol・xhigh is offered to the full-stack on Codex; Claude offers its three.
+        // Nothing under 6.1 Sol・xhigh is offered to the full-stack on Codex; every model Codex lists is offered to the PM, older ones too.
+        // On Claude, each family's newest and the older generations crew keeps: Opus its newest alone.
+        await opened(ui, 'models-techlead')
         const pick = async (key: string) => ((await ui.find({ key })) as unknown as { props: { value: string; options: { value: string }[] } }).props
         expect((await pick('floor-fullstack-codex-model')).options.map(o => o.value)).toEqual(['gpt-6.1-sol', 'gpt-6-astra'])
         expect((await pick('floor-fullstack-codex-effort')).options.map(o => o.value)).toEqual(['xhigh', 'max'])
-        expect((await pick('floor-pm-codex-model')).options.map(o => o.value)).toEqual(['gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.1-sol', 'gpt-6-astra'])
-        expect((await pick('floor-pm-claude-model')).options.map(o => o.value)).toEqual(['haiku', 'sonnet', 'opus', 'fable'])
+        expect((await pick('floor-pm-codex-model')).options.map(o => o.value)).toEqual(['gpt-5.6-luna', 'gpt-6-luna', 'gpt-5.6-terra', 'gpt-6.1-terra', 'gpt-5.6-sol', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-astra'])
+        expect((await pick('floor-pm-claude-model')).options.map(o => o.value)).toEqual(['fable', 'claude-fable-5-1', 'claude-fable-5', 'opus', 'sonnet', 'claude-sonnet-5', 'claude-sonnet-4-6', 'haiku', 'claude-haiku-4-5'])
         expect((await pick('floor-pm-claude-model')).value).toBe('sonnet')
         expect((await pick('limit-techlead')).value).toBe('200000')
         expect((await pick('limit-fullstack')).value).toBe('tier')
@@ -399,12 +455,14 @@ describe('/crew demo', () => {
         await ui.select({ key: 'limit-pm', value: '100000' })
         expect(toasts.at(-1)).toMatch(/設計稿：實際會把 PM 的輪替門檻固定在 100K/)
       }
+      await opened(ui, 'models-qa')
       await ui.press({ key: 'mode-qa-fixed' })
       expect(toasts.at(-1)).toMatch(/設計稿：實際會讓 QA 固定用你選的模型，不升級，大腦也不換/)
       await ui.press({ key: 'ask-switch-off' })
       expect(toasts.at(-1)).toMatch(/設計稿：實際會讓大腦自己換模型，事後記成決定/)
       await ui.press({ key: 'codex-check' })
       expect(toasts.at(-1)).toMatch(/設計稿：實際會重新檢查這台電腦的 Codex/)
+      await closed(ui, 'help-switch', 'models-pm', 'models-uiux', 'models-fullstack', 'models-qa', 'models-techlead')
       await ui.unmount()
     }
   })
@@ -415,12 +473,13 @@ describe('/crew demo', () => {
     const ui = await $.ui.mount(pane('terminal'))
     const text = await shown(ui)
     expect(text).toMatch(/Codex ✗ 還沒登入/)
-    expect(text).toMatch(/codex login --with-api-key。key 只交給 Codex，不要貼進對話/)
-    // The full-stack, fixed on Codex, waits; the roles on crew's default go on with Claude.
+    expect(text).toMatch(/在你自己的終端機執行 codex login（用 API key 就加 --with-api-key）。key 只交給 Codex，不要貼進對話。/)
+    // The full-stack, fixed on Codex, waits, said under its row; the roles on crew's default go on with Claude, with nothing under theirs.
+    expect(text).toMatch(/全端\n自己挑選\n固定 6\.1 Sol・xhigh\n[^\n]*\n停著：Codex 現在不能用，在「模型的事」決定/)
+    expect(text).toMatch(/PM\n系統預設\n[^\n]*\n[^\n]*\nUI\/UX\n/)
+    await ui.press({ key: 'models-fullstack' })
     expect((await ui.find({ key: 'fixed-fullstack-codex' })) as unknown).toMatchObject({ props: { variant: 'primary' } })
-    expect(text).toMatch(/全端\n停著：Codex 現在不能用，在「模型的事」決定/)
-    expect(text).toMatch(/固定用 6\.1 Sol・xhigh：不升級，大腦也不換；一直失敗時 crew 會問你/)
-    expect(text).toMatch(/PM\n現在 Claude：大腦選的，Claude 額度還夠/)
+    expect(await shown(ui)).toMatch(/固定用 6\.1 Sol・xhigh：不升級，大腦也不換；一直失敗時 crew 會問你/)
     // The question on its model stands apart from what else waits for the person.
     await ui.press({ key: 'tab-overview' })
     const overview = await shown(ui)
@@ -442,8 +501,13 @@ describe('/crew demo', () => {
     expect(models).toMatch(/Codex ⚠ 額度用完，約 15:40 重置/)
     // With asking off, the brain moved the full-stack on its own and noted it; QA, fixed on Codex, is still asked about.
     expect((await quota.find({ key: 'ask-switch-off' })) as unknown).toMatchObject({ props: { variant: 'primary' } })
-    expect(models).toMatch(/大腦換模型前\n不用問：大腦自己換引擎、模型或 effort，事後記成決定。\n自己挑選的角色不會被換；它卡住時，不管開關都會問你。/)
-    expect(models).toMatch(/全端\n現在 Claude：大腦選的，Codex 額度用完（DEC-21）/)
+    await opened(quota, 'help-switch')
+    await opened(quota, 'models-fullstack')
+    const opens = await shown(quota)
+    expect(opens).toMatch(/大腦自己換引擎、模型或 effort，事後記成決定。你自己挑選的角色不會被換；它卡住時會問你。/)
+    expect(opens).toMatch(/全端\n系統預設\n[^\n]*\n依難易度\n現在 Claude：大腦選的，Codex 額度用完（DEC-21）/)
+    // QA stopped is said under its row, opened or not.
+    expect(models).toMatch(/QA\n自己挑選\n固定 6\.1 Terra・medium\n依難易度\n停著：Codex 現在不能用，在「模型的事」決定/)
     await quota.unmount()
     // Asking on: a climb after failures waits as a question too.
     await $.command.run(command('demo attention overview'))
@@ -523,7 +587,7 @@ describe('/crew demo', () => {
     expect(off.text).toMatch(/關閉/)
     for (const surface of SURFACES) {
       const ui = await $.ui.mount(pane(surface))
-      expect(await shown(ui)).toMatch(/crew 已載入，還沒有開始的 PRD/)
+      expect(await shown(ui)).toMatch(/還沒有開始的 PRD/)
       await ui.unmount()
     }
   })
@@ -537,7 +601,7 @@ describe('the pane, which does everything with no command', () => {
     await demo($, 'empty overview')
     for (const surface of SURFACES) {
       const ui = await $.ui.mount(pane(surface))
-      expect(await shown(ui)).toMatch(/crew 已載入，還沒有開始的 PRD/)
+      expect(await shown(ui)).toMatch(/還沒有開始的 PRD/)
       for (const key of ['start', 'not-now']) expect(await ui.find({ key })).toBeDefined()
       // The first PRD found is picked to start with; no role has work to be asked about yet.
       expect((await ui.find({ key: 'prd-pick' })) as unknown).toMatchObject({ props: { value: 'docs/PRD.md' } })
@@ -546,6 +610,8 @@ describe('the pane, which does everything with no command', () => {
       expect(toasts.at(-1)).toMatch(/設計稿：選了 docs\/PRD\.md/)
       await ui.press({ key: 'start' })
       expect(toasts.at(-1)).toMatch(/設計稿：實際會用選好的 PRD 開始，PM 先把它拆成功能和驗收條件/)
+      // The path field is one press away, and stays open once opened.
+      if ((await ui.find({ key: 'prd-path' })) === undefined) await ui.press({ key: 'prd-path-open' })
       await ui.input({ key: 'prd-path', text: 'specs/v2.md' })
       expect(toasts.at(-1)).toMatch(/設計稿：實際會用 specs\/v2\.md 開始/)
       await ui.unmount()
@@ -598,14 +664,22 @@ describe('the pane, which does everything with no command', () => {
     const ui = await $.ui.mount(pane('terminal'))
     const text = await shown(ui)
     expect(text).toMatch(/測試指令/)
-    expect(text).toMatch(/現在：打開這個面板/)
+    // What is set shows as the button lit, with no sentence for it.
+    expect((await ui.find({ key: 'open-on-load' })) as unknown).toMatchObject({ props: { variant: 'primary' } })
+    expect(text).not.toMatch(/現在：/)
     expect((await ui.find({ key: 'test-command' })) as unknown).toMatchObject({ props: { value: 'python3 -m pytest -v' } })
-    for (const key of ['run-tests', 'tuning-auto', 'tuning-ask', 'open-on-load', 'not-on-load', 'resume', 'reset', 'consolidate', 'demo-off']) {
+    for (const key of ['run-tests', 'open-on-load', 'not-on-load', 'resume', 'reset', 'demo-off']) {
       expect(await ui.find({ key })).toBeDefined()
     }
+    // The brain's actions on tokens are on Token, tidying memory on 記憶: neither here.
+    for (const key of ['tuning-auto', 'consolidate']) expect(await ui.find({ key })).toBeUndefined()
+    // A setting's longer word is behind its 「?」.
+    expect(text).not.toMatch(/每個任務通過 review、每次合併後都跑/)
+    await ui.press({ key: 'help-tests' })
+    expect(await shown(ui)).toMatch(/每個任務通過 review、每次合併後都跑/)
     expect(await ui.find({ key: 'reset-confirm' })).toBeUndefined()
     await ui.press({ key: 'reset' })
-    expect(await shown(ui)).toMatch(/重設後看板、討論和記憶都會留著/)
+    expect(await shown(ui)).toMatch(/重設流程和角色？看板、討論和記憶都會留著。/)
     expect(await ui.find({ key: 'reset-confirm' })).toBeDefined()
     await ui.unmount()
   })
@@ -636,11 +710,13 @@ describe('the pane, which does everything with no command', () => {
   test('says which PRD a start begins, and on a phone lists the PRDs as buttons to pick from', async ($, on) => {
     staged(on)
     await demo($, 'empty overview')
+    // The PRD picked by its file name, its folder and title under it.
     const desk = await $.ui.mount(pane('terminal'))
-    expect(await shown(desk)).toMatch(/會開始：docs\/PRD\.md　會員訂閱 v1/)
+    expect(await shown(desk)).toMatch(/PRD\ndocs\/・會員訂閱 v1/)
     await desk.unmount()
     const phone = await $.ui.mount({ ...pane('desktop'), surface: 'mobile' as never })
-    expect(await shown(phone)).toMatch(/會開始：docs\/PRD\.md　會員訂閱 v1/)
+    expect(await shown(phone)).toMatch(/docs\/・會員訂閱 v1/)
+    expect((await phone.find({ key: 'prd-option-0' })) as unknown).toMatchObject({ props: { label: 'PRD.md', variant: 'primary' } })
     for (const key of ['prd-option-0', 'prd-option-1', 'start']) expect(await phone.find({ key })).toBeDefined()
     await phone.unmount()
   })
@@ -653,5 +729,33 @@ describe('the pane, which does everything with no command', () => {
     expect(text).toMatch(/回答請在電腦上的面板輸入/)
     expect(await ui.find({ key: 'approve-Q-04' })).toBeDefined()
     await ui.unmount()
+  })
+})
+
+describe('the overview’s model column', () => {
+  const models = (now: 'claude' | 'codex', mode: 'auto' | 'fixed' = 'auto'): RoleModels => ({
+    mode,
+    floors: { claude: { model: 'sonnet', effort: 'high' }, codex: { model: 'gpt-6.1-terra', effort: 'high' } },
+    fixed: { engine: now, model: now === 'codex' ? 'gpt-6.1-terra' : 'sonnet', effort: 'high' },
+    now,
+    limit: 'tier',
+  })
+  const engines = (now: 'claude' | 'codex', codex: CodexStatus = { state: 'ready', login: 'chatgpt', version: '0.162.1', checked: '' }, mode: 'auto' | 'fixed' = 'auto'): Engines => ({
+    roles: { pm: models(now, mode), uiux: models('claude'), qa: models('claude'), techlead: models('claude'), fullstack: models('claude') },
+    codex,
+    models: [],
+    askBeforeSwitch: false,
+  })
+  const pm = (state: RoleRow['state'], engine?: 'codex'): RoleRow => ({ id: 'pm', state, doing: '—', context: 23_000, limit: 60_000, today: 0, ...(engine === undefined ? {} : { engine }) })
+
+  test('names the engine an idle role’s next work starts on, once the person moved it from where it last ran', () => {
+    expect(nextEngine(pm('idle'), engines('codex'))).toBe('codex')
+    expect(nextEngine(pm('idle'), engines('codex', undefined, 'fixed'))).toBe('codex')
+    expect(nextEngine(pm('idle', 'codex'), engines('claude'))).toBe('claude')
+    // Where it last ran, at work, Codex unable to run, or no word on the engines yet: the last run's model stands.
+    expect(nextEngine(pm('idle'), engines('claude'))).toBeUndefined()
+    expect(nextEngine(pm('working'), engines('codex'))).toBeUndefined()
+    expect(nextEngine(pm('idle'), engines('codex', { state: 'logged-out', version: '0.162.1', checked: '' }))).toBeUndefined()
+    expect(nextEngine(pm('idle'), undefined)).toBeUndefined()
   })
 })

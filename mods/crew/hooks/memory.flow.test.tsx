@@ -29,7 +29,7 @@ describe('crew memory', () => {
   test('gives the roles memory_save and memory_search', async ($, on) => {
     const w = world($, on)
     await start($)
-    expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'review_submit', 'memory_save', 'memory_search', 'crew'])
+    expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'review_submit', 'check_report', 'app_setup', 'memory_save', 'memory_search', 'crew'])
   })
 
   test('saves what a role remembers, under its name, in the repo', async ($, on) => {
@@ -72,7 +72,7 @@ describe('crew memory', () => {
     expect(w.disk.get(MEMORIES)).not.toMatch(/hunter2/)
     expect(w.disk.get(LOG)).toMatch(/memory/)
     expect(w.disk.get(LOG)).not.toMatch(/hunter2/)
-    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\nwork/\nruns/\ncodex/\ndesigns/*/index.html\ndesigns/*/data.json\ndesigns/*/prd.json\n')
+    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\nwork/\nruns/\ncodex/\nshelved/\ndesigns/*/index.html\ndesigns/*/data.json\ndesigns/*/prd.json\nqa-shots/\ndesigns/*/checks/\ndesigns/*/acceptance.json\nsession.json\nwriter.json\n')
   })
 
   test('leaves the person’s decisions and preferences for the person to change', async ($, on) => {

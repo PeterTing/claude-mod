@@ -363,7 +363,7 @@ describe('gateG0', () => {
 
 describe('requirementList', () => {
   test('lists requirements one a line with their ids and sections', () => {
-    expect(requirementList(requirementsOf('## 帳號\n- 登入'))).toMatch(/^- R-[0-9a-f]{6}（帳號）登入$/)
+    expect(requirementList(requirementsOf('## 帳號\n- 登入'))).toMatch(/^- R-[0-9a-f]{6} 需求 1（帳號）登入$/)
   })
 
   test('cuts a long requirement, masking a secret in it first', () => {

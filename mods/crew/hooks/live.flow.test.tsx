@@ -1,14 +1,14 @@
 import type { PromptOrigin, RenderPropsOf } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 
-import { build, command, designed, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
+import { accepted, build, command, designed, done, PLAN, ROOT, SPLIT, start, world, write } from './world'
 
 describe('crew, PM and QA', () => {
   test('registers its tools and its roles when the session starts', async ($, on) => {
     const w = world($, on)
     await start($)
-    expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'review_submit', 'memory_save', 'memory_search', 'crew'])
-    expect(w.registered.agents).toEqual(['pm', 'qa', 'uiux', 'techlead', 'fullstack'])
+    expect(w.registered.tools).toEqual(['board_read', 'board_write', 'thread_post', 'thread_read', 'ask_person', 'review_submit', 'check_report', 'app_setup', 'memory_save', 'memory_search', 'crew'])
+    expect(w.registered.agents).toEqual(['pm', 'qa', 'uiux', 'techlead', 'fullstack', 'checker', 'finder'])
   })
 
   test('walks a PRD from split to every criterion covered', async ($, on) => {
@@ -22,7 +22,7 @@ describe('crew, PM and QA', () => {
     expect(w.spawned[0]?.name).toBeUndefined()
     expect(w.spawned[0]?.prompt).toMatch(/docs\/PRD\.md/)
     expect(w.board()?.mode).toBe('local-only')
-    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\nwork/\nruns/\ncodex/\ndesigns/*/index.html\ndesigns/*/data.json\ndesigns/*/prd.json\n')
+    expect(w.disk.get(`${ROOT}/.crew/.gitignore`)).toBe('usage/\nlog/\nwork/\nruns/\ncodex/\nshelved/\ndesigns/*/index.html\ndesigns/*/data.json\ndesigns/*/prd.json\nqa-shots/\ndesigns/*/checks/\ndesigns/*/acceptance.json\nsession.json\nwriter.json\n')
 
     const wrote = await write($, 'a-pm-1', SPLIT)
     expect(String(wrote.result)).toMatch(/已寫入：PRD-001、PRD-002、AC-001、AC-002/)
@@ -55,7 +55,9 @@ describe('crew, PM and QA', () => {
     expect(w.spawned[4]).toMatchObject({ subagentType: 'crew:fullstack', model: 'sonnet' })
     expect(w.spawned[4]?.prompt).toMatch(/TASK-001[\s\S]*工作目錄：\/repo\/\.crew\/work\/prd（分支 crew\/prd）/)
     await build($)
-    expect(w.toasts.at(-1)).toMatch(/G4 2\/2[\s\S]*G3 2\/2[\s\S]*G5 2\/2/)
+    // Built and tested: QA hands each feature over and the person passes it; the pass is said after the finish.
+    await accepted($)
+    expect(w.toasts.find(t => /crew 完成/.test(t))).toMatch(/G4 2\/2[\s\S]*G3 2\/2[\s\S]*G5 2\/2/)
 
     const tracker = w.board()
     expect(tracker?.prd_items.flatMap(i => i.test_cases.map(c => c.id))).toEqual(['TC-001', 'TC-002'])
@@ -107,6 +109,8 @@ describe('crew, PM and QA', () => {
     await write($, 'a-techlead-4', PLAN)
     await done($, 'a-techlead-4')
     await build($)
+    // Built and tested: QA hands each feature over and the person passes it.
+    await accepted($)
     const after = await $.command.run(command('status'))
     expect(after.text).toMatch(/done/)
     const usage = JSON.parse(w.disk.get(`${ROOT}/.crew/usage/2026-10-15.json`) ?? '{}') as { usage: Record<string, { wakes: number }> }
@@ -210,7 +214,7 @@ describe('crew, PM and QA', () => {
     await $.command.run(command('start docs/PRD.md'))
     const asked = await $.tool.call({ tool: 'mcp__crew__ask_person', tool_use_id: 't-ask', agentId: 'a-pm-1', question: '年繳要不要做？', item: 'PRD-001' } as never)
     expect(String((asked as { result: unknown }).result)).toMatch(/Q-01/)
-    expect(w.toasts.at(-1)).toMatch(/有一件事等你決定（Q-01），大腦更新待你決定頁後在「待你決定」按［開待你決定頁］/)
+    expect(w.toasts.at(-1)).toMatch(/有一件事等你決定（Q-01），待你決定頁更新後在「待你決定」按［開待你決定頁］/)
 
     const status = await $.command.run(command('status'))
     expect(status.text).toMatch(/待你決定 1/)
@@ -253,6 +257,33 @@ describe('crew, PM and QA', () => {
     })
     const line = (await band.findAll({ type: 'Text' })).map(t => t.text).join('')
     expect(line).toMatch(/^crew │ 進度/)
+  })
+
+  test('draws a role’s words and a kept run with colour codes in them, the codes left out', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    await write($, 'a-pm-1', SPLIT)
+    // What a role ran prints colour codes and the odd bell; a pane refuses a text that holds one, and draws nothing at all.
+    await done($, 'a-pm-1', 'npm test：\u001b[32m✓ 3 passed\u001b[0m\u0007\t完成')
+    w.disk.set(`${ROOT}/.crew/log/runs/pm.jsonl`, `${JSON.stringify({ t: 1, engine: 'claude', prompt: '拆 \u001b]8;;https://x\u0007PRD\u001b]8;;\u0007', steps: [{ kind: 'command', text: 'npm run dev', output: '--> GET /api/v1/nav-alerts \u001b[32m200\u001b[39m 12ms\r\n\u001b[1mready\u001b[22m' }], report: '好了\u001b[0m' })}\n`)
+    const ui = await $.ui.mount({
+      plugin: 'crew',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'crew',
+      props: { title: 'Crew', isFocused: true, bodyColumns: 120, placement: 'dock', scroll: { offset: 0, bodyRows: 80 } } as unknown as RenderPropsOf['Pane'],
+    })
+    await ui.press({ key: 'detail-pm' })
+    let text = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+    expect(text).toMatch(/npm test：✓ 3 passed {2}完成/)
+    await ui.press({ key: 'run-pm' })
+    text = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+    expect(text).toMatch(/拆 PRD/)
+    expect(text).toMatch(/--> GET \/api\/v1\/nav-alerts 200 12ms\nready/)
+    expect(text).toMatch(/好了/)
+    expect(text).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/)
+    await ui.unmount()
   })
 
   test('says what is missing when the PRD path is wrong or absent', async ($, on) => {

@@ -16,6 +16,9 @@ const heavy = {
 
 const crew = ($: Engine, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__crew__crew', tool_use_id: `u-${Math.random()}`, ...input } as never) as Promise<{ result: unknown }>
 
+/** The main conversation's turn ending: the brain has taken what crew sent it. */
+const brainDone = ($: Engine) => $.turn.complete({ answer: '好', durationMs: 5, isAborted: false, turnId: `turn-brain-${Math.random()}`, reason: 'answer' } as never)
+
 const tested = async ($: Engine) => {
   await $.command.run(command('start docs/PRD.md'))
   await write($, 'a-pm-1', SPLIT)
@@ -26,7 +29,7 @@ const tested = async ($: Engine) => {
 }
 
 describe('token reminders', () => {
-  test('tell the brain once an hour when a role takes over 40% of the day, or reads under 60% from the cache', { timeoutMs: 60_000 }, async ($, on) => {
+  test('tell the brain once when a role takes over 40% of the day, or reads under 60% from the cache, and not again while the numbers stay the same', { timeoutMs: 60_000 }, async ($, on) => {
     const w = world($, on)
     w.disk.set(`${ROOT}/.crew/usage/${DAY}.json`, JSON.stringify({ usage: heavy, tiers: {} }))
     await start($)
@@ -34,7 +37,7 @@ describe('token reminders', () => {
     const ui = await paneUi($)
     await ui.press({ key: 'tab-tokens' })
     const text = await textOf(ui)
-    expect(text).toMatch(/提醒已送大腦（同一條件一小時最多一次）/)
+    expect(text).toMatch(/提醒已送大腦（同一條件數字變差才再提醒，一小時最多一次）/)
     expect(text).toMatch(/全端今日佔 \d+%（超過 40%） · \d\d:\d\d/)
     expect(text).toMatch(/全端快取命中率 51%（低於 60%）/)
     // PM's share and rate are fine.
@@ -44,12 +47,36 @@ describe('token reminders', () => {
     const told = w.prompts.filter(p => /全端今日佔/.test(p)).length
     expect(told).toBe(1)
     expect(w.prompts.find(p => /全端今日佔/.test(p))).toMatch(/tune[\s\S]*調 limit 時，使用者設定先問他：你的處置會變成建議，他在面板核准才執行[\s\S]*換引擎、模型或 effort 照使用者在「模型」分頁的「大腦換模型前」設定/)
-    // Still the case at the next look: not told again within the hour, and told again once it is past.
+    // Still the case at the next look: not told again within the hour.
     await w.clock.advance(BEAT)
     await w.clock.advance(60_000)
     expect(w.prompts.filter(p => /全端今日佔/.test(p)).length).toBe(1)
+    // Hours on, the brain having taken it, the same numbers are nothing new: each telling would wake the brain for nothing.
+    await brainDone($)
+    for (let hour = 0; hour < 3; hour += 1) await w.clock.advance(60 * 60_000)
+    expect(w.prompts.filter(p => /全端今日佔/.test(p)).length).toBe(1)
+  })
+
+  test('wait while the brain has not taken the last one, rather than reach it in a pile', { timeoutMs: 60_000 }, async ($, on) => {
+    const w = world($, on)
+    w.disk.set(`${ROOT}/.crew/usage/${DAY}.json`, JSON.stringify({ usage: heavy, tiers: {} }))
+    await start($)
+    await w.clock.advance(BEAT)
+    await w.clock.advance(60_000)
+    const told = () => w.prompts.filter(p => /全端今日佔/.test(p)).length
+    expect(told()).toBe(1)
+    // A dialog holds the brain's turn for hours: the hourly reminder is not said again meanwhile.
+    for (let hour = 0; hour < 3; hour += 1) await w.clock.advance(60 * 60_000)
+    expect(told()).toBe(1)
+    // The pane still lists it as sent, an hour on: the brain has not taken it.
+    const ui = await paneUi($)
+    await ui.press({ key: 'tab-tokens' })
+    expect(await textOf(ui)).toMatch(/全端今日佔 \d+%（超過 40%）/)
+    await ui.unmount()
+    // Its turn ends: the condition still holding, with the same numbers, is not said again.
+    await brainDone($)
     await w.clock.advance(60 * 60_000)
-    expect(w.prompts.filter(p => /全端今日佔/.test(p)).length).toBe(2)
+    expect(told()).toBe(1)
   })
 
   test('tell the brain of a role’s tool output past 10K tokens', async ($, on) => {
@@ -84,6 +111,29 @@ describe('token reminders', () => {
     await read(8_334, 'a-pm-1')
     await w.clock.advance(60_000)
     expect(told()).toBe(1)
+  })
+
+  test('tell again of a role’s output only once it is bigger, an hour on, the brain having taken the last', async ($, on) => {
+    const w = world($, on)
+    on('tool.call', { tool: 'Read' }, (_$, e) => ({ result: '一'.repeat(Number(String((e as { file_path: string }).file_path).split('-').pop())) }))
+    await start($)
+    await $.command.run(command('start docs/PRD.md'))
+    const read = (n: number) => $.tool.call({ tool: 'Read', tool_use_id: `r-${n}-${Math.random()}`, agentId: 'a-pm-1', file_path: `${ROOT}/docs/big-${n}` } as never)
+    const told = () => w.prompts.filter(p => /工具輸出約/.test(p)).length
+    await read(9_000)
+    await w.clock.advance(60_000)
+    expect(told()).toBe(1)
+    await brainDone($)
+    await w.clock.advance(60 * 60_000)
+    // About as big again: nothing new.
+    await read(9_500)
+    await w.clock.advance(60_000)
+    expect(told()).toBe(1)
+    // Twice as big: told.
+    await read(20_000)
+    await w.clock.advance(60_000)
+    expect(told()).toBe(2)
+    expect(w.prompts.filter(p => /工具輸出約/.test(p)).at(-1)).toMatch(/PM 一次工具輸出約 24K token/)
   })
 
   test('say nothing on a day too small to tell', async ($, on) => {
@@ -142,7 +192,7 @@ describe('the brain’s actions on usage', () => {
     const id = /(Q-\d+) 大腦建議：全端的輪替門檻至少 80K/.exec(await textOf(ui))?.[1] ?? ''
     await ui.press({ key: `reject-${id}` })
     expect(await textOf(ui)).not.toMatch(/大腦建議/)
-    await ui.press({ key: 'tab-settings' })
+    await ui.press({ key: 'tab-tokens' })
     await ui.press({ key: 'tuning-auto' })
     await ui.unmount()
     expect(w.store.get(`settings:${ROOT}`)).toMatchObject({ tuning: 'auto' })
@@ -295,7 +345,8 @@ describe('the brain’s actions on usage', () => {
     await ui.press({ key: 'tab-tokens' })
     const text = await textOf(ui)
     expect(text).toMatch(/今天還沒有用量/)
-    expect(text).toMatch(/大腦處置：自動/)
+    // The switch is its two buttons, the one set lit.
+    expect((await ui.find({ key: 'tuning-auto' })) as unknown).toMatchObject({ props: { variant: 'primary' } })
     expect(text).toMatch(/DEC-\d+ 全端之後的工作改用 Opus/)
     expect(await ui.find({ key: 'tuning-ask' })).toBeDefined()
     await ui.unmount()
@@ -305,7 +356,7 @@ describe('the brain’s actions on usage', () => {
     await start($)
     const tune = async (input: Record<string, unknown>) => String((await crew($, { action: 'tune', ...input })).result)
     expect(await tune({ role: 'designer', model: 'opus' })).toMatch(/role 要是 pm、qa、uiux、techlead 或 fullstack/)
-    expect(await tune({ role: 'qa', model: 'gpt-5' })).toMatch(/Claude 的 model 要是 haiku、sonnet、opus、fable 其中之一/)
+    expect(await tune({ role: 'qa', model: 'gpt-5' })).toMatch(/Claude 的 model 要是 fable（Fable 5\.2）、claude-fable-5-1、claude-fable-5、opus（Opus 5\.5）、sonnet（Sonnet 5\.5）、claude-sonnet-5、claude-sonnet-4-6、haiku（Haiku 5\.5）、claude-haiku-4-5 其中之一/)
     for (const change of [{ effort: 'ultra' }, { limit: 19_999 }, { limit: 1_000_001 }, { limit: 50_000.5 }, { limit: '80000' }]) {
       expect(await tune({ role: 'qa', ...change })).toMatch(/請說要換的引擎、模型、effort 或輪替門檻/)
     }

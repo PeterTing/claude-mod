@@ -1,0 +1,1173 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>crew 主控台</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@700;900&display=swap">
+<style>
+/* Layout: a workroom console. A rail of the pane's tabs on the left, the open tab in the middle, the brain's conversation kept open on the right. */
+:root {
+  --bg: #eef1f4; --surface: #ffffff; --surface-2: #f5f7f9; --ink: #141920; --ink-2: #47505d; --muted: #6a7380; --line: #d8dde4; --grid: #e6e9ee;
+  --accent: #0b7566; --accent-ink: #ffffff; --accent-soft: #e2f2ef;
+  --claude: #2a78d6; --codex: #eb6834; --items: #6250d6;
+  --good: #0ca30c; --warn: #fab219; --serious: #ec835a; --crit: #d03b3b;
+  --good-ink: #0b6e0b; --warn-ink: #7a5200; --crit-ink: #a32626; --warn-soft: #fdf3dc; --crit-soft: #fbe7e7;
+  --hatch: rgba(20, 25, 32, .05);
+  --display: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
+  --body: "Noto Sans TC", "PingFang TC", "Heiti TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111418; --surface: #1a1e23; --surface-2: #20252b; --ink: #eceef1; --ink-2: #bac1cb; --muted: #8c95a2; --line: #2d333b; --grid: #262b32;
+  --accent: #3cc2a8; --accent-ink: #052019; --accent-soft: #143530;
+  --claude: #3987e5; --codex: #d95926; --items: #9085e9;
+  --good-ink: #5fd15f; --warn-ink: #f5c451; --crit-ink: #f09090; --warn-soft: #3a2f12; --crit-soft: #3d1d1d;
+  --hatch: rgba(255, 255, 255, .04);
+  color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #111418; --surface: #1a1e23; --surface-2: #20252b; --ink: #eceef1; --ink-2: #bac1cb; --muted: #8c95a2; --line: #2d333b; --grid: #262b32;
+  --accent: #3cc2a8; --accent-ink: #052019; --accent-soft: #143530;
+  --claude: #3987e5; --codex: #d95926; --items: #9085e9;
+  --good-ink: #5fd15f; --warn-ink: #f5c451; --crit-ink: #f09090; --warn-soft: #3a2f12; --crit-soft: #3d1d1d;
+  --hatch: rgba(255, 255, 255, .04);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.65; }
+[hidden] { display: none !important; }
+h1, h2, h3 { font-family: var(--display); line-height: 1.3; margin: 0; text-wrap: balance; }
+h1 { font-size: 1.2rem; font-weight: 900; }
+h2 { font-size: 1.35rem; }
+h3 { font-size: 1.02rem; }
+p { margin: 0; }
+code, .mono { font-family: var(--mono); font-size: .86em; }
+a { color: var(--accent); }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* The draft strip: says plainly that nothing here is real yet. */
+.draft { background: repeating-linear-gradient(135deg, var(--hatch) 0 8px, transparent 8px 16px), var(--surface-2); border-bottom: 1px solid var(--line); font-size: .85rem; color: var(--ink-2); padding-block: 6px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.draft b { color: var(--ink); letter-spacing: .04em; }
+
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding-block: 14px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); border-bottom: 1px solid var(--line); background: var(--surface); }
+.head { position: sticky; top: 0; z-index: 10; }
+.brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.brand .word { font-family: var(--mono); font-weight: 600; font-size: 1.05rem; letter-spacing: .02em; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--ink-2); font-size: .9rem; }
+.facts b { color: var(--ink); font-weight: 700; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: .1em; margin-right: 5px; }
+.dot.claude { background: var(--claude); }
+.dot.codex { background: var(--codex); }
+.beat { color: var(--good-ink); }
+
+.shell { display: grid; grid-template-columns: 196px minmax(0, 1fr) 360px; gap: 0; align-items: start; padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+.rail { position: sticky; top: var(--head-h, 0px); padding: 18px 12px; display: grid; gap: 2px; align-content: start; }
+.rail a { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 6px; text-decoration: none; color: var(--ink-2); font-weight: 500; }
+.rail a:hover { background: var(--surface-2); color: var(--ink); }
+.rail a[aria-current="page"] { background: var(--surface); color: var(--ink); box-shadow: inset 3px 0 0 var(--accent); }
+.badge { font-family: var(--mono); font-size: .75rem; min-width: 1.6em; text-align: center; padding: 0 6px; border-radius: 999px; background: var(--warn-soft); color: var(--warn-ink); }
+main { min-width: 0; padding-block: 22px 64px; padding-inline: 24px; display: grid; gap: 28px; border-left: 1px solid var(--line); border-right: 1px solid var(--line); min-height: 100vh; background: var(--bg); }
+.tab { display: grid; gap: 28px; min-width: 0; align-content: start; }
+.tab > header { display: grid; gap: 4px; }
+.lede { color: var(--muted); max-width: 70ch; }
+.block { display: grid; gap: 12px; min-width: 0; }
+.block > h3 { display: flex; align-items: baseline; gap: 10px; }
+.block > h3 small { font-family: var(--body); font-weight: 400; font-size: .85rem; color: var(--muted); }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; min-width: 0; }
+.note { color: var(--muted); font-size: .88rem; max-width: 80ch; }
+
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 4px 12px; cursor: pointer; line-height: 1.5; }
+.btn:hover { border-color: var(--ink-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.btn.small { padding: 1px 8px; font-size: .82rem; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.seg button { border: 0; background: transparent; padding: 4px 12px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+input[type="text"], textarea, select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; min-width: 0; }
+textarea { width: 100%; resize: vertical; }
+label.field { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: .9rem; max-width: 100%; white-space: nowrap; }
+label.field select { min-width: 0; max-width: 100%; flex: 0 1 auto; }
+
+/* Things that wait for the person: two groups, apart. */
+.needs { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.need-group { display: grid; gap: 10px; align-content: start; }
+.need-group > h3 { display: flex; gap: 8px; align-items: center; }
+.ask { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 8px; }
+.ask.model { border-left: 4px solid var(--warn); }
+.ask .id { font-family: var(--mono); font-weight: 600; margin-right: 6px; }
+.ask .meta { color: var(--muted); font-size: .82rem; }
+.ask details { font-size: .9rem; }
+.ask details pre { white-space: pre-wrap; font-family: var(--mono); font-size: .8rem; background: var(--surface-2); padding: 10px; border-radius: 6px; margin: 8px 0 0; }
+
+/* Roles */
+.roles { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.role { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; gap: 8px; align-content: start; }
+.role-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.role-head h3 { font-size: 1rem; }
+.state { font-size: .8rem; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+.state.working { background: var(--accent-soft); color: var(--accent); }
+.state.blocked { background: var(--crit-soft); color: var(--crit-ink); }
+.state.waiting { background: var(--warn-soft); color: var(--warn-ink); }
+.doing { font-size: .92rem; }
+.route { font-family: var(--mono); font-size: .82rem; color: var(--ink-2); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.eng { display: inline-flex; align-items: center; gap: 4px; font-family: var(--body); font-size: .78rem; padding: 0 7px; border-radius: 4px; border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; }
+.meter { display: grid; gap: 3px; font-size: .8rem; color: var(--muted); }
+.meter .track { height: 6px; background: var(--grid); border-radius: 3px; overflow: hidden; }
+.meter .fill { height: 100%; background: var(--ink-2); border-radius: 0 3px 3px 0; }
+.meter.hot .fill { background: var(--warn); }
+.gates { display: flex; flex-wrap: wrap; gap: 6px; }
+.gate { font-family: var(--mono); font-size: .82rem; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); }
+.gate.pass { color: var(--good-ink); }
+.gate.gap { color: var(--crit-ink); border-color: currentColor; }
+.gate.active { color: var(--accent); border-color: currentColor; }
+.gate.pending { color: var(--muted); border-style: dashed; }
+.alerts { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+.alerts .at { color: var(--muted); font-family: var(--mono); font-size: .82rem; }
+
+/* Progress */
+.headline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 32px; }
+.big { font-family: var(--display); font-size: 3.2rem; font-weight: 900; line-height: 1; }
+.big-sub { color: var(--muted); font-size: .9rem; }
+.big-alt { font-family: var(--mono); font-size: 1.3rem; }
+.stages { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.stages li { padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); font-size: .9rem; }
+.stages li.done { color: var(--good-ink); }
+.stages li.active { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.stages li.pending { border-style: dashed; color: var(--muted); }
+.stages .arrow { border: 0; background: none; padding: 0; color: var(--muted); }
+.table-box { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+thead th { font-size: .76rem; letter-spacing: .06em; color: var(--muted); font-weight: 500; }
+tbody tr:last-child > * { border-bottom: 0; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: .85rem; }
+.layer { font-size: .78rem; padding: 0 6px; border-radius: 4px; margin-right: 4px; border: 1px solid var(--line); }
+.layer.done { color: var(--good-ink); }
+.layer.done::after { content: " ✓"; }
+.layer.doing { color: var(--accent); border-color: currentColor; }
+.layer.todo { color: var(--muted); border-style: dashed; }
+.recent { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+
+/* Board */
+.columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; align-items: start; }
+.col { display: grid; gap: 8px; }
+.col h3 { font-size: .95rem; display: flex; gap: 6px; align-items: baseline; }
+.col h3 small { color: var(--muted); font-family: var(--mono); font-weight: 400; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; }
+.card.blocked { border-left: 4px solid var(--crit); }
+.card .id { font-family: var(--mono); font-size: .8rem; color: var(--muted); }
+.card .title { font-weight: 500; }
+.card .owner { font-size: .82rem; color: var(--muted); }
+.card .cnote { font-size: .82rem; color: var(--ink-2); background: var(--surface-2); padding: 4px 8px; border-radius: 4px; }
+
+/* Threads */
+.threads { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; align-items: start; }
+.thread-list { display: grid; gap: 6px; }
+.thread-list button { text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+.thread-list button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.messages { display: grid; gap: 10px; }
+.msg { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+.msg .who { font-size: .8rem; color: var(--muted); }
+.msg.route { background: var(--surface-2); border-style: dashed; }
+
+/* Memory */
+.mem-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.mem { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; display: grid; gap: 4px; }
+.mtype { font-size: .76rem; padding: 0 7px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); margin-right: 6px; }
+.mem .src { color: var(--muted); font-size: .8rem; }
+
+/* Charts */
+.chart { display: grid; gap: 8px; min-width: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .85rem; color: var(--ink-2); }
+.legend .sw { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -1px; margin-right: 6px; }
+svg.plot { width: 100%; height: auto; display: block; overflow: visible; }
+svg.plot text { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
+svg.plot .grid { stroke: var(--grid); stroke-width: 1; }
+svg.plot .base { stroke: var(--line); stroke-width: 1; }
+svg.plot .label { fill: var(--ink); font-weight: 600; }
+svg.plot .hit { fill: transparent; cursor: default; }
+svg.plot g.mark:hover .seg-shape, svg.plot g.mark:focus .seg-shape { filter: brightness(1.12); }
+svg.plot g.mark:focus { outline: none; }
+svg.plot g.mark:focus .hit { stroke: var(--accent); stroke-width: 2; }
+.hbars { display: grid; gap: 6px; }
+.hbar { display: grid; grid-template-columns: minmax(7em, 13em) minmax(0, 1fr); gap: 4px 12px; align-items: center; font-size: .88rem; }
+.hbar .track { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hbar .bar { height: 14px; background: var(--items); border-radius: 0 4px 4px 0; min-width: 2px; }
+.hbar .val { font-family: var(--mono); font-size: .8rem; color: var(--ink-2); white-space: nowrap; }
+.hbar:hover .bar, .hbar:focus .bar { filter: brightness(1.12); }
+.hbar:focus { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+details.tableview summary { cursor: pointer; color: var(--accent); font-size: .85rem; }
+details.tableview table { margin-top: 8px; }
+.tip { position: fixed; z-index: 30; pointer-events: none; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 6px 20px rgba(0, 0, 0, .16); border-radius: 6px; padding: 8px 10px; font-size: .82rem; display: grid; gap: 2px; min-width: 9em; }
+.tip .t-head { color: var(--muted); }
+.tip .t-row { display: flex; align-items: center; gap: 8px; }
+.tip .t-row b { font-family: var(--mono); }
+.tip .key { width: 12px; height: 2px; display: inline-block; }
+
+/* Bottlenecks */
+.bn-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: bn; }
+.bn { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px 12px 50px; position: relative; display: grid; gap: 6px; counter-increment: bn; }
+.bn::before { content: counter(bn); position: absolute; left: 14px; top: 11px; font-family: var(--display); font-weight: 900; font-size: 1.3rem; color: var(--muted); }
+.bn-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; justify-content: space-between; }
+.bn-cost { font-family: var(--mono); font-size: .85rem; color: var(--ink-2); }
+.bn-fix { font-size: .9rem; color: var(--ink-2); }
+.st { font-size: .78rem; padding: 0 8px; border-radius: 999px; white-space: nowrap; display: inline-flex; gap: 4px; align-items: center; }
+.st.done { background: var(--surface-2); color: var(--good-ink); }
+.st.acting { background: var(--accent-soft); color: var(--accent); }
+.st.you { background: var(--warn-soft); color: var(--warn-ink); font-weight: 700; }
+
+/* Models */
+.codex-line { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.ok { color: var(--good-ink); font-weight: 700; }
+.mcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+.mcard { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; min-width: 0; }
+.mcard-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: baseline; }
+.now { font-size: .85rem; color: var(--ink-2); }
+.why { font-size: .85rem; color: var(--muted); }
+.floor { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; padding-top: 8px; border-top: 1px solid var(--line); }
+.floor .fl-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.floor .eng-name { font-weight: 700; min-width: 7.5em; }
+.ladder { font-family: var(--mono); font-size: .78rem; color: var(--ink-2); overflow-wrap: anywhere; }
+.fixed-note { font-size: .85rem; color: var(--muted); }
+.limit { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; padding-top: 8px; border-top: 1px solid var(--line); }
+
+/* Settings */
+.prefs { display: grid; gap: 14px; }
+.pref { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 8px; }
+.pref .seg, .pref label.field { justify-self: start; }
+.pref .sub { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.devices { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.devices li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.notes { display: grid; gap: 6px; flex-basis: 100%; }
+.url { font-family: var(--mono); background: var(--surface-2); padding: 2px 8px; border-radius: 4px; overflow-wrap: anywhere; }
+
+/* The brain's conversation */
+.brain { position: sticky; top: var(--head-h, 0px); height: calc(100vh - var(--head-h, 0px)); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--surface); min-width: 0; }
+.brain-head { padding: 16px 18px 10px; border-bottom: 1px solid var(--line); display: grid; gap: 2px; }
+.brain-head p { color: var(--muted); font-size: .82rem; }
+.log { overflow-y: auto; padding: 14px 18px; display: grid; gap: 12px; align-content: start; }
+.bubble { display: grid; gap: 2px; max-width: 92%; }
+.bubble .b-who { font-size: .76rem; color: var(--muted); }
+.bubble .b-text { padding: 8px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+.bubble.by-person { justify-self: end; }
+.bubble.by-person .b-text { background: var(--accent-soft); border-color: transparent; }
+.bubble.by-person .b-who { text-align: right; }
+.bubble.by-crew { max-width: 100%; }
+.bubble.by-crew .b-text { background: transparent; border-style: dashed; font-size: .88rem; color: var(--ink-2); }
+.compose { border-top: 1px solid var(--line); padding: 12px 18px max(14px, env(safe-area-inset-bottom, 0px)); display: grid; gap: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line); background: var(--surface-2); border-radius: 999px; padding: 1px 10px; font-size: .82rem; cursor: pointer; }
+.attach { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: .8rem; background: var(--accent-soft); color: var(--accent); border-radius: 4px; padding: 0 4px 0 8px; }
+.attach button { border: 0; background: none; color: inherit; cursor: pointer; padding: 0 4px; font-size: 1rem; line-height: 1; }
+.send-row { display: flex; gap: 8px; align-items: flex-end; }
+.send-row textarea { flex: 1; min-height: 2.6em; }
+.compose .note { font-size: .78rem; }
+.jump { display: none; }
+
+.toast { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); bottom: max(20px, calc(env(safe-area-inset-bottom, 0px) + 12px)); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: 6px; font-size: .9rem; max-width: min(90vw, 560px); box-shadow: 0 8px 24px rgba(0, 0, 0, .2); }
+
+@media (max-width: 1240px) {
+  .shell { grid-template-columns: minmax(0, 1fr) 340px; }
+  .rail { grid-column: 1 / -1; position: static; display: flex; overflow-x: auto; padding: 8px max(16px, env(safe-area-inset-left, 0px)); border-bottom: 1px solid var(--line); gap: 4px; }
+  .rail a { white-space: nowrap; }
+  .rail a[aria-current="page"] { box-shadow: inset 0 -3px 0 var(--accent); }
+  main { border-left: 0; }
+}
+@media (max-width: 860px) {
+  .head { position: static; }
+  .shell { grid-template-columns: minmax(0, 1fr); padding-left: 0; padding-right: 0; }
+  main { border-right: 0; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); min-height: 0; }
+  .brain { position: static; height: auto; border-top: 1px solid var(--line); }
+  .brain-head, .log, .compose { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .log { max-height: 70vh; }
+  .threads { grid-template-columns: minmax(0, 1fr); }
+  .mcards { grid-template-columns: minmax(0, 1fr); }
+  .jump { display: inline-flex; position: fixed; z-index: 20; right: max(16px, calc(env(safe-area-inset-right, 0px) + 12px)); bottom: max(16px, calc(env(safe-area-inset-bottom, 0px) + 12px)); box-shadow: 0 6px 18px rgba(0, 0, 0, .2); }
+  .big { font-size: 2.6rem; }
+}
+@media (max-width: 480px) {
+  .hbar { grid-template-columns: minmax(0, 1fr); }
+  .needs { grid-template-columns: minmax(0, 1fr); }
+  .roles { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .toast { transition: opacity .2s ease; }
+  .beat::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; vertical-align: .08em; animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .beat::before { content: "●"; color: var(--good); margin-right: 6px; font-size: .7em; }
+}
+</style>
+</head>
+<body>
+<div class="head" id="head">
+<div class="draft" role="note"><b>設計稿・示意資料</b>（還沒接上 crew）　畫面上的數字和事件都是示意；按鈕只會說明實際會做什麼。</div>
+
+<header class="top">
+  <div class="brand"><span class="word">crew</span><h1>PRD-001 會員訂閱 v1</h1></div>
+  <div class="facts">
+    <span>整體進度 <b class="num">58%</b>（依難易度加權；件數 <span class="num">31/50</span>）</span>
+    <span>今日 <i class="dot claude" aria-hidden="true"></i>Claude <b class="num">131K</b> tok · <i class="dot codex" aria-hidden="true"></i>Codex <b class="num">281K</b> tok</span>
+    <span class="beat">常駐心跳 1 分鐘前</span>
+  </div>
+</header>
+</div>
+
+<div class="shell">
+  <nav class="rail" aria-label="分頁">
+    <a href="#overview">總覽 <span class="badge" title="等你處理">6</span></a>
+    <a href="#progress">進度</a>
+    <a href="#board">看板</a>
+    <a href="#threads">討論</a>
+    <a href="#memory">記憶</a>
+    <a href="#tokens">Token</a>
+    <a href="#models">模型 <span class="badge" title="模型的事">3</span></a>
+    <a href="#prefs">設定</a>
+  </nav>
+
+  <main id="main">
+    <!-- 總覽 -->
+    <section class="tab" id="tab-overview" aria-labelledby="h-overview">
+      <header><h2 id="h-overview">總覽</h2><p class="lede">等你處理的事在最上面。模型的事和產品的問題分開放。</p></header>
+      <div class="needs">
+        <div class="need-group" aria-labelledby="h-model-asks">
+          <h3 id="h-model-asks">模型的事 <span class="badge">3</span></h3>
+          <article class="ask model">
+            <p><span class="id">M-01</span>大腦想把 UI/UX 換到 Codex（6.1 Terra・medium 起）：UI/UX 今天用了 Claude 的 73%。</p>
+            <p class="meta">大腦 · 12:42 · 你開著「換模型前先問你」</p>
+            <div class="row">
+              <button class="btn primary" data-would="讓 UI/UX 從下一件工作開始用 Codex，從 6.1 Terra・medium 起">好</button>
+              <button class="btn" data-would="讓 UI/UX 留在 Claude，告訴大腦你沒同意">不要</button>
+            </div>
+          </article>
+          <article class="ask model">
+            <p><span class="id">M-02</span>QA 固定用 6.1 Terra・medium，TC-31 被 PM 退回 3 次。這件暫時升到 6.1 Sol・high？</p>
+            <p class="meta">crew · 13:05</p>
+            <div class="row">
+              <button class="btn primary" data-would="讓 QA 只有 TC-31 這件改用 6.1 Sol・high，做完回到你固定的 6.1 Terra・medium">這件升一格</button>
+              <button class="btn" data-would="讓 QA 照舊用 6.1 Terra・medium 做 TC-31">照舊</button>
+            </div>
+          </article>
+          <article class="ask model">
+            <p><span class="id">M-03</span>全端的 TASK-15 測試失敗 2 次，要從 6.1 Sol・xhigh 升到 6 Astra・xhigh 嗎？</p>
+            <p class="meta">crew · 13:06 · 你開著「換模型前先問你」</p>
+            <div class="row">
+              <button class="btn primary" data-would="讓全端用 6 Astra・xhigh 接著做 TASK-15">升級</button>
+              <button class="btn" data-would="讓全端照舊用 6.1 Sol・xhigh 再試 TASK-15">照舊</button>
+            </div>
+          </article>
+        </div>
+        <div class="need-group" aria-labelledby="h-decisions">
+          <h3 id="h-decisions">待你決定 <span class="badge">3</span></h3>
+          <article class="ask">
+            <p><span class="id">Q-03</span>年繳方案要不要第一版就做？</p>
+            <p class="meta">PM · 12 分鐘前</p>
+            <div class="row"><label class="field" for="answer-q03">回答</label><input type="text" id="answer-q03" placeholder="你的回答"><button class="btn" data-would="把你的回答交給 PM">送出</button></div>
+          </article>
+          <article class="ask">
+            <p><span class="id">Q-04</span>大腦建議：全端輪替門檻 160K → 120K</p>
+            <p class="meta">大腦 · 剛剛 · 全端現在 context 96K</p>
+            <div class="row">
+              <button class="btn primary" data-would="把全端的輪替門檻改成 120K，記成一條決定">核准</button>
+              <button class="btn" data-would="不執行大腦的建議">不要</button>
+            </div>
+          </article>
+          <article class="ask">
+            <p><span class="id">Q-05</span>設計稿 SCR-04 結帳頁三種狀態等你核准</p>
+            <p class="meta">UI/UX · 5 分鐘前</p>
+            <details>
+              <summary>看設計稿</summary>
+              <pre>結帳頁（kind: screen）
+版面：方案摘要｜付款方式｜送出
+狀態：
+  載入中  付款方式區塊顯示骨架，送出鈕停用
+  錯誤    卡片被拒：在付款方式下方紅字「卡片沒有通過，請換一張卡」
+  成功    轉到「訂閱完成」，寄出收據
+無障礙：錯誤訊息用 aria-live，送出鈕有清楚的停用狀態</pre>
+            </details>
+            <div class="row">
+              <button class="btn primary" data-would="核准 SCR-04，全端可以照它做">核准</button>
+              <label class="field" for="reject-q05">退回原因</label><input type="text" id="reject-q05" placeholder="要改什麼"><button class="btn" data-would="把 SCR-04 退回給 UI/UX，附上你寫的原因">退回</button>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <div class="block">
+        <h3>角色 <small>引擎用顏色分：<i class="dot claude" aria-hidden="true"></i>Claude　<i class="dot codex" aria-hidden="true"></i>Codex</small></h3>
+        <div class="roles" id="roles"></div>
+      </div>
+
+      <div class="block">
+        <h3>關卡</h3>
+        <div class="gates">
+          <span class="gate active">G0 進行中 14/16</span><span class="gate pass">G1 ✓</span><span class="gate pass">G2 ✓</span><span class="gate active">G3 進行中</span><span class="gate gap">G4 2 個缺口</span><span class="gate active">G5 進行中</span><span class="gate pending">G6 —</span>
+        </div>
+      </div>
+
+      <div class="block">
+        <h3>提醒已送大腦 <small>同一條件一小時最多一次</small></h3>
+        <ul class="alerts">
+          <li>UI/UX 今日佔 Claude 的 73%（超過 40%） <span class="at">12:41</span></li>
+          <li>UI/UX 快取命中率 52%（低於 60%）：喚醒間隔 7 分鐘，對話整份重寫快取 <span class="at">11:05</span></li>
+          <li>PM 和 QA 在 AC-07 來回 7 次（超過 6 次） <span class="at">12:20</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 進度 -->
+    <section class="tab" id="tab-progress" aria-labelledby="h-progress" hidden>
+      <header><h2 id="h-progress">進度</h2></header>
+      <div class="panel headline">
+        <div><div class="big num">58%</div><p class="big-sub">依難易度加權</p></div>
+        <div><div class="big-alt num">31 / 50 項</div><p class="big-sub">只算件數是 62%</p></div>
+        <div class="notes">
+          <p class="note">每一項照它的難易度加權：易 1、中 2、難 4、極難 8；Tech lead 還沒評的算中。</p>
+          <p class="note">難易度看的是難不難，不是範圍大小。Tech lead 拆單時評，寫一句理由：哪裡不確定、碰不碰金流或權限、跨幾個模組、有沒有現成做法、好不好測。</p>
+          <p class="note">之後碰到這些各往上調一級：測試失敗 2 次、review 被退回 2 次、PM 和 QA 來回超過 6 次、用掉的 token 超過同級平均 2 倍。做完的照最後的難易度算，所以調高時百分比可能往下掉。</p>
+          <p><b>最近調整</b>　<span class="mono">TASK-15</span> 難 → 極難：測試失敗 2 次 · 進度 60% → 58%</p>
+        </div>
+      </div>
+      <div class="block">
+        <h3>七個階段</h3>
+        <ol class="stages">
+          <li class="done">規格 ✓</li><li class="arrow" aria-hidden="true">→</li>
+          <li class="done">設計 ✓</li><li class="arrow" aria-hidden="true">→</li>
+          <li class="active">測試案例 10/12</li><li class="arrow" aria-hidden="true">→</li>
+          <li class="active">任務 4/5</li><li class="arrow" aria-hidden="true">→</li>
+          <li class="active">實作 5/14</li><li class="arrow" aria-hidden="true">→</li>
+          <li class="active">Review 3/14</li><li class="arrow" aria-hidden="true">→</li>
+          <li class="active">測試結果 1/8</li>
+        </ol>
+      </div>
+      <div class="block">
+        <h3>功能</h3>
+        <div class="table-box"><table>
+          <thead><tr><th>功能</th><th class="num">進度</th><th>設計・前端・後端・測試</th></tr></thead>
+          <tbody>
+            <tr><td><span class="mono">F-01</span> 方案選擇</td><td class="num">100%</td><td><span class="layer done">設計</span><span class="layer done">前端</span><span class="layer done">後端</span><span class="layer done">測試</span></td></tr>
+            <tr><td><span class="mono">F-02</span> 結帳</td><td class="num">64%</td><td><span class="layer doing">設計</span><span class="layer doing">前端</span><span class="layer done">後端</span><span class="layer doing">測試</span></td></tr>
+            <tr><td><span class="mono">F-03</span> 取消與到期</td><td class="num">40%</td><td><span class="layer done">設計</span><span class="layer todo">前端</span><span class="layer doing">後端</span><span class="layer doing">測試</span></td></tr>
+            <tr><td><span class="mono">F-04</span> 金流 webhook</td><td class="num">25%</td><td><span class="layer done">設計</span><span class="layer todo">前端</span><span class="layer doing">後端</span><span class="layer todo">測試</span></td></tr>
+          </tbody>
+        </table></div>
+      </div>
+      <div class="block chart">
+        <h3>每天完成幾項 <small>近 5 天</small></h3>
+        <div class="panel"><svg class="plot" id="chart-done" role="img" aria-label="近 5 天每天完成的項數"></svg></div>
+        <details class="tableview"><summary>看表格</summary><div class="table-box"><table id="table-done"></table></div></details>
+      </div>
+      <div class="block">
+        <h3>最近完成</h3>
+        <ul class="recent">
+          <li><span class="mono">TC-28</span> 月繳扣款成功 · QA · 8 分鐘前</li>
+          <li><span class="mono">SCR-01</span> 方案選擇頁 · UI/UX · 40 分鐘前</li>
+          <li><span class="mono">AC-01</span> 可以選月繳方案 · PM · 1 小時前</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 看板 -->
+    <section class="tab" id="tab-board" aria-labelledby="h-board" hidden>
+      <header><h2 id="h-board">看板</h2><p class="lede">每張卡的「問大腦」會把編號帶進右邊的對話。</p></header>
+      <div class="columns" id="columns"></div>
+    </section>
+
+    <!-- 討論 -->
+    <section class="tab" id="tab-threads" aria-labelledby="h-threads" hidden>
+      <header><h2 id="h-threads">討論</h2></header>
+      <div class="threads">
+        <div class="thread-list" id="thread-list" role="group" aria-label="討論串"></div>
+        <div class="messages" id="thread-messages" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- 記憶 -->
+    <section class="tab" id="tab-memory" aria-labelledby="h-memory" hidden>
+      <header><h2 id="h-memory">記憶</h2><p class="lede">角色換新對話後，靠這些記憶接上之前的決定。</p></header>
+      <div class="row"><label class="field" for="mem-q">找記憶</label><input type="text" id="mem-q" placeholder="例如 金流、輪替"></div>
+      <ul class="mem-list" id="mem-list"></ul>
+    </section>
+
+    <!-- Token -->
+    <section class="tab" id="tab-tokens" aria-labelledby="h-tokens" hidden>
+      <header><h2 id="h-tokens">Token</h2><p class="lede">看 token 花在哪、哪裡是瓶頸、大腦處置了什麼。</p></header>
+      <div class="block chart">
+        <h3>每天的 token <small>近 7 天，Claude 和 Codex 分開算</small></h3>
+        <div class="legend"><span><i class="sw" style="background:var(--claude)"></i>Claude</span><span><i class="sw" style="background:var(--codex)"></i>Codex（走你的 Codex 額度）</span></div>
+        <div class="panel"><svg class="plot" id="chart-days" role="img" aria-label="近 7 天每天的 token，Claude 和 Codex 堆疊"></svg></div>
+        <details class="tableview"><summary>看表格</summary><div class="table-box"><table id="table-days"></table></div></details>
+      </div>
+      <div class="block">
+        <h3>今天各角色</h3>
+        <div class="table-box"><table>
+          <thead><tr><th>角色</th><th class="num">輸入</th><th class="num">輸出</th><th class="num">快取讀</th><th class="num">快取寫</th><th class="num">命中率</th><th class="num">喚醒</th><th class="num">輪替</th></tr></thead>
+          <tbody>
+            <tr><td><i class="dot codex" aria-hidden="true"></i>PM・Codex</td><td class="num">6K</td><td class="num">4K</td><td class="num">32K</td><td class="num">—</td><td class="num">84%</td><td class="num">1</td><td class="num">0</td></tr>
+            <tr><td><i class="dot claude" aria-hidden="true"></i>UI/UX</td><td class="num">11K</td><td class="num">13K</td><td class="num">61K</td><td class="num">11K</td><td class="num">73%</td><td class="num">9</td><td class="num">1</td></tr>
+            <tr><td><i class="dot codex" aria-hidden="true"></i>全端・Codex</td><td class="num">31K</td><td class="num">22K</td><td class="num">135K</td><td class="num">—</td><td class="num">81%</td><td class="num">3</td><td class="num">0</td></tr>
+            <tr><td><i class="dot codex" aria-hidden="true"></i>QA・Codex</td><td class="num">7K</td><td class="num">6K</td><td class="num">38K</td><td class="num">—</td><td class="num">84%</td><td class="num">1</td><td class="num">0</td></tr>
+            <tr><td><i class="dot claude" aria-hidden="true"></i>Tech lead</td><td class="num">5K</td><td class="num">4K</td><td class="num">22K</td><td class="num">4K</td><td class="num">71%</td><td class="num">3</td><td class="num">0</td></tr>
+          </tbody>
+        </table></div>
+        <p class="note">今日 Claude 131K tok 是 UI/UX 和 Tech lead 的用量，不含大腦自己的對話。Codex 281K tok 是 PM、全端、QA 的用量，走你的 Codex 額度，不算進 Claude 的數字。Codex 不回報快取寫入，那一格寫「—」。</p>
+      </div>
+      <div class="block">
+        <h3>去向 <small>今天的 412K 花在哪</small></h3>
+        <div class="panel hbars" id="spend"></div>
+        <p class="note">依難易度：易 38K · 中 121K · 難 176K · 極難 77K</p>
+      </div>
+      <div class="block">
+        <h3>瓶頸 <small>近 7 天，跨 3 個 session，依 token 由大到小</small></h3>
+        <ol class="bn-list" id="bottlenecks"></ol>
+        <p class="note">所有角色和大腦的每一次執行都記在 <code>.crew/usage/</code>，跨 session 保留：token、模型、工具、技能、記憶、呼叫方式。每件工作做完，crew 用程式重算一次瓶頸，不花 token；只有出現新的瓶頸，或處置過的又變大，才把那一條告訴大腦。每個 session 開始時，還沒處置完的再說一次；整份排行大腦和你隨時可以看。單次執行超標就馬上提醒：工具結果超過 10K、context 超過門檻的 85%、快取命中率低於 60%。處置照「大腦處置 token 用量」先問你或自動。</p>
+        <p class="note">上次告訴大腦：記憶包用到的只有 23%（新的瓶頸）· 40 分鐘前</p>
+      </div>
+      <div class="block">
+        <h3>大腦的 context <small>現在 105K，每一輪都帶</small></h3>
+        <div class="panel hbars" id="brain-context"></div>
+      </div>
+    </section>
+
+    <!-- 模型 -->
+    <section class="tab" id="tab-models" aria-labelledby="h-models" hidden>
+      <header><h2 id="h-models">模型</h2><p class="lede">每個角色可以照系統預設，或自己挑一個固定用。</p></header>
+      <div class="panel codex-line">
+        <span class="ok">✓ Codex 已登入</span><span>ChatGPT 帳號 · codex-cli 0.162.1 · 剛剛檢查</span>
+        <button class="btn small" data-would="重新檢查這台電腦的 Codex：找不找得到 codex 指令、有沒有登入">重新檢查</button>
+        <p class="note">你在終端機登入或登出 Codex 後，crew 會自己發現，不用重開 Claude Code。</p>
+      </div>
+      <div class="panel row" style="justify-content:space-between">
+        <div><b>大腦換模型前先問你</b><p class="note" id="ask-switch-note">換引擎、模型或 effort，Claude 和 Codex 都先在「模型的事」問你；等的時候那個角色停著。</p><p class="note">自己挑選的角色不會被換；它卡住時，不管開關都會問你。</p></div>
+        <div class="seg" role="group" aria-label="大腦換模型前先問你" data-note-for="ask-switch-note">
+          <button type="button" aria-pressed="true" data-seg="ask-switch" data-note="換引擎、模型或 effort，Claude 和 Codex 都先在「模型的事」問你；等的時候那個角色停著。" data-would="讓大腦換引擎、模型或 effort 前都先問你，包括照難易度往上升、失敗後升級、Codex 不能用時改用 Claude；等的時候那個角色停著">先問你</button>
+          <button type="button" aria-pressed="false" data-seg="ask-switch" data-note="大腦自己換，事後記成決定。" data-would="讓大腦自己換引擎、模型或 effort，事後記成決定">不用問</button>
+        </div>
+      </div>
+      <p class="note">輪替門檻依難易度時，大腦可以調；你固定了，大腦就不動。</p>
+      <div class="mcards" id="mcards"></div>
+      <div class="panel">
+        <p class="note">權限跟 Claude 一樣：PM、QA、UI/UX、Tech lead 只讀 repo；全端只在 crew 的工作目錄改檔，可以跑指令、上網裝套件。Codex 做到一半不能停下來問你，所以由沙箱守住這條線，蓋過你 Codex 設定裡的 <code>danger-full-access</code>。Codex 用你在這台電腦的登入，額度另外算，crew 不經手金鑰。</p>
+      </div>
+    </section>
+
+    <!-- 設定 -->
+    <section class="tab" id="tab-prefs" aria-labelledby="h-prefs" hidden>
+      <header><h2 id="h-prefs">設定</h2></header>
+      <div class="prefs">
+        <div class="pref">
+          <b>測試指令</b>
+          <div class="row"><label class="field" for="test-cmd">指令</label><input type="text" id="test-cmd" value="python3 -m pytest -v"><button class="btn" data-would="把測試指令存起來">儲存</button><button class="btn" data-would="在全端的工作目錄跑測試">跑測試</button></div>
+          <p class="note">crew 在全端的工作目錄直接執行，不經過 shell，不會每次問你。</p>
+        </div>
+        <div class="pref">
+          <b>大腦處置 token 用量</b>
+          <div class="seg" role="group" aria-label="大腦處置 token 用量">
+            <button type="button" aria-pressed="false" data-seg="tuning" data-would="讓大腦自己處置 token 用量，事後記成決定">自動</button>
+            <button type="button" aria-pressed="true" data-seg="tuning" data-would="讓大腦提出建議，你核准才執行">先問你</button>
+          </div>
+          <p class="note">瓶頸每件工作做完就重算，有新的才告訴大腦，沒有頻率要設。</p>
+          <p class="note">管輪替門檻這類處置。換引擎和模型另外由「模型」分頁的開關管。</p>
+        </div>
+        <div class="pref">
+          <b>大腦接手這個 repo</b>
+          <div class="seg" role="group" aria-label="大腦接手這個 repo">
+            <button type="button" aria-pressed="true" data-seg="takeover" data-would="讓大腦從你的第一句話開始主導這個 repo">接手</button>
+            <button type="button" aria-pressed="false" data-seg="takeover" data-would="不再讓大腦接手這個 repo">不接手</button>
+          </div>
+          <p class="note">只影響這個 repo。設定存在這台電腦，不進 git。</p>
+        </div>
+        <div class="pref">
+          <b>網頁</b>
+          <div class="row"><span class="url">http://127.0.0.1:47321/</span><button class="btn small" data-would="在瀏覽器打開這個網頁">打開</button></div>
+          <div class="row"><span>crew 啟動時打開網頁</span>
+            <div class="seg" role="group" aria-label="crew 啟動時打開網頁">
+              <button type="button" aria-pressed="true" data-seg="web-open" data-would="crew 啟動時打開網頁">打開</button>
+              <button type="button" aria-pressed="false" data-seg="web-open" data-would="crew 啟動時不打開網頁，要看時從面板按［打開網頁］">不要打開</button>
+            </div>
+          </div>
+          <p class="note">這個網址只有這台電腦打得開，帶一次性的鑰匙。關掉 Claude Code，網頁就停。</p>
+          <div class="sub">
+            <b>手機</b>
+            <div class="seg" role="group" aria-label="手機">
+              <button type="button" aria-pressed="true" data-seg="phone" data-would="用 tailscale serve 把網頁開放給你 tailnet 裡的裝置">用 Tailscale 開放</button>
+              <button type="button" aria-pressed="false" data-seg="phone" data-would="停掉 tailscale serve，網頁只有這台電腦打得開">只限這台電腦</button>
+            </div>
+            <p><span class="ok">Tailscale ✓ 已連上</span> · 這台電腦 macbook</p>
+            <div class="row"><span class="url">https://macbook.tail0c3f.ts.net/</span><button class="btn small" id="pair" data-would="顯示一組配對碼（例如 482-913），10 分鐘內在手機輸入">配對新裝置</button></div>
+            <p>已配對的裝置</p>
+            <ul class="devices"><li>iPhone · 昨天配對 <button class="btn small" data-would="移除 iPhone，它要重新配對才連得到">移除</button></li></ul>
+            <p class="note">只有你 tailnet 裡、用你的帳號登入的裝置連得到。crew 用 tailscale serve，不用 funnel，不會公開到網路上。第一次在手機打開要輸入配對碼，之後這支手機就記住了。關掉 Claude Code，手機也連不到。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <aside class="brain" id="brain" aria-labelledby="h-brain">
+    <div class="brain-head"><h2 id="h-brain">大腦</h2><p>Claude Code 的主對話。這裡和終端機是同一段對話。</p></div>
+    <div class="log" id="log" role="log" aria-live="polite"></div>
+    <div class="compose">
+      <div class="chips" aria-label="快捷問題">
+        <button type="button" class="chip" data-quick="看今天的瓶頸">看今天的瓶頸</button>
+        <button type="button" class="chip" data-quick="總結今天的進度">總結今天的進度</button>
+        <button type="button" class="chip" data-quick="TASK-15 為什麼卡住？">TASK-15 為什麼卡住</button>
+      </div>
+      <div id="attachments" class="chips"></div>
+      <div class="send-row">
+        <textarea id="say" rows="2" aria-label="給大腦的話" placeholder="跟大腦說…"></textarea>
+        <button class="btn primary" id="send" type="button">送出</button>
+      </div>
+      <p class="note">這裡的訊息會送進 Claude Code 的對話，大腦的回覆會同步到這裡；在終端機打字也一樣。</p>
+    </div>
+  </aside>
+</div>
+
+<button class="btn primary jump" type="button" id="jump">和大腦對話</button>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+// Sample data, as the pane's "需要注意" situation has it. None of it is real.
+var ROLES = [
+  { id: 'pm', name: 'PM', state: 'idle', stateName: '待命', doing: '—', engine: 'codex', route: '6.1 Terra・high', mode: '系統預設', ctx: 18, limit: 60, today: 42 },
+  { id: 'uiux', name: 'UI/UX', state: 'working', stateName: '進行中', doing: 'SCR-04 結帳頁三種狀態', engine: 'claude', route: '中 Sonnet・high', mode: '系統預設，門檻大腦調成 80K', ctx: 41, limit: 80, today: 96 },
+  { id: 'fullstack', name: '全端', state: 'waiting', stateName: '等待', doing: 'TASK-15 測試失敗 2 次，升級等你決定（M-03）', engine: 'codex', route: '極難 6.1 Sol・xhigh', mode: '系統預設，大腦選 Codex', ctx: 96, limit: 256, today: 188 },
+  { id: 'qa', name: 'QA', state: 'waiting', stateName: '等待', doing: 'TC-31 被 PM 退回 3 次，等你決定（M-02）', engine: 'codex', route: '易 6.1 Terra・medium', mode: '自己挑選，固定', ctx: 23, limit: 60, today: 51 },
+  { id: 'techlead', name: 'Tech lead', state: 'rotating', stateName: '輪替中', doing: '閒置後換新對話，帶記憶重開', engine: 'claude', route: '極難 Opus・xhigh', mode: '系統預設，門檻固定 200K', ctx: 58, limit: 200, today: 35 }
+];
+var ITEMS = [
+  { id: 'SCR-04', title: '結帳頁三種狀態', owner: 'UI/UX', status: 'doing', engine: 'claude', route: '中 Sonnet・high' },
+  { id: 'TASK-12', title: '訂閱 API', owner: '全端', status: 'doing', engine: 'codex', route: '中 Sol・xhigh', reason: '中：範圍大（8 個檔），但都照現成的 API 寫法' },
+  { id: 'TC-31', title: '到期當天取消', owner: 'QA', status: 'doing', engine: 'codex', route: '易 Terra・medium', note: '被 PM 退回 3 次，等你決定這件要不要升一格（M-02）' },
+  { id: 'AC-07', title: '取消訂閱後仍可使用到期末', owner: 'PM', status: 'review', engine: 'codex', route: '中 Terra・high', note: '缺 test case，等 PM 確認' },
+  { id: 'ADR-02', title: '金流服務與 webhook 驗簽', owner: 'Tech lead', status: 'review', engine: 'claude', route: '極難 Opus・xhigh' },
+  { id: 'TASK-15', title: '金流 webhook 驗簽', owner: '全端', status: 'blocked', engine: 'codex', route: '極難 Sol・xhigh', reason: '極難：範圍小（2 個檔），但驗簽和重送要照金流商的規格，錯了會重複扣款', note: '測試失敗 2 次：要不要從 6.1 Sol・xhigh 升到 6 Astra・xhigh，在 M-03 等你；Tech lead 在看 ADR-02' },
+  { id: 'SCR-01', title: '方案選擇頁', owner: 'UI/UX', status: 'done', engine: 'claude', route: '中 Sonnet・high' },
+  { id: 'AC-01', title: '可以選月繳方案', owner: 'PM', status: 'done', engine: 'claude', route: '易 Sonnet・high' }
+];
+var STATUSES = [['doing', '進行中'], ['review', '待確認'], ['todo', '待開始'], ['blocked', '卡住'], ['done', '已完成']];
+var THREADS = [
+  { item: 'AC-07', title: '取消訂閱後仍可使用到期末', messages: [
+    { from: 'QA', text: 'AC-07 的「到期末」是到期日當天 23:59，還是帳單週期的最後一秒？兩種寫出來的 test case 不一樣。' },
+    { from: 'PM', text: '照帳單週期，到期日當天 23:59:59（使用者的時區）。' },
+    { from: 'QA', text: '使用者沒有設時區時呢？' },
+    { from: 'PM', text: '用帳號建立時的時區。我把這條補進 AC-07。' },
+    { from: 'crew', text: 'PM 改了 AC-07 的內容，QA 的 TC-29、TC-30 要跟著看一次。', route: true }
+  ] },
+  { item: 'SCR-04', title: '結帳頁三種狀態', messages: [
+    { from: 'UI/UX', text: '錯誤狀態的文案用「卡片沒有通過，請換一張卡」，不寫銀行代碼。' },
+    { from: '全端', text: '收到。銀行代碼只記在 log。' }
+  ] },
+  { item: 'TASK-15', title: '金流 webhook 驗簽', messages: [
+    { from: 'crew', text: 'TASK-15 測試失敗 2 次，難易度從難調到極難。要從 6.1 Sol・xhigh 升到 6 Astra・xhigh，你開著「換模型前先問你」，所以先在 M-03 問你，全端停著。', route: true }
+  ] }
+];
+var MEMORIES = [
+  { id: 'DEC-18', type: '決定', text: '全端讀大檔前先用 Grep 找位置，再讀需要的行數。', src: '大腦處置 token 用量 · 昨天' },
+  { id: 'DEC-15', type: '決定', text: 'UI/UX 輪替，門檻 100K → 80K。處置前 命中率 52% · context 96K；處置後 命中率 81% · context 8K。', src: '大腦建議，你核准 · 今天 11:20' },
+  { id: 'MEM-08', type: '事實', text: '金流服務用 webhook 驗簽，簽章金鑰放在 Secret Manager，程式只讀名稱。', src: 'Tech lead · ADR-02' },
+  { id: 'LES-03', type: '教訓', text: '測試名稱要帶 test case 編號（例如 TC-031），crew 跑測試時才對得到結果。', src: '全端 · TASK-09' },
+  { id: 'PREF-02', type: '偏好', text: '文案用短句，錯誤訊息說怎麼修，不道歉。', src: '使用者 · 10/24' }
+];
+var DAYS = [
+  { day: '10/22', claude: 188, codex: 0 }, { day: '10/23', claude: 242, codex: 0 }, { day: '10/24', claude: 205, codex: 412 },
+  { day: '10/25', claude: 173, codex: 688 }, { day: '10/26', claude: 221, codex: 905 }, { day: '10/27', claude: 164, codex: 1059 },
+  { day: '今天', claude: 131, codex: 281 }
+];
+var DONE = [{ day: '10/24', n: 5 }, { day: '10/25', n: 3 }, { day: '10/26', n: 6 }, { day: '10/27', n: 5 }, { day: '今天', n: 7 }];
+var SPEND = [
+  { part: 'Codex 固定開銷（31K × 5 次）', k: 155 }, { part: '工具結果', k: 110 }, { part: '輸出', k: 49 }, { part: '任務與看板', k: 44 },
+  { part: '角色說明', k: 22 }, { part: '記憶包', k: 17 }, { part: '討論串與通知', k: 15 }
+];
+var BRAIN_CTX = [
+  { part: 'MCP 工具說明', k: 46 }, { part: '對話', k: 38 }, { part: '系統提示', k: 12 }, { part: 'CLAUDE.md', k: 9 }
+];
+var BOTTLENECKS = [
+  { where: '大腦每一輪都帶 MCP 工具說明', cost: '46K × 88 輪 ≈ 4.0M', share: '大腦 context 的 44%', fix: '關掉這個 repo 用不到的 MCP（例如 Notion、Gmail）。大腦不能替你改設定。', st: 'you' },
+  { where: 'Codex 每次固定帶你的 AGENTS.md 和技能說明', cost: '31K（其中技能說明 27K）× 41 次 = 1271K', share: 'Codex 的 38%', fix: 'crew 給 Codex 精簡的設定，只帶角色要的說明。', st: 'acting' },
+  { where: '全端的工具結果', cost: 'Read 大檔 23 次超過 8K，共 310K', share: '全端的 9%', fix: '已處置 DEC-18：先用 Grep 找位置再讀；之後平均每次 2.1K。', st: 'done' },
+  { where: '記憶包', cost: '平均 2.1K × 38 次 ≈ 80K，用到的只有 23%', share: '全部的 2%', fix: '只帶跟這件工作的編號有關的記憶。', st: 'acting' },
+  { where: 'UI/UX 的快取命中率 52%', cost: '喚醒間隔 7 分鐘，超過快取的 5 分鐘，快取整份重寫 6 次，共 61K', share: 'UI/UX 的 9%', fix: '已處置 DEC-15：輪替門檻 100K → 80K，命中率回到 81%。', st: 'done' }
+];
+var ST = { done: ['已處置', '✓'], acting: ['處置中', '↻'], you: ['要你處理', '!'] };
+// Each role's model settings: the brain picks the engine in 系統預設; 自己挑選 runs one model, fixed.
+var MODELS = [
+  { id: 'pm', name: 'PM', mode: 'auto', claude: ['sonnet', 'high'], codex: ['gpt-6.1-terra', 'high'], now: 'codex', why: '大腦選 Codex：Claude 今天吃緊。', limit: 'tier' },
+  { id: 'uiux', name: 'UI/UX', mode: 'auto', claude: ['sonnet', 'medium'], codex: ['gpt-6.1-terra', 'medium'], now: 'claude', why: '大腦選 Claude：SCR-04 已經在 Claude 上做到一半。換到 Codex 的建議在 M-01 等你。', limit: 'tier', tuned: '大腦調成 80K（DEC-15）' },
+  { id: 'fullstack', name: '全端', mode: 'auto', claude: ['sonnet', 'high'], codex: ['gpt-6.1-sol', 'xhigh'], now: 'codex', why: '大腦選 Codex：Claude 額度留給 Tech lead。', limit: 'tier', least: true },
+  { id: 'qa', name: 'QA', mode: 'fixed', claude: ['sonnet', 'medium'], codex: ['gpt-6.1-terra', 'medium'], fixed: { engine: 'codex', model: 'gpt-6.1-terra', effort: 'medium' }, now: 'codex', why: '你選的：固定用 Codex 6.1 Terra・medium。TC-31 被退回 3 次，要不要升一格在 M-02 等你。', limit: 'tier' },
+  { id: 'techlead', name: 'Tech lead', mode: 'auto', claude: ['opus', 'high'], codex: ['gpt-6.1-sol', 'xhigh'], now: 'claude', why: '大腦選 Claude：換個引擎 review 全端。', limit: 200000, least: true }
+];
+
+// The router's rules, as hooks/router.ts has them.
+var TIERS = ['S', 'M', 'L', 'XL'];
+var TIER_NAME = { S: '易', M: '中', L: '難', XL: '極難' };
+var EFF = ['low', 'medium', 'high', 'xhigh', 'max'];
+var ENG = {
+  claude: { name: 'Claude', order: ['haiku', 'sonnet', 'opus'], full: { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' }, short: { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' },
+    tier: { S: ['sonnet', 'medium'], M: ['sonnet', 'high'], L: ['opus', 'high'], XL: ['opus', 'xhigh'] }, beyond: ['opus', 'max'] },
+  codex: { name: 'Codex', order: ['gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.1-sol', 'gpt-6-astra'], full: { 'gpt-6-luna': '6 Luna', 'gpt-6.1-terra': '6.1 Terra', 'gpt-6.1-sol': '6.1 Sol', 'gpt-6-astra': '6 Astra' }, short: { 'gpt-6-luna': 'Luna', 'gpt-6.1-terra': 'Terra', 'gpt-6.1-sol': 'Sol', 'gpt-6-astra': 'Astra' },
+    tier: { S: ['gpt-6.1-terra', 'medium'], M: ['gpt-6.1-terra', 'high'], L: ['gpt-6.1-sol', 'high'], XL: ['gpt-6.1-sol', 'xhigh'] }, beyond: ['gpt-6-astra', 'xhigh'] }
+};
+var LIMITS = [['tier', '依難易度'], [60000, '固定 60K'], [100000, '固定 100K'], [160000, '固定 160K'], [200000, '固定 200K'], [256000, '固定 256K']];
+
+function higher(order, a, b) { return order.indexOf(a) >= order.indexOf(b) ? a : b; }
+function stepAt(engine, floor, tier, beyond) {
+  var e = ENG[engine];
+  var base = beyond ? e.beyond : e.tier[tier];
+  return { model: e.short[higher(e.order, base[0], floor[0])], effort: higher(EFF, base[1], floor[1]) };
+}
+/** `易–中 Sonnet・high · 難 Opus・high · 極難 xhigh · 再失敗 max`: tiers that run the same said once, a step on the model before it by its effort alone. */
+function ladder(engine, floor) {
+  var steps = [];
+  var from = 'S';
+  TIERS.forEach(function (t, i) {
+    var here = stepAt(engine, floor, t, false);
+    var next = TIERS[i + 1];
+    if (next !== undefined) {
+      var n = stepAt(engine, floor, next, false);
+      if (n.model === here.model && n.effort === here.effort) return;
+    }
+    steps.push({ name: from === t ? TIER_NAME[t] : TIER_NAME[from] + '–' + TIER_NAME[t], model: here.model, effort: here.effort });
+    if (next !== undefined) from = next;
+  });
+  var b = stepAt(engine, floor, 'XL', true);
+  steps.push({ name: '再失敗', model: b.model, effort: b.effort });
+  return steps.map(function (s, i) { return s.name + ' ' + (i > 0 && steps[i - 1].model === s.model ? s.effort : s.model + '・' + s.effort); }).join(' · ');
+}
+/** What a role's picker offers: on Codex, the tech lead and the full-stack nothing under 6.1 Sol・xhigh. */
+function choices(role, engine) {
+  var e = ENG[engine];
+  if (engine === 'codex' && role.least) return { models: e.order.slice(e.order.indexOf('gpt-6.1-sol')), efforts: EFF.slice(EFF.indexOf('xhigh')) };
+  return { models: e.order, efforts: EFF };
+}
+
+function el(tag, attrs, kids) {
+  var n = document.createElement(tag);
+  Object.keys(attrs || {}).forEach(function (k) {
+    if (k === 'text') n.textContent = attrs[k];
+    else if (k === 'cls') n.className = attrs[k];
+    else n.setAttribute(k, attrs[k]);
+  });
+  (kids || []).forEach(function (c) { if (c !== null && c !== undefined) n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+  return n;
+}
+function engTag(engine) { return el('span', { cls: 'eng' }, [el('i', { cls: 'dot ' + engine, 'aria-hidden': 'true' }), ENG[engine].name]); }
+
+// Toasts: a press says what crew would do.
+var toastTimer = 0;
+function toast(text) {
+  var t = document.getElementById('toast');
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.hidden = true; }, 3200);
+}
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('[data-would]');
+  if (b === null) return;
+  var seg = b.getAttribute('data-seg');
+  if (seg !== null) {
+    b.parentElement.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+    var noteFor = b.parentElement.getAttribute('data-note-for');
+    if (noteFor !== null) document.getElementById(noteFor).textContent = b.getAttribute('data-note');
+  }
+  toast('設計稿：實際會' + b.getAttribute('data-would'));
+});
+
+// Tabs by hash.
+var TABS = ['overview', 'progress', 'board', 'threads', 'memory', 'tokens', 'models', 'prefs'];
+function showTab() {
+  var want = (location.hash || '#overview').slice(1);
+  if (TABS.indexOf(want) === -1) want = 'overview';
+  TABS.forEach(function (t) {
+    document.getElementById('tab-' + t).hidden = t !== want;
+    var link = document.querySelector('.rail a[href="#' + t + '"]');
+    if (link !== null) { if (t === want) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); }
+  });
+}
+window.addEventListener('hashchange', showTab);
+
+// 總覽: the role cards.
+function drawRoles() {
+  var box = document.getElementById('roles');
+  ROLES.forEach(function (r) {
+    var pct = Math.round((r.ctx / r.limit) * 100);
+    var icon = r.state === 'blocked' ? '✕ ' : r.state === 'waiting' ? '… ' : '';
+    box.appendChild(el('article', { cls: 'role' }, [
+      el('div', { cls: 'role-head' }, [el('h3', { text: r.name }), el('span', { cls: 'state ' + r.state, text: icon + r.stateName })]),
+      el('p', { cls: 'doing', text: r.doing }),
+      el('div', { cls: 'route' }, [engTag(r.engine), el('span', { text: r.route })]),
+      el('p', { cls: 'note', text: r.mode }),
+      el('div', { cls: 'meter' + (pct > 85 ? ' hot' : '') }, [
+        el('span', { text: 'context ' + r.ctx + 'K / ' + r.limit + 'K · 今日 ' + r.today + 'K' }),
+        el('div', { cls: 'track', role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': String(r.limit), 'aria-valuenow': String(r.ctx), 'aria-label': r.name + ' 的 context' }, [el('div', { cls: 'fill', style: 'width:' + pct + '%' })])
+      ])
+    ]));
+  });
+}
+
+// 看板
+function askBrainButton(id) { return el('button', { cls: 'btn small', type: 'button', 'data-ask': id, text: '問大腦' }); }
+function drawBoard() {
+  var box = document.getElementById('columns');
+  STATUSES.forEach(function (s) {
+    var list = ITEMS.filter(function (i) { return i.status === s[0]; });
+    var col = el('div', { cls: 'col' }, [el('h3', {}, [s[1], el('small', { text: String(list.length) })])]);
+    if (list.length === 0) col.appendChild(el('p', { cls: 'note', text: '沒有項目' }));
+    list.forEach(function (i) {
+      col.appendChild(el('article', { cls: 'card' + (i.status === 'blocked' ? ' blocked' : '') }, [
+        el('span', { cls: 'id', text: i.id }),
+        el('span', { cls: 'title', text: i.title }),
+        el('span', { cls: 'owner', text: i.owner }),
+        el('div', { cls: 'route' }, [engTag(i.engine), el('span', { text: i.route })]),
+        i.reason === undefined ? null : el('p', { cls: 'why', text: i.reason }),
+        i.note === undefined ? null : el('p', { cls: 'cnote', text: i.note }),
+        el('div', { cls: 'row' }, [askBrainButton(i.id)])
+      ]));
+    });
+    box.appendChild(col);
+  });
+}
+
+// 討論
+function drawThreads(open) {
+  var list = document.getElementById('thread-list');
+  var msgs = document.getElementById('thread-messages');
+  list.textContent = '';
+  msgs.textContent = '';
+  THREADS.forEach(function (t) {
+    var b = el('button', { type: 'button', 'aria-pressed': String(t.item === open) }, [el('span', { cls: 'mono', text: t.item }), ' ' + t.title + ' · ' + t.messages.length + ' 則']);
+    b.addEventListener('click', function () { drawThreads(t.item); });
+    list.appendChild(b);
+  });
+  var thread = THREADS.filter(function (t) { return t.item === open; })[0];
+  thread.messages.forEach(function (m) {
+    msgs.appendChild(el('div', { cls: 'msg' + (m.route ? ' route' : '') }, [el('p', { cls: 'who', text: m.from }), el('p', { text: m.text })]));
+  });
+  msgs.appendChild(el('div', { cls: 'row' }, [askBrainButton(thread.item)]));
+}
+
+// 記憶
+function drawMemories(q) {
+  var box = document.getElementById('mem-list');
+  box.textContent = '';
+  var shown = MEMORIES.filter(function (m) { return q === '' || (m.id + m.type + m.text + m.src).indexOf(q) !== -1; });
+  if (shown.length === 0) box.appendChild(el('li', { cls: 'note', text: '沒有找到跟「' + q + '」有關的記憶。' }));
+  shown.forEach(function (m) {
+    box.appendChild(el('li', { cls: 'mem' }, [el('p', {}, [el('span', { cls: 'mtype', text: m.type }), el('span', { cls: 'mono', text: m.id })]), el('p', { text: m.text }), el('p', { cls: 'src', text: m.src })]));
+  });
+}
+
+// The tooltip, by pointer and by focus; its text set with textContent.
+var tip = document.getElementById('tip');
+function showTip(head, rows, x, y) {
+  tip.textContent = '';
+  tip.appendChild(el('span', { cls: 't-head', text: head }));
+  rows.forEach(function (r) {
+    tip.appendChild(el('span', { cls: 't-row' }, [r.color ? el('i', { cls: 'key', style: 'background:' + r.color }) : null, el('b', { text: r.value }), el('span', { text: r.label })]));
+  });
+  tip.hidden = false;
+  var w = tip.offsetWidth, h = tip.offsetHeight;
+  var left = Math.min(Math.max(8, x + 14), window.innerWidth - w - 8);
+  var top = y - h - 12 < 8 ? y + 16 : y - h - 12;
+  tip.style.left = left + 'px';
+  tip.style.top = top + 'px';
+}
+function hideTip() { tip.hidden = true; }
+function hover(node, head, rows) {
+  node.addEventListener('pointermove', function (ev) { showTip(head, rows, ev.clientX, ev.clientY); });
+  node.addEventListener('pointerleave', hideTip);
+  node.addEventListener('focus', function () { var r = node.getBoundingClientRect(); showTip(head, rows, r.left + r.width / 2, r.top); });
+  node.addEventListener('blur', hideTip);
+}
+
+var SVG = 'http://www.w3.org/2000/svg';
+function sv(tag, attrs) { var n = document.createElementNS(SVG, tag); Object.keys(attrs).forEach(function (k) { n.setAttribute(k, attrs[k]); }); return n; }
+/** A column segment: its top rounded 4px when it ends the column, square at the baseline. */
+function colPath(x, yTop, yBottom, w, round) {
+  var r = Math.min(4, (yBottom - yTop) / 2, w / 2);
+  if (!round || r <= 0) return 'M' + x + ',' + yBottom + 'V' + yTop + 'H' + (x + w) + 'V' + yBottom + 'Z';
+  return 'M' + x + ',' + yBottom + 'V' + (yTop + r) + 'Q' + x + ',' + yTop + ' ' + (x + r) + ',' + yTop + 'H' + (x + w - r) + 'Q' + (x + w) + ',' + yTop + ' ' + (x + w) + ',' + (yTop + r) + 'V' + yBottom + 'Z';
+}
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+/** Columns of one or two stacked series over days, with ticks, a label on the last column, and a hover readout. */
+function columns(svg, rows, series, max, step, unit) {
+  svg.textContent = '';
+  var W = 640, H = 230, L = 46, R = 12, T = 18, B = 26;
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  var y = function (v) { return T + (H - T - B) * (1 - v / max); };
+  for (var v = 0; v <= max; v += step) {
+    svg.appendChild(sv('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? 'base' : 'grid' }));
+    var tl = sv('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' });
+    tl.textContent = v === 0 ? '0' : v + unit;
+    svg.appendChild(tl);
+  }
+  var band = (W - L - R) / rows.length;
+  var bw = Math.min(24, band * 0.5);
+  rows.forEach(function (row, i) {
+    var x = L + band * i + (band - bw) / 2;
+    var g = sv('g', { class: 'mark', tabindex: '0', role: 'img' });
+    var total = 0;
+    var parts = series.filter(function (s) { return row[s.key] > 0; });
+    var label = row.day + '：' + series.map(function (s) { return s.name + ' ' + row[s.key] + unit; }).join('，');
+    g.setAttribute('aria-label', label);
+    g.appendChild(sv('rect', { class: 'hit', x: L + band * i, y: T, width: band, height: H - T - B }));
+    parts.forEach(function (s, j) {
+      var bottom = y(total) - (j > 0 ? 2 : 0);
+      total += row[s.key];
+      var top = y(total);
+      if (bottom - top < 1) return;
+      g.appendChild(sv('path', { class: 'seg-shape', d: colPath(x, top, bottom, bw, j === parts.length - 1), fill: css(s.color) }));
+    });
+    var xl = sv('text', { x: x + bw / 2, y: H - 8, 'text-anchor': 'middle' });
+    xl.textContent = row.day;
+    if (i === rows.length - 1) xl.setAttribute('class', 'label');
+    g.appendChild(xl);
+    if (i === rows.length - 1) {
+      var cap = sv('text', { x: x + bw / 2, y: y(total) - 6, 'text-anchor': 'middle', class: 'label' });
+      cap.textContent = total + unit;
+      g.appendChild(cap);
+    }
+    var rowsOut = series.map(function (s) { return { color: series.length > 1 ? 'var(' + s.color + ')' : null, value: row[s.key] + unit, label: s.name }; });
+    if (series.length > 1) rowsOut.push({ value: total + unit, label: '合計' });
+    hover(g, row.day, rowsOut);
+    svg.appendChild(g);
+  });
+}
+function tableOf(id, head, rows) {
+  var t = document.getElementById(id);
+  t.appendChild(el('thead', {}, [el('tr', {}, head.map(function (h, i) { return el('th', { cls: i === 0 ? '' : 'num', text: h }); }))]));
+  t.appendChild(el('tbody', {}, rows.map(function (r) { return el('tr', {}, r.map(function (c, i) { return el('td', { cls: i === 0 ? '' : 'num', text: String(c) }); })); })));
+}
+/** Horizontal bars of one series, largest first, the value at each tip. */
+function hbars(id, rows, total) {
+  var box = document.getElementById(id);
+  var max = rows.reduce(function (m, r) { return Math.max(m, r.k); }, 0);
+  rows.forEach(function (r) {
+    var share = Math.round((r.k / total) * 100);
+    var row = el('div', { cls: 'hbar', tabindex: '0', 'aria-label': r.part + ' ' + r.k + 'K，' + share + '%' }, [
+      el('span', { text: r.part }),
+      el('span', { cls: 'track' }, [el('span', { cls: 'bar', style: 'width:' + Math.max(1, (r.k / max) * 82) + '%' }), el('span', { cls: 'val', text: r.k + 'K · ' + share + '%' })])
+    ]);
+    hover(row, r.part, [{ value: r.k + 'K', label: '佔 ' + share + '%' }]);
+    box.appendChild(row);
+  });
+}
+
+// Token: the bottlenecks, each with what was done and a hand-off to the brain.
+function drawBottlenecks() {
+  var box = document.getElementById('bottlenecks');
+  BOTTLENECKS.forEach(function (b) {
+    var st = ST[b.st];
+    box.appendChild(el('li', { cls: 'bn' }, [
+      el('div', { cls: 'bn-head' }, [el('b', { text: b.where }), el('span', { cls: 'st ' + b.st, text: st[1] + ' ' + st[0] })]),
+      el('p', { cls: 'bn-cost', text: b.cost + ' · ' + b.share }),
+      el('p', { cls: 'bn-fix', text: b.fix }),
+      el('div', { cls: 'row' }, [el('button', { cls: 'btn small', type: 'button', 'data-would': '請大腦針對「' + b.where + '」查原因並處置，照你的「大腦處置 token 用量」設定', text: '交給大腦' })])
+    ]));
+  });
+}
+
+// 模型: each role's card, its ladders worked out again on every pick.
+function select(id, label, options, value, onChange) {
+  var s = el('select', { id: id });
+  options.forEach(function (o) {
+    var opt = el('option', { value: String(o[0]), text: o[1] });
+    if (String(o[0]) === String(value)) opt.selected = true;
+    s.appendChild(opt);
+  });
+  s.addEventListener('change', function () { onChange(s.value); });
+  return el('label', { cls: 'field', for: id }, [label, s]);
+}
+function drawModels() {
+  var box = document.getElementById('mcards');
+  MODELS.forEach(function (m) {
+    var card = el('article', { cls: 'mcard', 'aria-labelledby': 'mh-' + m.id });
+    var now = el('p', { cls: 'now' });
+    var auto = el('div', { cls: 'auto' });
+    var fixed = el('div', { cls: 'fixed' });
+    var segAuto = el('button', { type: 'button', 'aria-pressed': String(m.mode === 'auto'), text: '系統預設' });
+    var segFixed = el('button', { type: 'button', 'aria-pressed': String(m.mode === 'fixed'), text: '自己挑選' });
+    function redraw() {
+      auto.hidden = m.mode !== 'auto';
+      fixed.hidden = m.mode !== 'fixed';
+      segAuto.setAttribute('aria-pressed', String(m.mode === 'auto'));
+      segFixed.setAttribute('aria-pressed', String(m.mode === 'fixed'));
+      now.textContent = '';
+      var f = m.fixed;
+      if (m.mode === 'fixed' && f !== undefined) now.appendChild(el('span', {}, ['現在用 ', engTag(f.engine), ' ' + ENG[f.engine].full[f.model] + '・' + f.effort + '（你選的，固定）']));
+      else now.appendChild(el('span', {}, ['現在用 ', engTag(m.now), '（大腦選）']));
+    }
+    segAuto.addEventListener('click', function () { m.mode = 'auto'; redraw(); toast('設計稿：實際會讓 ' + m.name + ' 照系統預設：大腦挑引擎，從下限開始，失敗往上升'); });
+    segFixed.addEventListener('click', function () {
+      m.mode = 'fixed';
+      if (m.fixed === undefined) m.fixed = { engine: m.now, model: m[m.now][0], effort: m[m.now][1] };
+      drawFixed(); redraw();
+      toast('設計稿：實際會讓 ' + m.name + ' 固定用你挑的模型，不升級，大腦也不換');
+    });
+
+    // 系統預設: one floor per engine, with its ladder.
+    auto.appendChild(el('p', { cls: 'why', text: m.why }));
+    ['claude', 'codex'].forEach(function (engine) {
+      var c = choices(m, engine);
+      var lad = el('p', { cls: 'ladder', text: ladder(engine, m[engine]) });
+      var floorBox = el('div', { cls: 'floor' }, [
+        el('div', { cls: 'fl-head' }, [
+          el('span', { cls: 'eng-name' }, [el('i', { cls: 'dot ' + engine, 'aria-hidden': 'true' }), ENG[engine].name + ' 下限']),
+          select(m.id + '-' + engine + '-model', '模型', c.models.map(function (x) { return [x, ENG[engine].full[x]]; }), m[engine][0], function (v) { m[engine][0] = v; lad.textContent = ladder(engine, m[engine]); toast('設計稿：實際會把 ' + m.name + ' 的 ' + ENG[engine].name + ' 下限改成 ' + ENG[engine].full[v] + '，每一級都不低於它'); }),
+          select(m.id + '-' + engine + '-effort', 'effort', c.efforts.map(function (x) { return [x, x]; }), m[engine][1], function (v) { m[engine][1] = v; lad.textContent = ladder(engine, m[engine]); toast('設計稿：實際會把 ' + m.name + ' 的 ' + ENG[engine].name + ' 下限 effort 改成 ' + v); })
+        ]),
+        lad
+      ]);
+      auto.appendChild(floorBox);
+    });
+    if (m.least) auto.appendChild(el('p', { cls: 'note', text: '在 Codex 上至少 6.1 Sol・xhigh，選單不列更低的。' }));
+
+    // 自己挑選: an engine, a model and an effort, fixed.
+    function drawFixed() {
+      fixed.textContent = '';
+      var f = m.fixed || { engine: m.now, model: m[m.now][0], effort: m[m.now][1] };
+      m.fixed = f;
+      var engSeg = el('div', { cls: 'seg', role: 'group', 'aria-label': m.name + ' 固定用的引擎' });
+      ['claude', 'codex'].forEach(function (engine) {
+        var b = el('button', { type: 'button', 'aria-pressed': String(f.engine === engine) }, [el('i', { cls: 'dot ' + engine, 'aria-hidden': 'true' }), ENG[engine].name]);
+        b.addEventListener('click', function () {
+          var c = choices(m, engine);
+          m.fixed = { engine: engine, model: higher(ENG[engine].order, m[engine][0], c.models[0]), effort: higher(EFF, m[engine][1], c.efforts[0]) };
+          drawFixed(); redraw();
+          toast('設計稿：實際會讓 ' + m.name + ' 固定用 ' + ENG[engine].name);
+        });
+        engSeg.appendChild(b);
+      });
+      var c = choices(m, f.engine);
+      fixed.appendChild(el('div', { cls: 'floor' }, [
+        el('div', { cls: 'fl-head' }, [
+          engSeg,
+          select(m.id + '-fixed-model', '模型', c.models.map(function (x) { return [x, ENG[f.engine].full[x]]; }), f.model, function (v) { f.model = v; redraw(); toast('設計稿：實際會讓 ' + m.name + ' 固定用 ' + ENG[f.engine].full[v]); }),
+          select(m.id + '-fixed-effort', 'effort', c.efforts.map(function (x) { return [x, x]; }), f.effort, function (v) { f.effort = v; redraw(); toast('設計稿：實際會讓 ' + m.name + ' 固定用 effort ' + v); })
+        ]),
+        el('p', { cls: 'fixed-note', text: '固定用這個：不會升級，大腦也不會換。一直失敗時，crew 會在「模型的事」問你要不要暫時升級。' })
+      ]));
+    }
+    if (m.mode === 'fixed') drawFixed();
+
+    var tuned = el('span', { cls: 'note', text: m.tuned === undefined ? '' : m.tuned });
+    tuned.hidden = m.tuned === undefined || m.limit !== 'tier';
+    var limitBox = el('div', { cls: 'limit' }, [
+      el('div', { cls: 'row' }, [
+        select(m.id + '-limit', '輪替門檻', LIMITS, m.limit, function (v) { tuned.hidden = m.tuned === undefined || v !== 'tier'; toast('設計稿：實際會把 ' + m.name + ' 的輪替門檻改成 ' + (v === 'tier' ? '依難易度' : Math.round(Number(v) / 1000) + 'K')); }),
+        tuned
+      ]),
+      el('p', { cls: 'note', text: '依難易度：易 60K · 中 100K · 難 160K · 極難 256K。到了門檻，角色閒置後換新對話，帶記憶重開。不會超過模型的 context 上限。' })
+    ]);
+
+    card.appendChild(el('div', { cls: 'mcard-head' }, [el('h3', { id: 'mh-' + m.id, text: m.name }), el('div', { cls: 'seg', role: 'group', 'aria-label': m.name + ' 的方式' }, [segAuto, segFixed])]));
+    card.appendChild(now);
+    card.appendChild(auto);
+    card.appendChild(fixed);
+    card.appendChild(limitBox);
+    redraw();
+    box.appendChild(card);
+  });
+}
+
+// The brain's conversation.
+var LOG = [
+  { who: 'crew', at: '12:41', text: '提醒已送大腦：UI/UX 今日佔 Claude 的 73%（超過 40%）。' },
+  { who: 'brain', at: '12:42', text: 'UI/UX 今天在 Claude 上用了 96K。我建議下一件工作換到 Codex 6.1 Terra・medium，已經放在「模型的事」M-01 等你決定。' },
+  { who: 'crew', at: '13:05', text: 'QA 的 TC-31 被 PM 退回 3 次。這件要不要暫時升到 6.1 Sol・high，在「模型的事」M-02 等你。' },
+  { who: 'crew', at: '13:06', text: 'TASK-15 測試失敗 2 次。要從 6.1 Sol・xhigh 升到 6 Astra・xhigh，在「模型的事」M-03 等你；全端先停著。' },
+  { who: 'person', at: '13:08', text: 'TASK-15 為什麼卡住？' },
+  { who: 'brain', at: '13:08', text: 'TASK-15 的測試失敗兩次，照規則要從 6.1 Sol・xhigh 升到 6 Astra・xhigh。你開著「換模型前先問你」，所以全端停著，等你在 M-03 決定。Tech lead 也在看 ADR-02 的驗簽方式。' }
+];
+var WHO = { crew: 'crew 通知', brain: '大腦', person: '你' };
+function say(m) {
+  var log = document.getElementById('log');
+  log.appendChild(el('div', { cls: 'bubble by-' + m.who }, [el('span', { cls: 'b-who', text: WHO[m.who] + ' · ' + m.at }), el('p', { cls: 'b-text', text: m.text })]));
+  log.scrollTop = log.scrollHeight;
+}
+var attached = [];
+function drawAttached() {
+  var box = document.getElementById('attachments');
+  box.textContent = '';
+  attached.forEach(function (id) {
+    var x = el('button', { type: 'button', 'aria-label': '拿掉 ' + id, text: '×' });
+    x.addEventListener('click', function () { attached = attached.filter(function (a) { return a !== id; }); drawAttached(); });
+    box.appendChild(el('span', { cls: 'attach' }, ['附上 ' + id, x]));
+  });
+}
+function send(text) {
+  var t = text.trim();
+  if (t === '') { toast('先寫要跟大腦說的話'); return; }
+  var now = new Date();
+  var at = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  say({ who: 'person', at: at, text: (attached.length > 0 ? '［' + attached.join('、') + '］' : '') + t });
+  attached = [];
+  drawAttached();
+  document.getElementById('say').value = '';
+  toast('設計稿：實際會把這句送給大腦');
+}
+document.getElementById('send').addEventListener('click', function () { send(document.getElementById('say').value); });
+document.getElementById('say').addEventListener('keydown', function (ev) {
+  if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); send(ev.target.value); }
+});
+document.addEventListener('click', function (ev) {
+  var q = ev.target.closest('[data-quick]');
+  if (q !== null) { send(q.getAttribute('data-quick')); return; }
+  var a = ev.target.closest('[data-ask]');
+  if (a !== null) {
+    var id = a.getAttribute('data-ask');
+    if (attached.indexOf(id) === -1) attached.push(id);
+    drawAttached();
+    var box = document.getElementById('say');
+    box.focus();
+    if (window.matchMedia('(max-width: 860px)').matches) document.getElementById('brain').scrollIntoView({ block: 'start' });
+    toast('已附上 ' + id + '，寫下你要問大腦的事');
+  }
+});
+document.getElementById('jump').addEventListener('click', function () { document.getElementById('brain').scrollIntoView({ block: 'start' }); document.getElementById('say').focus({ preventScroll: true }); });
+document.getElementById('mem-q').addEventListener('input', function (ev) { drawMemories(ev.target.value.trim()); });
+
+function drawCharts() {
+  columns(document.getElementById('chart-days'), DAYS, [{ key: 'claude', name: 'Claude', color: '--claude' }, { key: 'codex', name: 'Codex', color: '--codex' }], 1400, 200, 'K');
+  columns(document.getElementById('chart-done'), DONE, [{ key: 'n', name: '完成', color: '--items' }], 8, 2, '');
+}
+
+// The rail and the brain sit right under the header, whose height the fonts can change.
+function fitHead() { document.documentElement.style.setProperty('--head-h', document.getElementById('head').offsetHeight + 'px'); }
+window.addEventListener('resize', fitHead);
+if (document.fonts !== undefined) document.fonts.ready.then(fitHead);
+fitHead();
+
+showTab();
+drawRoles();
+drawBoard();
+drawThreads('TASK-15');
+drawMemories('');
+drawBottlenecks();
+drawModels();
+LOG.forEach(say);
+drawCharts();
+tableOf('table-days', ['日期', 'Claude', 'Codex', '合計'], DAYS.map(function (d) { return [d.day, d.claude + 'K', d.codex + 'K', (d.claude + d.codex) + 'K']; }));
+tableOf('table-done', ['日期', '完成'], DONE.map(function (d) { return [d.day, d.n]; }));
+hbars('spend', SPEND, 131 + 281);
+hbars('brain-context', BRAIN_CTX, 105);
+// Chart colors come from the theme: draw again when it changes.
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawCharts);
+new MutationObserver(drawCharts).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+</script>
+</body>
+</html>

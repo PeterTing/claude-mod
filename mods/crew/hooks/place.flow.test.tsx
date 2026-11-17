@@ -29,7 +29,7 @@ describe('the board', () => {
   test('is .crew/prd-tracker.json in a repo with none: crew makes it there, and says so in 設定', async ($, on) => {
     const w = world($, on)
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/看板\n檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
     await $.command.run(command('start docs/PRD.md'))
     await write($, 'a-pm-1', SPLIT)
     expect(features(w.disk.get(IN_CREW))).toHaveLength(2)
@@ -45,7 +45,7 @@ describe('the board', () => {
     const shown = await paneText($)
     expect(shown).toMatch(/還沒有開始的 PRD/)
     expect(shown).not.toMatch(/⚠|PRD-001/)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
     await $.command.run(command('start docs/PRD.md'))
     expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm'])
     await write($, 'a-pm-1', [{ op: 'add_feature', title: '只在 crew 的看板', summary: 's', priority: 'P0', sources: [] }])
@@ -57,7 +57,7 @@ describe('the board', () => {
     const w = world($, on)
     w.disk.set(AT_ROOT, LEGACY)
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/看板\n檔案：prd-tracker\.json\n這個 repo 的看板是 crew 0\.5\.2 以前建在根目錄的，繼續沿用，不搬家。\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\nprd-tracker\.json\n這個 repo 的看板是 crew 0\.5\.2 以前建在根目錄的，繼續沿用，不搬家。\n流程/)
     // Before a PRD starts, the pane's header names the board by its file.
     expect(await paneText($)).toMatch(/repo prd-tracker\.json · 進度 0%/)
     await $.command.run(command('start docs/PRD.md'))
@@ -72,7 +72,7 @@ describe('the board', () => {
     w.disk.set(AT_ROOT, LEGACY)
     w.disk.set(IN_CREW, theirs())
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
     // The root board has nothing done; the one in .crew/ has.
     expect(await paneText($)).toMatch(/repo \.crew\/prd-tracker\.json · 進度 25%/)
   })
@@ -82,10 +82,10 @@ describe('the board', () => {
     w.disk.set(AT_ROOT, LEGACY)
     w.broken.reads = AT_ROOT
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
     w.broken.reads = ''
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：prd-tracker\.json\n這個 repo/)
+    expect(await paneText($, 'settings')).toMatch(/看板\nprd-tracker\.json\n這個 repo/)
   })
 
   test('is not looked for through a root prd-tracker.json that links out of the repo', async ($, on) => {
@@ -93,7 +93,7 @@ describe('the board', () => {
     w.disk.set('/elsewhere/prd-tracker.json', LEGACY)
     w.links.set(AT_ROOT, '/elsewhere/prd-tracker.json')
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
     expect(await paneText($)).not.toMatch(/⚠/)
   })
 
@@ -123,7 +123,7 @@ describe('the board', () => {
     await start($)
     w.disk.set(AT_ROOT, LEGACY)
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：prd-tracker\.json\n這個 repo/)
+    expect(await paneText($, 'settings')).toMatch(/看板\nprd-tracker\.json\n這個 repo/)
   })
 
   test('stays in .crew/ once crew made its board there: a crew board that turns up at the root later is not taken up', async ($, on) => {
@@ -133,7 +133,7 @@ describe('the board', () => {
     // A teammate on an earlier crew starts a PRD and commits its board at the root.
     w.disk.set(AT_ROOT, LEGACY)
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
     await write($, 'a-pm-1', SPLIT)
     expect(features(w.disk.get(IN_CREW))).toHaveLength(2)
     expect(w.disk.get(AT_ROOT)).toBe(LEGACY)
@@ -145,13 +145,13 @@ describe('the board', () => {
     await start($)
     w.disk.set(IN_CREW, theirs())
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：prd-tracker\.json\n這個 repo/)
+    expect(await paneText($, 'settings')).toMatch(/看板\nprd-tracker\.json\n這個 repo/)
     await $.command.run(command('start docs/PRD.md'))
     expect(JSON.parse(w.disk.get(AT_ROOT) ?? '{}')).toMatchObject({ crew_prd: { path: 'docs/PRD.md' } })
     // Nor while the root board cannot be read to tell.
     w.broken.reads = AT_ROOT
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：prd-tracker\.json\n這個 repo/)
+    expect(await paneText($, 'settings')).toMatch(/看板\nprd-tracker\.json\n這個 repo/)
   })
 
   test('follows a root board moved into .crew/, and keeps to .crew/ from then on', async ($, on) => {
@@ -162,12 +162,12 @@ describe('the board', () => {
     w.disk.delete(AT_ROOT)
     w.disk.set(IN_CREW, LEGACY)
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
     expect(w.store.get(`board:${ROOT}`)).toBe('crew')
     // The repo's own tracker turns up at the root later: crew's board stays in .crew/.
     w.disk.set(AT_ROOT, theirs())
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
   })
 
   test('follows a root board copied into .crew/ once the root file is the repo’s own again', async ($, on) => {
@@ -177,7 +177,7 @@ describe('the board', () => {
     w.disk.set(IN_CREW, LEGACY)
     w.disk.set(AT_ROOT, theirs())
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
   })
 
   test('stays at the root it took up when the root file is no longer crew’s and nothing is in .crew/, and says so without asking it moved', async ($, on) => {
@@ -218,11 +218,11 @@ describe('the board', () => {
     w.disk.delete(IN_CREW)
     w.disk.set(AT_ROOT, LEGACY)
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
     // Back on the branch with both: crew's own board is the one.
     w.disk.set(IN_CREW, theirs())
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
   })
 
   test('says the root board was moved into .crew/ while Claude Code runs, and writes neither until it starts again', async ($, on) => {
@@ -240,13 +240,13 @@ describe('the board', () => {
     w.disk.set(IN_CREW, moved)
     expect(await paneText($)).toMatch(said)
     const settings = await paneText($, 'settings')
-    expect(settings).toMatch(/檔案：prd-tracker\.json\n看板已經搬到 \.crew\/prd-tracker\.json，重新啟動 Claude Code 後 crew 就會改用它。\n測試指令/)
+    expect(settings).toMatch(/看板\nprd-tracker\.json\n看板已經搬到 \.crew\/prd-tracker\.json，重新啟動 Claude Code 後 crew 就會改用它。\n流程/)
     expect(settings).not.toMatch(/不搬家/)
     expect(String((await write($, 'a-pm-1', [{ op: 'add_feature', title: '帳單', summary: 's', priority: 'P0', sources: [] }])).result)).toMatch(said)
     expect(w.disk.has(AT_ROOT)).toBe(false)
     expect(w.disk.get(IN_CREW)).toBe(moved)
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
     expect(features(w.disk.get(IN_CREW))).toHaveLength(2)
   })
 
@@ -291,9 +291,9 @@ describe('the board', () => {
       expect(features(w.disk.get(AT_ROOT)).length).toBeGreaterThanOrEqual(2)
       expect(w.disk.has(IN_CREW)).toBe(false)
       expect(w.store.get(`board:${ROOT}`)).toBe('root')
-      expect(await paneText($, 'settings')).toMatch(/檔案：prd-tracker\.json\n這個 repo/)
+      expect(await paneText($, 'settings')).toMatch(/看板\nprd-tracker\.json\n這個 repo/)
       await start($)
-      expect(await paneText($, 'settings')).toMatch(/檔案：prd-tracker\.json\n這個 repo/)
+      expect(await paneText($, 'settings')).toMatch(/看板\nprd-tracker\.json\n這個 repo/)
     })
   }
 
@@ -315,7 +315,7 @@ describe('the board', () => {
     expect(String((await writing).result)).toMatch(/PRD-003/)
     expect(features(w.disk.get(AT_ROOT))).toHaveLength(3)
     expect(w.store.get(`board:${ROOT}`)).toBe('root')
-    expect(await paneText($, 'settings')).toMatch(/檔案：prd-tracker\.json\n這個 repo/)
+    expect(await paneText($, 'settings')).toMatch(/看板\nprd-tracker\.json\n這個 repo/)
   })
 
   test('does not bring a root board back when it is moved into .crew/ and crew starts again during a write to it', async ($, on) => {
@@ -340,14 +340,14 @@ describe('the board', () => {
     expect(String((await writing).result)).toMatch(/重新載入/)
     expect(w.disk.has(AT_ROOT)).toBe(false)
     expect(w.disk.get(IN_CREW)).toBe(moved)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
   })
 
   test('takes nothing but a root board from crew’s store: anything else there leaves it to the disk', async ($, on) => {
     const w = world($, on)
     w.store.set(`board:${ROOT}`, 'elsewhere')
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：\.crew\/prd-tracker\.json\n測試指令/)
+    expect(await paneText($, 'settings')).toMatch(/看板\n\.crew\/prd-tracker\.json\n流程/)
   })
 
   test('looks on disk when crew’s store cannot be read', async ($, on) => {
@@ -355,7 +355,7 @@ describe('the board', () => {
     w.broken.storeReads = 'board:'
     w.disk.set(AT_ROOT, LEGACY)
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：prd-tracker\.json\n這個 repo/)
+    expect(await paneText($, 'settings')).toMatch(/看板\nprd-tracker\.json\n這個 repo/)
   })
 
   test('is read and written only once crew has found it again: a role’s work while crew restarts is never written over', async ($, on) => {
@@ -380,11 +380,11 @@ describe('the board', () => {
     w.broken.store = 'board:'
     w.disk.set(AT_ROOT, LEGACY)
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：prd-tracker\.json\n/)
+    expect(await paneText($, 'settings')).toMatch(/看板\nprd-tracker\.json\n/)
     await $.command.run(command('start docs/PRD.md'))
     await write($, 'a-pm-1', SPLIT)
     expect(features(w.disk.get(AT_ROOT))).toHaveLength(2)
     await start($)
-    expect(await paneText($, 'settings')).toMatch(/檔案：prd-tracker\.json\n/)
+    expect(await paneText($, 'settings')).toMatch(/看板\nprd-tracker\.json\n/)
   })
 })

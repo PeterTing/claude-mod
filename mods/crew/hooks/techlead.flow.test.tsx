@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
 import { requirementsOf } from './prd'
-import { approve, build, command, designed, done, paneText, PLAN, PRD, resumed, ROOT, SPLIT, start, world, write } from './world'
+import { accepted, approve, build, command, designed, done, paneText, paneUi, PLAN, PRD, resumed, ROOT, SPLIT, start, world, write } from './world'
 
 /** The tech lead breaks the tested criteria into tasks; G3 holds every criterion to one. */
 
@@ -39,9 +39,37 @@ describe('the tech lead', () => {
     expect(await paneText($, 'progress')).toMatch(/最近完成：TASK-00\d 排定：/)
     await done($, 'a-techlead-4')
     await build($)
+    // Built and tested, each feature waits for the person to pass it.
+    expect((await $.command.run(command('status'))).text).not.toMatch(/done/)
+    await accepted($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
-    expect(w.toasts.at(-1)).toMatch(/G3 2\/2/)
+    // The pass is said after the finish.
+    expect(w.toasts.find(t => /crew 完成/.test(t))).toMatch(/G3 2\/2/)
     expect(String((await call($, 'board_read', {}, 'a-pm-1')).result)).toMatch(/AC-001 可以選月繳方案 ← TC-001 ✓ · 任務 TASK-001/)
+  })
+
+  test('lists the tasks on the board tab with a space between each column, so a long title never runs into who does it', async ($, on) => {
+    world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-techlead-4', PLAN)
+    const ui = await paneUi($)
+    await ui.press({ key: 'tab-board' })
+    type Node = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+    const textOf = (n: unknown): string => (typeof n === 'string' ? n : ((n as Node)?.children ?? []).map(textOf).join(''))
+    const rows: Node[] = []
+    const walk = (n: unknown) => {
+      const node = n as Node
+      if (node === null || typeof node !== 'object') return
+      if (node.type === 'Box' && node.props?.flexDirection === 'row' && textOf(node.children?.[0]) === 'TASK-001') rows.push(node)
+      for (const c of node.children ?? []) walk(c)
+    }
+    walk(await ui.drawn())
+    await ui.unmount()
+    const cells = (rows[0]?.children ?? []) as Node[]
+    expect(cells.length).toBeGreaterThan(2)
+    // Every cell but the last keeps a column clear on its right.
+    expect(cells.slice(0, -1).map(c => c.props?.paddingRight)).toEqual(cells.slice(0, -1).map(() => 1))
   })
 
   test('is sent back to criteria without a task, and then the person is asked', async ($, on) => {
@@ -86,6 +114,7 @@ describe('the tech lead', () => {
     await write($, 'a-techlead-4', PLAN.slice(1))
     await done($, 'a-techlead-4')
     await build($)
+    await accepted($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
   })
 
@@ -103,7 +132,7 @@ describe('the tech lead', () => {
     // Nothing goes on before the person says so in the pane.
     expect(w.spawned).toEqual([])
     await resumed($)
-    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:techlead'])
+    expect(w.spawned.map(s => s.subagentType).filter(t => t !== 'crew:finder' && t !== 'crew:checker')).toEqual(['crew:techlead'])
     expect(w.spawned[0]?.prompt).toMatch(/重開過[\s\S]*AC-002/)
   })
 
@@ -123,7 +152,7 @@ describe('the tech lead', () => {
     await start($)
     await $.command.run(command('ask pm 月繳價格多少？'))
     await done($, 'a-pm-1', '一百元')
-    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm'])
+    expect(w.spawned.map(s => s.subagentType).filter(t => t !== 'crew:finder' && t !== 'crew:checker')).toEqual(['crew:pm'])
   })
 
   test('says an answer to the tech lead’s own question went to the tech lead', async ($, on) => {
@@ -165,7 +194,9 @@ describe('the tech lead', () => {
     await write($, 'a-techlead-4', [{ op: 'add_task', feature: 'PRD-001', criteria: ['AC-003'], title: '年繳', detail: '', size: 'S' }])
     await done($, 'a-techlead-4')
     await build($, ['TASK-001', 'TASK-002', 'TASK-003'])
-    expect(w.spawned.map(s => s.subagentType)).toEqual(['crew:pm', 'crew:qa', 'crew:uiux', 'crew:techlead', 'crew:fullstack'])
+    expect(w.spawned.map(s => s.subagentType).filter(t => t !== 'crew:finder' && t !== 'crew:checker')).toEqual(['crew:pm', 'crew:qa', 'crew:uiux', 'crew:techlead', 'crew:fullstack'])
+    // Built and tested: QA hands each feature over and the person passes it.
+    await accepted($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
   })
 

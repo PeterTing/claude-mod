@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { applyOps, DEFAULT_PREFIXES, newTracker } from './board'
 import type { Op } from './board'
-import { approve, build, command, designed, done, paneUi, PLAN, PRD, ROOT, SPLIT, start, textOf, world, write } from './world'
+import { accepted, approve, build, command, designed, done, paneUi, PLAN, PRD, ROOT, SPLIT, start, textOf, world, write } from './world'
 
 const call = ($: Engine, tool: string, input: Record<string, unknown>, agentId?: string) =>
   $.tool.call({ tool: `mcp__crew__${tool}`, tool_use_id: `h-${Math.random()}`, ...(agentId === undefined ? {} : { agentId }), ...input } as never) as Promise<{ result: unknown }>
@@ -31,11 +31,11 @@ const leftBoard = () => {
 }
 
 describe('the heartbeat', () => {
-  test('says when crew last looked, and when it looks next', async ($, on) => {
+  test('says when crew last looked', async ($, on) => {
     world($, on)
     await start($)
     const ui = await paneUi($)
-    expect(await textOf(ui)).toMatch(/常駐 ✓ 心跳 剛剛 · 下次 5 分鐘後/)
+    expect(await textOf(ui)).toMatch(/✓ 常駐・心跳 剛剛/)
     await ui.unmount()
   })
 
@@ -52,7 +52,7 @@ describe('the heartbeat', () => {
     expect(w.spawned).toHaveLength(before)
     expect(w.sent.at(-1)).toMatchObject({ to: 'a-qa-2' })
     let ui = await paneUi($)
-    expect(await textOf(ui)).toMatch(/常駐 ⚠ 心跳 剛剛發現：流程停在「測試案例」，沒有角色在工作 → 已叫醒 QA 接續（第 1 次）/)
+    expect(await textOf(ui)).toMatch(/⚠ 常駐・心跳 剛剛發現：流程停在「測試案例」，沒有角色在工作 → 已叫醒 QA 接續（第 1 次）/)
     await ui.unmount()
     // It stops again at the same place: the person decides.
     await failed($, 'a-qa-2', 'error')
@@ -139,6 +139,7 @@ describe('the heartbeat', () => {
     await write($, 'a-techlead-4', PLAN)
     await done($, 'a-techlead-4')
     await build($)
+    await accepted($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
     // The person fixes something on crew's branch themselves, outside any role's run.
     const sha = w.commit('TASK-001: 文案修正')
@@ -146,7 +147,7 @@ describe('the heartbeat', () => {
     expect(w.sent.at(-1)).toMatchObject({ to: 'a-techlead-4' })
     expect(w.sent.at(-1)?.text).toMatch(new RegExp(`請 review TASK-001[\\s\\S]*commit ${sha}`))
     const ui = await paneUi($)
-    expect(await textOf(ui)).toMatch(/常駐 ⚠ 心跳 剛剛發現：流程完成後多了新的 commit → 已排給 Tech lead review/)
+    expect(await textOf(ui)).toMatch(/⚠ 常駐・心跳 剛剛發現：流程完成後多了新的 commit → 已排給 Tech lead review/)
     await ui.unmount()
     await approve($, 'TASK-001')
   })
@@ -178,11 +179,12 @@ describe('the heartbeat', () => {
     await approve($, 'TASK-001')
     w.commit('TASK-002: 取消流程')
     await done($, 'a-fullstack-5')
-    // The run is asked for, and Claude Code reloads before it starts: the flow is held in testing.
+    // The run is asked for, and crew loads again before it starts: the flow is held in testing.
     w.refuse.timers = 1
     await approve($, 'TASK-002')
-    // The lost run is given up on, as a reloaded crew starts with none asked for.
+    // The lost run is given up on, as a restarted crew starts with none asked for; a load in another conversation, of the same version, waits for the person.
     await w.clock.advance(60_000)
+    w.session.id = 'session-2'
     await start($)
     const ui = await paneUi($)
     expect(await textOf(ui)).toMatch(/停在「測試結果」。要接續嗎？/)
@@ -190,6 +192,8 @@ describe('the heartbeat', () => {
     await ui.press({ key: 'tab-settings' })
     await ui.press({ key: 'run-tests' })
     await w.clock.advance(1)
+    // Built and tested: QA hands each feature over and the person passes it, in the pane held open.
+    await accepted($, ui)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
     await ui.press({ key: 'tab-overview' })
     expect(await textOf(ui)).not.toMatch(/要接續嗎|暫停中/)
@@ -306,7 +310,8 @@ describe('the heartbeat', () => {
     }
     await w.clock.advance(BEAT)
     await w.clock.advance(BEAT)
-    expect(w.tests.runs).toHaveLength(1)
+    // The flow's own run, in crew's worktree: TASK-001's approved commit is tested apart, in QA's.
+    expect(w.tests.runs.filter(r => r.cwd === `${ROOT}/.crew/work/prd`)).toHaveLength(1)
   })
 
   test('takes no PRD change on a held flow until the person goes on', async ($, on) => {
@@ -388,6 +393,7 @@ describe('the heartbeat', () => {
     await write($, 'a-techlead-4', PLAN)
     await done($, 'a-techlead-4')
     await build($)
+    await accepted($)
     expect((await $.command.run(command('status'))).text).toMatch(/done/)
     await $.command.run(command('rotate techlead'))
     w.commit('TASK-001: 文案修正')

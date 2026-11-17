@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>crew</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="app-head">
+    <div class="who">
+      <span class="mark" aria-hidden="true">crew</span>
+      <h1 id="title">crew</h1>
+      <span id="chip" class="chip run" hidden></span>
+      <span id="status" class="cap"></span>
+    </div>
+    <div class="who end">
+      <span id="saved" class="saved" role="status" hidden>✓ crew 已記下</span>
+      <span class="live off" id="live"><i aria-hidden="true"></i><span id="live-text">連線中…</span></span>
+      <button class="btn small share" type="button" id="share" aria-expanded="false" aria-controls="share-pop">其他裝置開</button>
+    </div>
+    <div class="card pop" id="share-pop" hidden>
+      <h2>在其他裝置開</h2>
+      <p class="cap" id="share-why"></p>
+      <div class="share-row" id="share-row" hidden>
+        <span class="mono url" id="share-url"></span>
+        <button class="btn small" type="button" id="share-copy">複製</button>
+      </div>
+      <p class="cap" id="share-note">只有登入你自己 Tailscale 帳號的裝置能開。</p>
+    </div>
+  </header>
+  <div class="notes">
+    <p class="demo" id="demo" hidden>這是設計預覽（/crew demo）：畫面上是範例資料，按鈕不會改到真的專案。</p>
+    <div class="demo build" id="build" role="status" hidden>
+      <p>這個對話的 crew 還是舊版本，新的畫面和功能還不會出現。要換上：在 Claude Code 的這個對話輸入 <code class="mono" id="build-cmd">/reload-plugins</code> 按 Enter，或開一個新對話。</p>
+      <button class="btn small" type="button" id="build-copy">複製 /reload-plugins</button>
+    </div>
+  </div>
+  <nav class="side" id="nav" aria-label="crew 的分頁"></nav>
+  <main class="main" id="main" tabindex="-1">
+    <div class="tree" id="tree"><p class="cap">正在連上 crew…</p></div>
+    <section class="decide" id="decide" aria-label="待你決定頁" hidden></section>
+  </main>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="cover" id="cover" hidden>
+  <div class="card" role="alertdialog" aria-modal="true" aria-labelledby="cover-title" aria-describedby="cover-text">
+    <h2 id="cover-title"></h2>
+    <p id="cover-text"></p>
+    <p class="cap" id="cover-cap"></p>
+    <div><button class="btn primary" type="button" id="cover-retry">現在重新連線</button></div>
+  </div>
+</div>
+</body>
+</html>

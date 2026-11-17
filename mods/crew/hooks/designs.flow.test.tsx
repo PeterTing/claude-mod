@@ -18,6 +18,9 @@ const DESIGNS = [
   { op: 'add_design', feature: 'PRD-002', title: '取消訂閱', kind: 'none', body: '在帳號頁既有的按鈕取消，沒有新畫面。' },
 ]
 
+/** What the Artifact tool says of a page this account cannot open: deleted, or another account's. */
+const GONE = 'artifact not found — it may have been deleted, or it has not been shared with you.'
+
 const crew = ($: Engine, input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__crew__crew', tool_use_id: `c-${Math.random()}`, ...input } as never) as Promise<{ result: unknown }>
 
 describe('designs', () => {
@@ -31,7 +34,7 @@ describe('designs', () => {
     await done($, 'a-uiux-3')
     const status = (await $.command.run(command('status'))).text
     expect(status).toMatch(/approving[\s\S]*待你決定 2/)
-    expect(w.toasts.some(t => /設計稿 SCR-001 等你核准，大腦更新待你決定頁後在「待你決定」按［開待你決定頁］/.test(t))).toBe(true)
+    expect(w.toasts.some(t => /設計稿 SCR-001 等你核准，待你決定頁更新後在「待你決定」按［開待你決定頁］/.test(t))).toBe(true)
     expect((await $.command.run(command('design SCR-001'))).text).toMatch(/^SCR-001 方案選擇頁（PRD-001 方案選擇，畫面）・等你核准\n\n版面：三張方案卡片/)
     expect(String((await crew($, { action: 'design', question: 'SCR-002' })).result)).toMatch(/SCR-002 取消訂閱（PRD-002 取消訂閱，沒有畫面）/)
     expect(await paneText($, 'progress')).toMatch(/→ 設計 0\/2/)
@@ -276,6 +279,251 @@ describe('designs', () => {
     await ui.unmount()
     expect((w.store.get(`state:${ROOT}`) as Kept).questions.find(x => x.item === 'SCR-001')?.status).toBe('answered')
     expect(w.toasts.some(t => /SCR-001 不在目前的看板上，這題關掉了/.test(t))).toBe(true)
+  })
+
+  test('publish the decide page anew when its link is gone, as when Claude Code signed in to another account', async ($, on) => {
+    const w = world($, on)
+    const listed: unknown[] = []
+    on('tool.call', { tool: 'Artifact' }, (_$, e) => {
+      listed.push((e as { url?: unknown }).url)
+      return { result: GONE, isError: true, text: GONE } as never
+    })
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    await crew($, { action: 'published', text: 'https://claude.ai/artifact/old111', path: 'docs/PRD.md' })
+    const asked = w.prompts.length
+    const said = String((await crew($, { action: 'published', text: '無法發佈：換了帳號，這個帳號打不開原本的 artifact', path: 'docs/PRD.md' })).result)
+    expect(listed).toEqual(['https://claude.ai/artifact/old111'])
+    expect(said).toMatch(/原本的連結 https:\/\/claude\.ai\/artifact\/old111 已經打不開[\s\S]*不改成在面板決定，crew 改發一個新的待你決定頁/)
+    expect(w.store.get(`review:${ROOT}:docs/PRD.md`)).not.toHaveProperty('failed')
+    expect(w.store.get(`review:${ROOT}:docs/PRD.md`)).not.toHaveProperty('url')
+    expect(w.toasts.some(t => /改成在右側面板/.test(t))).toBe(false)
+    // The brain is asked for a new page with every file, not an update of the gone one.
+    await w.clock.advance(61_000)
+    const ask = w.prompts.slice(asked).find(p => /待你決定頁要發佈給使用者看/.test(p))
+    expect(ask).toMatch(/"SCR-001\.json"/)
+    expect(ask).toMatch(/capabilities：\{"comments":\{\}\}/)
+    expect(ask).not.toMatch(/old111/)
+  })
+
+  test('keep the decide page first in the overview, with nothing left on it to decide', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    // The brain publishes once crew's ask has reached it.
+    const published = async () => {
+      await w.clock.advance(61_000)
+      await crew($, { action: 'published', text: 'https://claude.ai/artifact/new222', path: 'docs/PRD.md' })
+    }
+    const overview = async () => {
+      const ui = await paneUi($)
+      const text = await textOf(ui)
+      const links = JSON.stringify(await ui.findAll({ type: 'Link' }))
+      await ui.unmount()
+      return { text, links, first: text.indexOf('待你決定頁（含進度圖）'), roles: text.indexOf('角色') }
+    }
+    await tested($)
+    // Nobody asked for it yet: not said to be on its way.
+    expect((await overview()).text).not.toMatch(/發佈中/)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    // Asked for and not out yet: said so where the link will be.
+    expect((await overview()).text).toMatch(/待你決定頁（含進度圖）\n發佈中，好了連結會出現在這裡/)
+    await published()
+    const out = await overview()
+    // Published by the brain, as here with no Artifact tool: said so, not that it keeps up with the work.
+    expect(out.text).toMatch(/待你決定頁（含進度圖）\n［開待你決定頁 ↗］\n大腦發佈的版本：進度圖只在有事等你決定時更新/)
+    expect(out.links).toMatch(/https:\/\/claude\.ai\/artifact\/new222/)
+    expect(out.first).toBeGreaterThan(-1)
+    expect(out.first).toBeLessThan(out.roles)
+    // The overview says it once: not again in the header above the tabs.
+    expect(out.text.match(/進度圖和已經決定的事在待你決定頁/g)).toBeNull()
+    // A decision the brain has yet to put on the page: what is out is older.
+    await $.command.run(command('approve SCR-001'))
+    expect((await overview()).text).toMatch(/待你決定頁（含進度圖）\n［開待你決定頁 ↗］\n有新進度，等大腦更新/)
+    await published()
+    // Every design decided: no row waits, and the page, with the progress map on it, is still there to open.
+    await $.command.run(command('approve SCR-002'))
+    await published()
+    const after = await overview()
+    expect(after.text).not.toMatch(/待你決定（/)
+    expect(after.text).toMatch(/待你決定頁（含進度圖）\n［開待你決定頁 ↗］\n大腦發佈的版本/)
+    expect(after.links).toMatch(/https:\/\/claude\.ai\/artifact\/new222/)
+    // The overview says it once; another tab, with no row of its own, has the header line take the link.
+    expect(after.text.match(/進度圖和已經決定的事在待你決定頁/g)).toBeNull()
+    // Another tab has no row of its own: the header line takes the link there.
+    const other = await paneUi($)
+    await other.press({ key: 'tab-board' })
+    expect(await textOf(other)).toMatch(/進度圖和已經決定的事在待你決定頁/)
+    await other.press({ key: 'tab-overview' })
+    await other.unmount()
+    // A page crew could not update says why, and where to decide meanwhile.
+    await crew($, { action: 'published', text: '無法發佈：工具回報錯誤', path: 'docs/PRD.md' })
+    expect((await overview()).text).toMatch(/更新不了：.*工具回報錯誤.*要決定的事改在下方面板決定/)
+  })
+
+  test('once the person chose the pane, the decide page goes on for them to read, with nothing on it to decide with', async ($, on) => {
+    const w = world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    await crew($, { action: 'published', text: 'https://claude.ai/artifact/new222', path: 'docs/PRD.md' })
+    const asked = w.prompts.length
+    const ui = await paneUi($)
+    await ui.press({ key: 'review-in-pane' })
+    const text = await textOf(ui)
+    expect(text).toMatch(/待你決定頁（含進度圖）\n［開待你決定頁 ↗］\n你選了在面板決定：這頁照樣更新，只給你看/)
+    expect(text).not.toMatch(/更新不了|不再更新/)
+    expect(JSON.stringify(await ui.find({ key: 'review-on-page' }))).toMatch(/改回網頁決定/)
+    // The page is made again for reading: its data says so, and the brain is asked to update it as a page to read.
+    expect(JSON.parse(w.disk.get(`${ROOT}/.crew/designs/docs-PRD/data.json`) ?? '{}')).toMatchObject({ view: true })
+    await w.clock.advance(61_000)
+    const ask = w.prompts.slice(asked).find(p => /待你決定頁要更新給使用者看/.test(p))
+    expect(ask).toMatch(/使用者選了在面板決定：這一頁只給他看，上面沒有按鈕/)
+    expect(ask).not.toMatch(/使用者在頁面上決定時/)
+    await ui.unmount()
+  })
+
+  test('say in the overview that the decide page is not published, once the person chose the pane before it was out', async ($, on) => {
+    world($, on)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    const ui = await paneUi($)
+    await ui.press({ key: 'review-in-pane' })
+    const text = await textOf(ui)
+    // Chosen before the page was out: it is still published, for reading.
+    expect(text).toMatch(/待你決定頁（含進度圖）\n你選了在面板決定：頁面發佈中，只給你看/)
+    expect(text).not.toMatch(/這頁不再更新/)
+    await ui.unmount()
+  })
+
+  test('a page an earlier crew stopped for the pane goes on for reading once crew loads again', async ($, on) => {
+    const w = world($, on)
+    on('tool.call', { tool: 'Artifact' }, () => ({ result: { file_list: { ver: 'v1', files: [] } } }) as never)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    // How crew kept the pane chosen before: the page given up on in these words.
+    w.store.set(`review:${ROOT}:docs/PRD.md`, { url: 'https://claude.ai/artifact/old111', failed: '你選擇改在面板決定', chose: true })
+    const asked = w.prompts.length
+    await start($)
+    expect(w.store.get(`review:${ROOT}:docs/PRD.md`)).not.toHaveProperty('failed')
+    expect(w.store.get(`review:${ROOT}:docs/PRD.md`)).toMatchObject({ url: 'https://claude.ai/artifact/old111', chose: true })
+    expect(await paneText($)).toMatch(/你選了在面板決定：這頁照樣更新，只給你看/)
+    expect(JSON.parse(w.disk.get(`${ROOT}/.crew/designs/docs-PRD/data.json`) ?? '{}')).toMatchObject({ view: true })
+    await w.clock.advance(61_000)
+    expect(w.prompts.slice(asked).some(p => /待你決定頁要更新給使用者看/.test(p) && /這一頁只給他看/.test(p))).toBe(true)
+  })
+
+  test('publish anew, once crew loads again, a decide page given up on because its link was gone', async ($, on) => {
+    const w = world($, on)
+    // What the tool says once this session dropped the link (a refused publish earlier in it).
+    const DROPPED = 'This session has dropped its link to that Artifact — do not pass its url to the Artifact tool again.'
+    const link: { said?: string } = {}
+    on('tool.call', { tool: 'Artifact' }, () => (link.said !== undefined ? { result: link.said, isError: true, text: link.said } : { result: { file_list: { ver: 'v1', files: [] } } }) as never)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    // What an earlier crew kept when the brain could not update the page: the pane decided from then on.
+    const given = { url: 'https://claude.ai/artifact/old111', failed: '換了帳號，這個帳號打不開原本的 artifact' }
+    w.store.set(`review:${ROOT}:docs/PRD.md`, given)
+    // A link still there: the failure was something else, and stays.
+    await start($)
+    expect(w.store.get(`review:${ROOT}:docs/PRD.md`)).toMatchObject(given)
+    // Neither there nor gone in words crew knows: kept, and what the tool said is logged to learn from.
+    link.said = 'Artifact service unavailable, try later'
+    await start($)
+    expect(w.store.get(`review:${ROOT}:docs/PRD.md`)).toMatchObject(given)
+    expect(w.disk.get(`${ROOT}/.crew/log/2026-10-15.jsonl`)).toMatch(/"kind":"design_page","probe":"https:\/\/claude.ai\/artifact\/old111","said":"Artifact service unavailable, try later"/)
+    // Gone for this account: the next load forgets it and asks for a new page.
+    link.said = DROPPED
+    const asked = w.prompts.length
+    await start($)
+    expect(w.store.get(`review:${ROOT}:docs/PRD.md`)).not.toHaveProperty('failed')
+    await w.clock.advance(61_000)
+    expect(w.prompts.slice(asked).some(p => /待你決定頁要發佈給使用者看/.test(p) && !/old111/.test(p))).toBe(true)
+  })
+
+  test('go back from the pane to the decide page, on a new page once Claude Code signed in to another account', async ($, on) => {
+    const w = world($, on)
+    on('tool.call', { tool: 'Artifact' }, () => ({ result: GONE, isError: true, text: GONE }) as never)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    await crew($, { action: 'published', text: 'https://claude.ai/artifact/old111', path: 'docs/PRD.md' })
+    let ui = await paneUi($)
+    await ui.press({ key: 'review-in-pane' })
+    await ui.unmount()
+    // Signed in to another account since: a new session leaves the pane the person chose.
+    await start($)
+    expect(w.store.get(`review:${ROOT}:docs/PRD.md`)).toMatchObject({ url: 'https://claude.ai/artifact/old111', chose: true })
+    ui = await paneUi($)
+    expect(await textOf(ui)).toMatch(/你選了在面板決定：這頁照樣更新，只給你看/)
+    // The person's way back: the page is made again from now, on a new page as this account cannot open the old one.
+    const asked = w.prompts.length
+    await ui.press({ key: 'review-on-page' })
+    const review = w.store.get(`review:${ROOT}:docs/PRD.md`)
+    expect(review).not.toHaveProperty('chose')
+    expect(review).not.toHaveProperty('failed')
+    expect(review).not.toHaveProperty('url')
+    expect(w.toasts.some(t => /改回在待你決定頁決定：原本的連結這個帳號打不開[\s\S]*會發一個新的頁面/.test(t))).toBe(true)
+    await w.clock.advance(61_000)
+    expect(w.prompts.slice(asked).some(p => /待你決定頁要發佈給使用者看（2 份設計稿等使用者核准）/.test(p) && !/old111/.test(p))).toBe(true)
+    expect(await textOf(ui)).toMatch(/待你決定頁（含進度圖）\n發佈中，好了連結會出現在這裡/)
+    await ui.unmount()
+  })
+
+  test('go back to the decide page when the person asks the brain, in their words', async ($, on) => {
+    const w = world($, on)
+    on('tool.call', { tool: 'Artifact' }, () => ({ result: { file_list: { ver: 'v1', files: [] } } }) as never)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    await crew($, { action: 'published', text: 'https://claude.ai/artifact/old111', path: 'docs/PRD.md' })
+    const ui = await paneUi($)
+    await ui.press({ key: 'review-in-pane' })
+    await ui.unmount()
+    // Not on the brain's own word: the pane is the person's choice.
+    expect(String((await crew($, { action: 'page' })).result)).toMatch(/said 填他的原話/)
+    expect(w.store.get(`review:${ROOT}:docs/PRD.md`)).toMatchObject({ chose: true })
+    const asked = w.prompts.length
+    const said = String((await crew($, { action: 'page', said: '我現在用另一個帳號登入，請重開待你決定頁' })).result)
+    expect(said).toMatch(/^改回在待你決定頁決定：crew 用現在的看板和問題重做這一頁/)
+    expect(said).not.toMatch(/打不開/)
+    // A link this account still opens is updated in place.
+    expect(w.store.get(`review:${ROOT}:docs/PRD.md`)).toMatchObject({ url: 'https://claude.ai/artifact/old111' })
+    await w.clock.advance(61_000)
+    expect(w.prompts.slice(asked).some(p => /待你決定頁要更新給使用者看[\s\S]*url：https:\/\/claude\.ai\/artifact\/old111/.test(p))).toBe(true)
+    expect(w.disk.get(`${ROOT}/.crew/log/2026-10-15.jsonl`)).toMatch(/"kind":"design_page","back":"我現在用另一個帳號登入，請重開待你決定頁"/)
+    // Back on the page already: nothing to do.
+    expect(String((await crew($, { action: 'page', said: '重開待你決定頁' })).result)).toMatch(/^待你決定頁本來就在用/)
+  })
+
+  test('make a page in use anew when the person asks and this account cannot open its link', async ($, on) => {
+    const w = world($, on)
+    on('tool.call', { tool: 'Artifact' }, () => ({ result: GONE, isError: true, text: GONE }) as never)
+    await start($)
+    await tested($)
+    await write($, 'a-uiux-3', DESIGNS)
+    await done($, 'a-uiux-3')
+    await crew($, { action: 'published', text: 'https://claude.ai/artifact/old111', path: 'docs/PRD.md' })
+    // Nothing failed on this machine: only the account changed.
+    const said = String((await crew($, { action: 'page', said: '我換了帳號，請重開待你決定頁' })).result)
+    expect(said).toMatch(/^改回在待你決定頁決定：原本的連結這個帳號打不開/)
+    expect(w.store.get(`review:${ROOT}:docs/PRD.md`)).not.toHaveProperty('url')
+    const asked = w.prompts.length
+    await w.clock.advance(61_000)
+    const told = w.prompts.slice(asked).find(p => /待你決定頁要發佈給使用者看/.test(p))
+    expect(told).toBeDefined()
+    expect(told).not.toMatch(/old111|Claude Code 重開過/)
   })
 
   test('send a mockup back, unmasked and unwritten, when it looks like it holds a secret', async ($, on) => {

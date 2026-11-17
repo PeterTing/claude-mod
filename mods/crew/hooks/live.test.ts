@@ -3,13 +3,15 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { CrewLive } from '../types'
 import { applyOps, newTracker } from './board'
 import type { Op, Tracker } from './board'
-import { emptyLive, metricsOf, snapshotOf, stopKey, usageSignals } from './live'
+import { emptyLive, metricsOf, runGap, snapshotOf, stopKey, usageSignals } from './live'
 import { barCells, percent } from './model'
 import type { Snapshot } from './model'
 import { bandText, bar, paneFailure } from './views'
 import { withCommits, withResults, withReviews } from './git'
 import { withDecisions } from './designs'
+import { itemPageOf } from './details'
 import { requirementsOf } from './prd'
+import { labelOf } from './router'
 
 const NOW = Date.UTC(2026, 9, 15, 6, 0, 0)
 
@@ -127,7 +129,7 @@ describe('snapshotOf', () => {
     expect(s.decisions).toEqual([{ id: 'Q-01', question: '年繳要不要做？', from: 'pm', age: '5 分鐘前' }])
     const thread = s.threads.find(t => t.item === 'AC-003')
     expect(thread?.title).toBe('到期當天取消')
-    expect(thread?.messages.map(m => m.from)).toEqual(['crew', 'QA → PM'])
+    expect(thread?.messages.map(m => m.from)).toEqual(['QA → PM'])
   })
 
   test('sums token use per role, the brain’s share and use by tier', () => {
@@ -211,6 +213,12 @@ describe('development status by PRD requirement', () => {
     ],
     'qa',
   )
+
+  test('shows a requirement the PRD writes in markdown as plain words, under the number crew gave it', () => {
+    const md = requirementsOf('## 錯誤\n- **使用者偶發遇到 internal server error。** 連線池上限在 `backend/api/src/db/client.ts:23`，見[說明](https://example.com/a)。')
+    const rows = snapshotOf({ board: newTracker('shop'), live: emptyLive(), now: NOW, prd: { requirements: md } }).requirements ?? []
+    expect(rows.map(r => [r.id, r.text])).toEqual([[md[0]?.id, '使用者偶發遇到 internal server error。 連線池上限在 backend/api/src/db/client.ts:23，見說明。']])
+  })
 
   test('says, for each requirement, how far its spec and test cases are, from the board', () => {
     const rows = snapshotOf({ board, live: emptyLive(), now: NOW, prd: { requirements: reqs } }).requirements ?? []
@@ -305,6 +313,15 @@ describe('the tech lead’s tasks', () => {
   )
   const planning: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'planning', round: 0, retries: 0 } }
 
+  test('a task’s page names the builder crew handed its work to, as the log does', () => {
+    const live: CrewLive = { ...planning, threads: { 'TASK-002': [{ t: NOW - 60_000, item: 'TASK-002', from: 'crew', to: 'fullstack', slot: 2, kind: 'route', text: 'TASK-002 review 要改：補上錯誤處理' }] } }
+    const handedOut = [{ t: NOW - 120_000, to: 'fullstack', slot: 2, text: '請實作 TASK-002 取消流程' }]
+    const page = itemPageOf({ board, live, snap: snapshotOf({ board, live, now: NOW }), requirements: [], handedOut, now: NOW }, 'TASK-002')
+    const given = page.sections.find(s => s.title === 'crew 交代的內容')?.lines ?? []
+    expect(given).toHaveLength(2)
+    expect(given.every(l => /　crew → 全端 2\n/.test(l))).toBe(true)
+  })
+
   test('show the tech lead as a role crew runs', () => {
     const tl = snapshotOf({ board, live: planning, now: NOW }).roles.find(r => r.id === 'techlead')
     expect(tl?.doing).toBe('—')
@@ -339,10 +356,10 @@ describe('the tech lead’s tasks', () => {
     expect(snapshotOf({ board: dropped, live: planning, now: NOW }).items.some(i => i.id === 'TASK-001')).toBe(false)
   })
 
-  test('list on the board tab, owned by the tech lead, not started until code lands', () => {
+  test('list on the board tab, for the full-stack to build, not started until code lands', () => {
     const items = snapshotOf({ board, live: planning, now: NOW }).items
     const task = items.find(i => i.id === 'TASK-001')
-    expect(task).toMatchObject({ title: '方案頁', owner: 'techlead', status: 'todo' })
+    expect(task).toMatchObject({ title: '方案頁', owner: 'fullstack', status: 'todo' })
     expect(task?.note).toMatch(/AC-001[\s\S]*M/)
   })
 })
@@ -368,7 +385,7 @@ describe('the full-stack’s commits', () => {
     'techlead',
   )
   const half = withCommits(planned, new Map([['TASK-001', ['abc1234def']]])) ?? planned
-  const building: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-002' } }
+  const building: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, jobs: { 'TASK-002': { slot: 1, home: 1, retries: 0, reviews: 0 } } } }
 
   test('make the 實作 stage and the full-stack row live', () => {
     const snap = snapshotOf({ board: half, live: building, now: NOW })
@@ -392,6 +409,41 @@ describe('the full-stack’s commits', () => {
     expect(after?.total).toBe(before?.total)
     expect(after?.done).toBe(before?.done)
     expect(after?.done ?? 0).toBeLessThan(after?.total ?? 0)
+  })
+
+  describe('on the board tab, by how hard each task is', () => {
+    // The tech lead last ran something small, on its Opus floor; the full-stack builds TASK-002 on a climb the brain made.
+    const roles = emptyLive().roles
+    const ran: CrewLive['roles'] = {
+      ...roles,
+      techlead: { ...roles.techlead, tier: 'S', label: labelOf('opus'), effort: 'high' },
+      fullstack: { ...roles.fullstack, state: 'working', tier: 'M', label: labelOf('opus'), effort: 'high' },
+    }
+    const row = (b: Tracker, l: CrewLive, id: string, planned?: Parameters<typeof snapshotOf>[0]['planned']) =>
+      snapshotOf({ board: b, live: l, now: NOW, ...(planned === undefined ? {} : { planned }) }).items.find(i => i.id === id)
+
+    test('show a task not started at its own tier, on what the full-stack will build it on, not the tech lead’s last run', () => {
+      const idle: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', roles: ran, flow: { stage: 'planning', round: 0, retries: 0 } }
+      expect(row(planned, idle, 'TASK-002')).toMatchObject({ owner: 'fullstack', status: 'todo', route: { tier: 'M', model: labelOf('sonnet'), effort: 'high' } })
+      expect(row(planned, idle, 'TASK-001')).toMatchObject({ owner: 'fullstack', route: { tier: 'S', model: labelOf('sonnet'), effort: 'high' } })
+    })
+
+    test('show a committed task the full-stack has left at its own tier, not the one it builds now', () => {
+      expect(row(half, { ...building, roles: ran }, 'TASK-001')).toMatchObject({ owner: 'fullstack', route: { tier: 'S', model: labelOf('sonnet'), effort: 'high' } })
+    })
+
+    test('show the task under way, and the task under review, on what its role runs now', () => {
+      expect(row(half, { ...building, roles: ran }, 'TASK-002')).toMatchObject({ owner: 'fullstack', route: { tier: 'M', model: labelOf('opus'), effort: 'high' } })
+      const both = withCommits(planned, new Map([['TASK-002', ['def5678abc']]])) ?? planned
+      const under: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', roles: ran, flow: { stage: 'reviewing', round: 0, retries: 0, building: 'TASK-002', reviewing: { task: 'TASK-002', sha: 'def5678abc' } } }
+      expect(row(both, under, 'TASK-002')).toMatchObject({ owner: 'techlead', route: { tier: 'S', model: labelOf('opus'), effort: 'high' } })
+    })
+
+    test('show a task not started on the full-stack’s own models, as the person set them', () => {
+      const idle: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'planning', round: 0, retries: 0 } }
+      const onCodex = (tier: 'S' | 'M' | 'L' | 'XL') => ({ tier, model: '6.1 Sol', effort: 'xhigh' })
+      expect(row(planned, idle, 'TASK-002', onCodex)?.route).toEqual({ tier: 'M', model: '6.1 Sol', effort: 'xhigh' })
+    })
   })
 
   describe('and the tech lead’s reviews of them', () => {
@@ -429,7 +481,7 @@ describe('the full-stack’s commits', () => {
 
     test('show each task’s review on the board tab, and the gaps of G5 by where they stand', () => {
       const b = review(both, [['TASK-002', { sha: 'def5678abc', verdict: 'changes', notes: '缺錯誤處理' }]])
-      const fixing: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-002', fixing: 'def5678abc' } }
+      const fixing: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, jobs: { 'TASK-002': { slot: 1, home: 1, retries: 0, reviews: 1, fixing: 'def5678abc' } } } }
       const snap = snapshotOf({ board: b, live: fixing, now: NOW })
       expect(snap.items.find(i => i.id === 'TASK-001')).toMatchObject({ status: 'doing', note: expect.stringMatching(/commit abc1234 · 等 review/) })
       expect(snap.items.find(i => i.id === 'TASK-002')).toMatchObject({ owner: 'fullstack', status: 'doing', note: expect.stringMatching(/review 要修改：缺錯誤處理 · 全端正在改/) })
@@ -442,7 +494,7 @@ describe('the full-stack’s commits', () => {
     })
 
     test('call a review out of date once a newer commit lands, and only an approval stale', () => {
-      const building: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, building: 'TASK-001' } }
+      const building: CrewLive = { ...emptyLive(), prdPath: 'docs/PRD.md', flow: { stage: 'building', round: 0, retries: 0, jobs: { 'TASK-001': { slot: 1, home: 1, retries: 0, reviews: 0 } } } }
       const at = (verdict: 'approve' | 'changes'): Tracker => review(both, [['TASK-001', { sha: 'abc1234def', verdict: 'approve' }], ['TASK-002', { sha: 'fed0000aaa', verdict }]])
       // TASK-002 was reviewed at fed0000; def5678 came after, and is not reviewed yet.
       for (const verdict of ['approve', 'changes'] as const) {
@@ -462,7 +514,7 @@ describe('the full-stack’s commits', () => {
 
     test('make G6 and the 測試結果 stage from crew’s latest run, and count it toward the whole', () => {
       const none = snapshotOf({ board: approved, live: testing, now: NOW, prd: { requirements: reqs } })
-      expect(none.gates.find(g => g.id === 'G6')).toMatchObject({ state: 'active', covered: 0, total: 1, name: 'test case 全部執行通過、附證據', fill: '全端修', confirm: 'crew 跑你設定的測試指令' })
+      expect(none.gates.find(g => g.id === 'G6')).toMatchObject({ state: 'active', covered: 0, total: 1, name: 'test case 全部執行通過、附證據', fill: '全端修', confirm: 'crew 跑測試指令（crew 找到的和你設定的）' })
       expect(none.gates.find(g => g.id === 'G6')?.gaps).toEqual([{ id: 'TC-001', title: 't', status: '還沒跑' }])
       // Every task approved, no test case passed yet: the whole is not done.
       expect((none.progress?.done ?? 0) < (none.progress?.total ?? 0)).toBe(true)
@@ -579,7 +631,11 @@ describe('the UI/UX designer’s designs', () => {
   test('list each design on the board tab by where it stands, and the designer’s row as it runs', () => {
     const b = decide(designed, [['SCR-001', { verdict: 'approved' }]])
     const designing: CrewLive = { ...approving, flow: { stage: 'designing', round: 0, retries: 0 }, roles: { ...approving.roles, uiux: { state: 'working', doing: '畫設計稿', context: 9_000, label: 'Sonnet 5.5', tier: 'S', effort: 'medium' } } }
-    const snap = snapshotOf({ board: b, live: designing, now: NOW })
+    // One crew has not asked the person about yet is still the designer's, as the decide page shows it.
+    const unasked = snapshotOf({ board: b, live: designing, now: NOW })
+    expect(unasked.items.find(i => i.id === 'SCR-002')).toMatchObject({ owner: 'uiux', status: 'doing', note: expect.stringMatching(/PRD-002・沒有畫面 · UI\/UX 畫好了/) })
+    const asked: CrewLive = { ...designing, questions: [{ id: 'Q-01', question: '設計稿 SCR-002 取消（沒有畫面）等你核准', item: 'SCR-002', from: 'crew', t: 0, status: 'open' }] }
+    const snap = snapshotOf({ board: b, live: asked, now: NOW })
     expect(snap.items.find(i => i.id === 'SCR-001')).toMatchObject({ owner: 'uiux', status: 'done', note: expect.stringMatching(/PRD-001・畫面 · 你核准了/) })
     expect(snap.items.find(i => i.id === 'SCR-002')).toMatchObject({ owner: 'uiux', status: 'review', note: expect.stringMatching(/PRD-002・沒有畫面 · 等你核准/) })
     expect(snap.roles.find(r => r.id === 'uiux')).toMatchObject({ state: 'working', doing: '畫設計稿', route: { tier: 'S', model: 'Sonnet 5.5', effort: 'medium' } })
@@ -592,14 +648,14 @@ describe('usage signals for the brain', () => {
 
   test('name a role over 40% of a day big enough to tell, and one reading under 60% from the cache', () => {
     const l = day({ fullstack: u(31_000, 85_000, 50_000), pm: u(6_000, 27_000, 5_000) })
-    expect(usageSignals(l).map(x => x.key)).toEqual(['share:fullstack', 'hit:fullstack'])
-    expect(usageSignals(l).map(x => x.text)).toEqual(['全端今日佔 81%（超過 40%）', '全端快取命中率 51%（低於 60%）'])
+    expect(usageSignals(l, NOW).map(x => x.key)).toEqual(['share:fullstack', 'hit:fullstack'])
+    expect(usageSignals(l, NOW).map(x => x.text)).toEqual(['全端今日佔 81%（超過 40%）', '全端快取命中率 51%（低於 60%）'])
     // A day under 50K, or a role under it, says nothing.
-    expect(usageSignals(day({ fullstack: u(3_000, 1_000, 4_000) }))).toEqual([])
+    expect(usageSignals(day({ fullstack: u(3_000, 1_000, 4_000) }), NOW)).toEqual([])
   })
 
   test('tell at each threshold’s edge: over 40%, under 60%, from 50K, past the limit', () => {
-    const keys = (usage: CrewLive['usage']) => usageSignals(day(usage)).map(x => x.key)
+    const keys = (usage: CrewLive['usage']) => usageSignals(day(usage), NOW).map(x => x.key)
     // 40% of the day is no reminder; just over it is.
     expect(keys({ pm: u(4_000, 36_000, 0), fullstack: u(6_000, 54_000, 0) })).toEqual(['share:fullstack'])
     expect(keys({ pm: u(4_001, 36_000, 0), fullstack: u(6_000, 54_000, 0) })).toEqual(['share:pm', 'share:fullstack'])
@@ -611,25 +667,38 @@ describe('usage signals for the brain', () => {
     expect(keys({ fullstack: u(49_999, 0, 0) })).toEqual([])
     // A context at its limit is no reminder; past it is.
     const at = (context: number): CrewLive => ({ ...emptyLive(), roles: { ...emptyLive().roles, qa: { ...emptyLive().roles.qa, state: 'working', context, limit: 60_000 } } })
-    expect(usageSignals(at(60_000))).toEqual([])
-    expect(usageSignals(at(60_001)).map(x => x.key)).toEqual(['context:qa'])
+    expect(usageSignals(at(60_000), NOW)).toEqual([])
+    expect(usageSignals(at(60_001), NOW).map(x => x.key)).toEqual(['context:qa'])
   })
 
   test('name a role past its context threshold, its own or the brain’s', () => {
     const l: CrewLive = { ...emptyLive(), roles: { ...emptyLive().roles, qa: { ...emptyLive().roles.qa, state: 'working', context: 70_000, limit: 60_000 } } }
-    expect(usageSignals(l)).toEqual([{ key: 'context:qa', text: 'QA 這一輪的 context 70K 超過輪替門檻 60K（工作不會中斷，這一輪做完、下次叫醒時換新 context；門檻不是 context 容量）' }])
-    expect(usageSignals({ ...l, tuned: { qa: { limit: 80_000 } } })).toEqual([])
+    expect(usageSignals(l, NOW)).toEqual([{ key: 'context:qa', text: 'QA 這一輪的 context 70K 超過輪替門檻 60K（工作不會中斷，這一輪做完、下次叫醒時換新 context；門檻不是 context 容量）', level: 1 }])
+    expect(usageSignals({ ...l, tuned: { qa: { limit: 80_000 } } }, NOW)).toEqual([])
     // A role at rest, or one already marked to start fresh, is no reminder: its next wake rotates it anyway.
-    expect(usageSignals({ ...l, roles: { ...l.roles, qa: { ...l.roles.qa, state: 'idle' } } })).toEqual([])
-    expect(usageSignals({ ...l, roles: { ...l.roles, qa: { ...l.roles.qa, rotate: true } } })).toEqual([])
+    expect(usageSignals({ ...l, roles: { ...l.roles, qa: { ...l.roles.qa, state: 'idle' } } }, NOW)).toEqual([])
+    expect(usageSignals({ ...l, roles: { ...l.roles, qa: { ...l.roles.qa, rotate: true } } }, NOW)).toEqual([])
   })
 
-  test('name two roles going back and forth on one item more than six times', () => {
-    const msgs = (n: number) => Array.from({ length: n }, (_, i) => ({ t: i, item: 'AC-007', from: i % 2 === 0 ? 'PM' : 'QA', text: '…' }))
-    expect(usageSignals({ ...emptyLive(), threads: { 'AC-007': msgs(6) } })).toEqual([])
-    expect(usageSignals({ ...emptyLive(), threads: { 'AC-007': msgs(7) } })).toEqual([{ key: 'pingpong:AC-007', text: 'QA 和 PM 在 AC-007 來回 7 次（超過 6 次）' }])
+  test('name two roles going back and forth on one item more than six times, while they still are', () => {
+    const msgs = (n: number, at = NOW) => Array.from({ length: n }, (_, i) => ({ t: at - (n - i) * 1_000, item: 'AC-007', from: i % 2 === 0 ? 'PM' : 'QA', text: '…' }))
+    expect(usageSignals({ ...emptyLive(), threads: { 'AC-007': msgs(6) } }, NOW)).toEqual([])
+    expect(usageSignals({ ...emptyLive(), threads: { 'AC-007': msgs(7) } }, NOW)).toEqual([{ key: 'pingpong:AC-007', text: 'QA 和 PM 在 AC-007 來回 7 次（超過 6 次）', level: 7 }])
     // A third voice breaks the run.
-    expect(usageSignals({ ...emptyLive(), threads: { 'AC-007': [...msgs(4), { t: 9, item: 'AC-007', from: '你', text: '…' }, ...msgs(4)] } })).toEqual([])
+    expect(usageSignals({ ...emptyLive(), threads: { 'AC-007': [...msgs(4), { t: NOW - 500, item: 'AC-007', from: '你', text: '…' }, ...msgs(4)] } }, NOW)).toEqual([])
+    // An exchange that stopped an hour ago is history, not work going back and forth: no reminder, however long it ran.
+    expect(usageSignals({ ...emptyLive(), threads: { 'AC-007': msgs(14, NOW - 60 * 60_000) } }, NOW)).toEqual([])
+    expect(usageSignals({ ...emptyLive(), threads: { 'AC-007': msgs(14, NOW - 60 * 60_000 + 15_000) } }, NOW).map(x => x.key)).toEqual(['pingpong:AC-007'])
+  })
+
+  test('grade each signal, so one is told again only once it is worse', () => {
+    const levels = (usage: CrewLive['usage']) => usageSignals(day(usage), NOW).map(x => `${x.key}=${x.level}`)
+    // 81% of the day is the eighth tenth; 51% from the cache misses the fourth tenth.
+    expect(levels({ fullstack: u(31_000, 85_000, 50_000), pm: u(6_000, 27_000, 5_000) })).toEqual(['share:fullstack=8', 'hit:fullstack=4'])
+    const at = (context: number): CrewLive => ({ ...emptyLive(), roles: { ...emptyLive().roles, qa: { ...emptyLive().roles.qa, state: 'working', context, limit: 60_000 } } })
+    // A context grades by each 50K it holds.
+    expect(usageSignals(at(99_999), NOW).map(x => x.level)).toEqual([1])
+    expect(usageSignals(at(100_000), NOW).map(x => x.level)).toEqual([2])
   })
 
   test('measure a role by its share, cache hit rate and context', () => {
@@ -697,5 +766,30 @@ describe('where a running flow stopped', () => {
     // The brain's proposal on usage is no question about the flow.
     expect(stopKey(at(flow, { questions: [{ id: 'Q-02', question: 'q', from: 'brain', item: 'tune', status: 'open', t: 0 }] }), RUN)).toBeDefined()
     expect(stopKey(at({ stage: 'done', round: 0, retries: 0 }), RUN)).toBeUndefined()
+  })
+})
+
+describe('why a test case is not through G6, as the person reads it', () => {
+  const at = (crew_result?: object) => ({ id: 'TC-003', title: 't', ...(crew_result === undefined ? {} : { crew_result }) }) as Parameters<typeof runGap>[0]
+  test('tells answered, being added, no result in a run, never run, out of date and failed apart', () => {
+    const flow = { unrun: { ok: ['TC-003'], fix: ['TC-004'] } }
+    expect(runGap(at(), flow, true)).toBe('沒有結果：你回答過測試指令跑不到（不算通過）')
+    expect(runGap({ ...at(), id: 'TC-004' }, flow, true)).toBe('沒有結果：全端在補上帶這個編號的測試')
+    expect(runGap(at(), {}, true)).toBe('沒有結果（測試指令的輸出裡找不到）')
+    expect(runGap(at(), {}, false)).toBe('還沒跑')
+    expect(runGap(at({ result: 'passed', sha: 'abc', run: 'r1', stale: true }), flow, true)).toBe('結果過期（之後又有 commit）')
+    expect(runGap(at({ result: 'failed', sha: 'abc', run: 'r1' }), flow, true)).toBe('失敗（.crew/runs/r1.log）')
+  })
+
+  test('says why a run gave a test case no result, where crew could tell', () => {
+    const none = (crew_none: object, id = 'TC-005') => ({ ...at(), id, crew_none }) as Parameters<typeof runGap>[0]
+    expect(runGap(none({ why: 'unreached', dir: 'backend/api', run: 'r1' }), {}, true)).toBe('沒跑到：測試在 backend/api，你的測試指令沒跑那裡')
+    expect(runGap(none({ why: 'unreached', dir: '', run: 'r1' }), {}, true)).toBe('沒跑到：測試在 專案根目錄，你的測試指令沒跑那裡')
+    expect(runGap(none({ why: 'skipped', run: 'r1' }), {}, true)).toBe('被跳過：測試有跑到，但輸出寫它被跳過')
+    expect(runGap(none({ why: 'unnamed', run: 'r1' }), {}, true)).toBe('有跑到，但輸出沒有列出這個編號的結果')
+    expect(runGap(none({ why: 'missing', run: 'r1' }), {}, true)).toBe('找不到測試：crew 分支上沒有測試檔寫這個編號')
+    expect(runGap(none({ why: 'missing', run: 'r1' }, 'TC-003'), { unrun: { ok: ['TC-003'] } }, true)).toBe('找不到測試：crew 分支上沒有測試檔寫這個編號（你回答過照現在繼續，不算通過）')
+    // A mark crew could not have written is none.
+    expect(runGap(none({ why: 'gone', run: 'r1' }), {}, true)).toBe('沒有結果（測試指令的輸出裡找不到）')
   })
 })

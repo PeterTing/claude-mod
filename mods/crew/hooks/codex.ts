@@ -4,6 +4,9 @@
  * register.tsx runs the command and hands the output back.
  */
 
+import { SUBJECT } from './git'
+import type { RunStep } from './model'
+
 /** The Codex version these flags were tried on: a name a later Codex no longer knows is ignored by it. */
 export const CODEX_TESTED = '0.162.1'
 
@@ -96,7 +99,8 @@ export const codexArgv = (r: CodexRun): string[] => [
 /** Tokens as Codex counts them: `cached` is the part of `input` read from its cache. */
 export type CodexUsage = { input: number; cached: number; output: number; reasoning: number }
 
-export type CodexOutput = { report: string; actions: { tool: string; input: string }[] }
+/** `commit`: the full-stack's message for what it changed, which crew commits for it (Codex cannot write the worktree's git data). */
+export type CodexOutput = { report: string; actions: { tool: string; input: string }[]; commit?: string }
 
 /** What a run said, read from its JSON events. */
 export type CodexEnd = {
@@ -112,16 +116,19 @@ export type CodexEnd = {
   spawned: number
   /** The commands it ran, and how much each printed: never what. */
   commands: { command: string; chars: number }[]
+  /** What it did, step by step, as it told it: for the person to read back. */
+  steps?: RunStep[]
 }
 
 const isOutput = (v: unknown): v is CodexOutput => {
   const o = v as CodexOutput
-  return typeof o === 'object' && o !== null && typeof o.report === 'string' && Array.isArray(o.actions) && o.actions.every(a => typeof a?.tool === 'string' && typeof a?.input === 'string')
+  return typeof o === 'object' && o !== null && typeof o.report === 'string' && Array.isArray(o.actions) && o.actions.every(a => typeof a?.tool === 'string' && typeof a?.input === 'string') && (o.commit === undefined || typeof o.commit === 'string')
 }
 
 /** Reads `codex exec --json` output, one event a line; a line that is not an event is skipped. */
 export const readEvents = (text: string): CodexEnd => {
   const end: CodexEnd = { spawned: 0, commands: [] }
+  const steps: RunStep[] = []
   for (const line of text.split('\n')) {
     let ev: { type?: string; thread_id?: string; usage?: Record<string, number>; message?: string; error?: { message?: string }; item?: Record<string, unknown> }
     try {
@@ -142,16 +149,24 @@ export const readEvents = (text: string): CodexEnd => {
       try {
         const parsed: unknown = JSON.parse(item.text)
         if (isOutput(parsed)) end.output = parsed
+        else steps.push({ kind: 'message', text: item.text })
       } catch {
         // Its words along the way, not the answer.
+        steps.push({ kind: 'message', text: item.text })
       }
     } else if (item.type === 'command_execution') {
       end.commands.push({ command: String(item.command ?? '').slice(0, 120), chars: String(item.aggregated_output ?? '').length })
+      steps.push({ kind: 'command', text: String(item.command ?? ''), output: String(item.aggregated_output ?? '') })
+    } else if (item.type === 'file_change' && Array.isArray(item.changes)) {
+      steps.push({ kind: 'file', text: (item.changes as { kind?: unknown; path?: unknown }[]).map(c => `${String(c?.kind ?? '')} ${String(c?.path ?? '')}`.trim()).join('\n') })
     } else if (item.type !== 'reasoning' && (item.tool === 'spawn_agent' || item.name === 'spawn_agent')) {
       // A call of the tool itself, not its name in the run's words.
       end.spawned += 1
+    } else if (item.type === 'mcp_tool_call' || item.type === 'web_search') {
+      steps.push({ kind: 'tool', text: [item.server, item.tool, item.query].filter(x => typeof x === 'string').join(' ') })
     }
   }
+  if (steps.length > 0) end.steps = steps
   return end
 }
 
@@ -204,13 +219,18 @@ export const retryTime = (at: string, now: number): number | undefined => {
 /** How the person is logged in, from `codex login status`, which exits 0 only when logged in. */
 export const loginOf = (said: string): 'chatgpt' | 'apikey' => (/api key/i.test(said) ? 'apikey' : 'chatgpt')
 
-/** The schema of a Codex role's last message: a report, and the actions it hands crew. */
-export const outputSchema = (tools: readonly string[]) => ({
+/**
+ * The schema of a Codex role's last message: a report, and the actions it
+ * hands crew; for the full-stack (`commit`), its commit message too, '' for
+ * none. Codex's strict schema has every property required.
+ */
+export const outputSchema = (tools: readonly string[], commit = false) => ({
   type: 'object',
   additionalProperties: false,
-  required: ['report', 'actions'],
+  required: ['report', 'actions', ...(commit ? ['commit'] : [])],
   properties: {
     report: { type: 'string' },
+    ...(commit ? { commit: { type: 'string' } } : {}),
     actions: {
       type: 'array',
       items: {
@@ -222,3 +242,37 @@ export const outputSchema = (tools: readonly string[]) => ({
     },
   },
 })
+
+/** The most of a commit message crew takes from a Codex builder. */
+const MESSAGE_MAX = 2_000
+
+/**
+ * What crew takes out of a Codex builder's commit message: control characters
+ * (C0 but the newline and tab, DEL, C1), the line and paragraph separators, and
+ * the marks that reorder text as a terminal or a review shows it (bidi
+ * embeddings, overrides and isolates), so the log reads as it was written.
+ */
+const UNSHOWN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g
+
+/**
+ * The message crew commits a Codex builder's work with: its own when its first
+ * line starts with task ids as crew reads a commit (`TASK-003: …`, or with
+ * other tasks' too) that hold the task it works on, and says something after
+ * them; what it cannot show taken out, cut (`given`). Otherwise crew's own,
+ * `<task>: <fallback>`, which crew uses only to finish a merge it began for
+ * the builder: other work is not done till the builder says so. With no task,
+ * only one of its own: none.
+ */
+export const commitMessage = (said: string | undefined, task: string | undefined, fallback: string): { message: string; given: boolean } | undefined => {
+  const text = (said ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(UNSHOWN, '')
+    .trim()
+    .slice(0, MESSAGE_MAX)
+  const first = (text.split('\n')[0] ?? '').trim()
+  const m = SUBJECT.exec(first)
+  const ids = m === null ? [] : (m[1] ?? '').split(/\s*[,，、]\s*/)
+  const rest = m === null ? '' : first.slice(m[0].length).replace(/^[\]\s:：]+/, '').trim()
+  if (m !== null && rest !== '' && (task === undefined || ids.includes(task))) return { message: text, given: true }
+  return task === undefined ? undefined : { message: `${task}: ${fallback}`, given: false }
+}

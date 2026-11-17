@@ -102,7 +102,7 @@ export const settledNote = (d: CrewDraft): string => {
   const doubted = d.reviews.filter(r => r.unsure === true).map(r => `${name(r.role)}${r.ask === undefined ? '' : `（${r.ask}）`}`)
   const notReviewed = sentOut(d) ? `沒審的話，已送審 ${MAX_SENDS} 次，問使用者要不要照現在的草稿確認。` : `沒審就用 action=draft、path=${d.path} 重新送審。`
   const check = doubted.length === 0 ? '' : `${doubted.join('、')} 的回覆沒照格式：先用 thread_read 讀原話，確認真的審了；${notReviewed}`
-  return `PM 和 UI/UX 都審完 PRD 草稿 ${d.path} 了（${each}；原話用 thread_read 讀）。${check}把缺口整理成問題問使用者，照回答改草稿，改好用 crew 工具 action=ready 請使用者確認。`
+  return `PM 和 UI/UX 都審完 PRD 草稿 ${d.path} 了（${each}；原話用 thread_read 讀）。${check}把缺口和你自己補上的做法整理成問題，一題一則用 ask_person 問使用者（draft 填 true，附選項，建議的放第一個），照回答改草稿，改好用 crew 工具 action=ready 請使用者確認。`
 }
 
 /** The draft as the brain needs it to go on, after a restart too: where it is, its stage, and each review with its thread. */
@@ -143,13 +143,18 @@ export const draftOf = (v: unknown): CrewDraft | undefined => {
     ...(typeof d.note === 'string' ? { note: d.note } : {}),
     ...(Number.isInteger(d.sends) && (d.sends ?? 0) >= 0 ? { sends: d.sends } : {}),
     ...(typeof d.change === 'string' && d.stage === 'confirm' ? { change: d.change } : {}),
+    ...(Array.isArray(d.answered) && d.answered.length > 0 ? { answered: d.answered.filter((id): id is string => typeof id === 'string').slice(-40) } : {}),
   }
 }
 
 /** The brain's takeover as the pane and the line above the prompt show it: on or not, whether no PRD is under way, and its draft. */
-export const takeoverOf = (on: boolean, prdPath: string | null, draft: CrewDraft | undefined, page?: { url?: string; failed?: string; path?: string }): Takeover => ({
-  on,
-  idle: prdPath === null,
-  // The page's link is the draft's only when the page is of that draft: another PRD's page is not opened from it.
-  ...(on && draft !== undefined ? { draft: page?.url === undefined || page.failed !== undefined || (page.path !== undefined && page.path !== draft.path) ? draft : { ...draft, url: page.url } } : {}),
-})
+export const takeoverOf = (on: boolean, prdPath: string | null, draft: CrewDraft | undefined, page?: { url?: string; failed?: string; path?: string }, asks: readonly string[] = []): Takeover => {
+  // The brain's own fills on the draft, still open: the yes waits for them.
+  const shown = draft === undefined || asks.length === 0 ? draft : { ...draft, asks }
+  return {
+    on,
+    idle: prdPath === null,
+    // The page's link is the draft's only when the page is of that draft: another PRD's page is not opened from it.
+    ...(on && shown !== undefined ? { draft: page?.url === undefined || page.failed !== undefined || (page.path !== undefined && page.path !== shown.path) ? shown : { ...shown, url: page.url } } : {}),
+  }
+}

@@ -23,14 +23,15 @@ describe('the brain’s digest', () => {
     expect(w.prompts.some(p => /待你決定頁要發佈給使用者看（問題 Q-01（PM） 等使用者回答）/.test(p))).toBe(true)
     expect(w.prompts.some(p => /PRD 改了/.test(p))).toBe(false)
     let ui = await paneUi($)
-    expect(await textOf(ui)).toMatch(/大腦摘要 還沒有送出，1 則等 \d\d:\d\d/)
+    expect(await textOf(ui)).toMatch(/大腦摘要 1 則等 \d\d:\d\d/)
     await ui.unmount()
     await w.clock.advance(30 * 60_000)
     const digests = w.prompts.filter(p => /例行回報/.test(p))
     expect(digests).toHaveLength(1)
     expect(digests[0]).toMatch(/過去 30 分鐘的例行回報（不用立刻處理）[\s\S]*PRD 改了/)
     ui = await paneUi($)
-    expect(await textOf(ui)).toMatch(/大腦摘要 \d\d:\d\d 送出，0 則等 \d\d:\d\d/)
+    // Sent, with nothing waiting: the line goes until the next one waits.
+    expect(await textOf(ui)).not.toMatch(/大腦摘要/)
     await ui.unmount()
     // Nothing new: no empty digest.
     await w.clock.advance(30 * 60_000)
